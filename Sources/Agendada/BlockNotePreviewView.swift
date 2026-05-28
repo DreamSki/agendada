@@ -22,10 +22,10 @@ struct BlockNotePreviewView: View {
         Group {
             if visibleItems.isEmpty {
                 Text("空白笔记")
-                    .font(.system(size: 14))
-                    .foregroundStyle(Color(red: 0.78, green: 0.78, blue: 0.80))
+                    .font(.system(size: PreviewMetrics.bodyFontSize))
+                    .foregroundStyle(PreviewMetrics.placeholderColor)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 3)
+                    .padding(.vertical, PreviewMetrics.blockVPadding)
             } else {
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(visibleItems) { item in
@@ -35,8 +35,8 @@ struct BlockNotePreviewView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .padding(.leading, 30)
-        .padding(.trailing, 8)
+        .padding(.leading, PreviewMetrics.editorLeadingPadding)
+        .padding(.trailing, PreviewMetrics.editorTrailingPadding)
     }
 
     private func flattenedItems(from blocks: [PreviewBlock], depth: Int = 0) -> [PreviewRenderItem] {
@@ -66,6 +66,8 @@ struct BlockNotePreviewView: View {
 // MARK: - Metrics (match editor CSS exactly)
 
 private enum PreviewMetrics {
+    static let editorLeadingPadding: CGFloat = 30
+    static let editorTrailingPadding: CGFloat = 8
     static let nestIndent: CGFloat = 24
     static let markerWidth: CGFloat = 24
     static let blockVPadding: CGFloat = 3
@@ -75,6 +77,28 @@ private enum PreviewMetrics {
     static let heading1Size: CGFloat = 20
     static let heading2Size: CGFloat = 17
     static let heading3Size: CGFloat = 16
+    static let quoteBorderWidth: CGFloat = 3
+    static let quoteTextInset: CGFloat = 10
+    static let mediaMaxHeight: CGFloat = 260
+    static let tableCellHPadding: CGFloat = 10
+    static let tableCellVPadding: CGFloat = 7
+    static let blockRadius: CGFloat = 6
+
+    static let bodyColor = Color(red: 0.2, green: 0.2, blue: 0.2)
+    static let headingColor = Color(red: 0.102, green: 0.102, blue: 0.102)
+    static let mutedColor = Color(red: 0.557, green: 0.557, blue: 0.576)
+    static let placeholderColor = Color(red: 0.780, green: 0.780, blue: 0.800)
+    static let quoteBorderColor = Color(red: 0.961, green: 0.898, blue: 0.753)
+    static let codeColor = Color(red: 0.18, green: 0.18, blue: 0.19)
+    static let codeBackgroundColor = Color.black.opacity(0.043)
+    static let dividerColor = Color.black.opacity(0.102)
+    static let tableBorderColor = Color.black.opacity(0.12)
+    static let tableHeaderBackgroundColor = Color.black.opacity(0.04)
+    static let lineBoxVerticalInset: CGFloat = 2
+
+    static func lineSpacing(for size: CGFloat) -> CGFloat {
+        max(0, size * lineHeight - size)
+    }
 }
 
 private struct PreviewRenderItem: Identifiable {
@@ -123,20 +147,24 @@ private struct PreviewBlockRow: View {
     // MARK: Paragraph
 
     private var paragraphView: some View {
-        bodyText(block.plainText)
+        bodyText(block.content)
             .padding(.vertical, PreviewMetrics.blockVPadding)
+            .background(block.backgroundColor ?? Color.clear)
     }
 
     // MARK: Heading
 
     private var headingView: some View {
-        Text(block.plainText)
-            .font(.system(size: headingSize, weight: .bold))
-            .foregroundStyle(Color(red: 0.102, green: 0.102, blue: 0.102))
-            .lineSpacing(lineSpacingForSize(headingSize))
-            .fixedSize(horizontal: false, vertical: true)
+        richText(
+            block.content,
+            fallback: block.plainText,
+            fontSize: headingSize,
+            baseWeight: .bold,
+            baseColor: block.textColor ?? PreviewMetrics.headingColor
+        )
             .padding(.top, 3)
             .padding(.bottom, PreviewMetrics.blockVPadding)
+            .background(block.backgroundColor ?? Color.clear)
     }
 
     private var headingSize: CGFloat {
@@ -152,34 +180,36 @@ private struct PreviewBlockRow: View {
     private var bulletView: some View {
         HStack(alignment: .firstTextBaseline, spacing: 0) {
             Text(bulletMarker)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(AgendaColor.textMuted)
+                .font(.system(size: PreviewMetrics.bodyFontSize, weight: .semibold))
+                .foregroundStyle(PreviewMetrics.mutedColor)
                 .frame(width: PreviewMetrics.markerWidth, alignment: .center)
-            bodyText(block.plainText)
+            bodyText(block.content)
         }
         .padding(.vertical, PreviewMetrics.blockVPadding)
+        .background(block.backgroundColor ?? Color.clear)
     }
 
     private var numberedView: some View {
         HStack(alignment: .firstTextBaseline, spacing: 0) {
             Text("\(item.numberIndex ?? 1).")
-                .font(.system(size: 14))
-                .foregroundStyle(AgendaColor.textMuted)
+                .font(.system(size: PreviewMetrics.bodyFontSize))
+                .foregroundStyle(PreviewMetrics.mutedColor)
                 .frame(width: PreviewMetrics.markerWidth, alignment: .trailing)
-            bodyText(block.plainText)
+            bodyText(block.content)
         }
         .padding(.vertical, PreviewMetrics.blockVPadding)
+        .background(block.backgroundColor ?? Color.clear)
     }
 
     private var checkboxView: some View {
         HStack(alignment: .firstTextBaseline, spacing: 0) {
             Image(systemName: block.isChecked ? "checkmark.square.fill" : "square")
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(block.isChecked ? AgendaColor.amber : AgendaColor.textMuted)
+                .font(.system(size: PreviewMetrics.bodyFontSize, weight: .medium))
+                .foregroundStyle(block.isChecked ? AgendaColor.amber : PreviewMetrics.mutedColor)
                 .frame(width: PreviewMetrics.markerWidth, alignment: .center)
-            bodyText(block.checkboxText)
-                .strikethrough(block.isChecked, color: AgendaColor.textMuted)
-                .foregroundStyle(block.isChecked ? AgendaColor.textMuted : AgendaColor.textBody)
+            bodyText(block.checkboxContent)
+                .strikethrough(block.isChecked, color: PreviewMetrics.mutedColor)
+                .foregroundStyle(block.isChecked ? PreviewMetrics.mutedColor : PreviewMetrics.bodyColor)
         }
         .padding(.vertical, PreviewMetrics.blockVPadding)
     }
@@ -195,28 +225,31 @@ private struct PreviewBlockRow: View {
     // MARK: Quote
 
     private var quoteView: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Rectangle()
-                .fill(Color(red: 0.961, green: 0.898, blue: 0.753))
-                .frame(width: 3)
-            bodyText(block.plainText)
-                .italic()
-        }
-        .padding(.vertical, PreviewMetrics.blockVPadding)
+        bodyText(block.content)
+            .italic()
+            .padding(.leading, PreviewMetrics.quoteBorderWidth + PreviewMetrics.quoteTextInset)
+            .overlay(alignment: .leading) {
+                Rectangle()
+                    .fill(PreviewMetrics.quoteBorderColor)
+                    .frame(width: PreviewMetrics.quoteBorderWidth)
+            }
+            .padding(.vertical, PreviewMetrics.blockVPadding)
     }
 
     // MARK: Code
 
     private var codeView: some View {
-        Text(block.plainText.isEmpty ? " " : block.plainText)
-            .font(.system(size: PreviewMetrics.codeFontSize, design: .monospaced))
-            .foregroundStyle(Color(red: 0.18, green: 0.18, blue: 0.19))
-            .lineSpacing(0)
-            .fixedSize(horizontal: false, vertical: true)
-            .padding(.horizontal, 10)
+        richText(
+            block.content,
+            fallback: block.plainText,
+            fontSize: PreviewMetrics.codeFontSize,
+            baseColor: PreviewMetrics.codeColor,
+            forceMonospace: true
+        )
+            .padding(.horizontal, PreviewMetrics.tableCellHPadding)
             .padding(.vertical, 8)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.045)))
+            .background(RoundedRectangle(cornerRadius: PreviewMetrics.blockRadius).fill(PreviewMetrics.codeBackgroundColor))
             .padding(.vertical, PreviewMetrics.blockVPadding)
     }
 
@@ -224,7 +257,7 @@ private struct PreviewBlockRow: View {
 
     private var dividerView: some View {
         Rectangle()
-            .fill(Color.primary.opacity(0.10))
+            .fill(PreviewMetrics.dividerColor)
             .frame(height: 1)
             .padding(.vertical, 10)
     }
@@ -249,43 +282,111 @@ private struct PreviewBlockRow: View {
                     HStack(alignment: .top, spacing: 0) {
                         ForEach(Array(row.cells.enumerated()), id: \.offset) { _, cell in
                             let isHeader = rowIndex < headerCount || cell.type == "tableHeader"
-                            Text(cell.content.map(\.plainText).joined())
-                                .font(.system(size: PreviewMetrics.bodyFontSize))
-                                .fontWeight(isHeader ? .semibold : .regular)
-                                .foregroundStyle(isHeader ? Color(red: 0.102, green: 0.102, blue: 0.102) : AgendaColor.textBody)
-                                .lineSpacing(lineSpacingForSize(PreviewMetrics.bodyFontSize))
-                                .fixedSize(horizontal: false, vertical: true)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 7)
+                            PreviewRichText(
+                                fragments: cell.content.flatMap(\.fragments),
+                                fallback: cell.content.map(\.plainText).joined(),
+                                fontSize: PreviewMetrics.bodyFontSize,
+                                baseWeight: isHeader ? .semibold : .regular,
+                                baseColor: isHeader ? PreviewMetrics.headingColor : PreviewMetrics.bodyColor
+                            )
+                                .padding(.horizontal, PreviewMetrics.tableCellHPadding)
+                                .padding(.vertical, PreviewMetrics.tableCellVPadding)
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(isHeader ? Color.primary.opacity(0.04) : Color.clear)
+                                .background(isHeader ? PreviewMetrics.tableHeaderBackgroundColor : Color.clear)
                         }
                     }
                     .overlay(alignment: .bottom) {
                         if rowIndex < tc.rows.count - 1 {
-                            Rectangle().fill(Color.primary.opacity(0.08)).frame(height: 0.5)
+                            Rectangle().fill(PreviewMetrics.tableBorderColor).frame(height: 0.5)
                         }
                     }
                 }
             }
-            .clipShape(RoundedRectangle(cornerRadius: 6))
-            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.primary.opacity(0.12), lineWidth: 0.5))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .clipShape(RoundedRectangle(cornerRadius: PreviewMetrics.blockRadius))
+            .overlay(RoundedRectangle(cornerRadius: PreviewMetrics.blockRadius).stroke(PreviewMetrics.tableBorderColor, lineWidth: 0.5))
             .padding(.vertical, PreviewMetrics.blockVPadding)
         )
     }
 
     // MARK: Helpers
 
-    private func bodyText(_ value: String) -> some View {
-        Text(value.isEmpty ? " " : value)
-            .font(.system(size: PreviewMetrics.bodyFontSize))
-            .foregroundStyle(AgendaColor.textBody)
-            .lineSpacing(lineSpacingForSize(PreviewMetrics.bodyFontSize))
-            .fixedSize(horizontal: false, vertical: true)
+    private func bodyText(_ content: PreviewContent?) -> some View {
+        richText(
+            content,
+            fallback: block.plainText,
+            fontSize: PreviewMetrics.bodyFontSize,
+            baseColor: block.textColor ?? PreviewMetrics.bodyColor
+        )
     }
 
-    private func lineSpacingForSize(_ size: CGFloat) -> CGFloat {
-        max(0, size * PreviewMetrics.lineHeight - size)
+    private func richText(
+        _ content: PreviewContent?,
+        fallback: String,
+        fontSize: CGFloat,
+        baseWeight: Font.Weight = .regular,
+        baseColor: Color,
+        forceMonospace: Bool = false
+    ) -> some View {
+        PreviewRichText(
+            fragments: content?.fragments ?? [],
+            fallback: fallback,
+            fontSize: fontSize,
+            baseWeight: baseWeight,
+            baseColor: baseColor,
+            forceMonospace: forceMonospace
+        )
+    }
+}
+
+// MARK: - Rich Inline Text
+
+private struct PreviewRichText: View {
+    let fragments: [PreviewTextFragment]
+    let fallback: String
+    let fontSize: CGFloat
+    var baseWeight: Font.Weight = .regular
+    var baseColor: Color = PreviewMetrics.bodyColor
+    var forceMonospace = false
+
+    var body: some View {
+        composedText
+            .lineSpacing(PreviewMetrics.lineSpacing(for: fontSize))
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.vertical, PreviewMetrics.lineBoxVerticalInset)
+    }
+
+    private var composedText: Text {
+        let visibleFragments = fragments.isEmpty
+            ? [PreviewTextFragment(text: fallback.isEmpty ? " " : fallback)]
+            : fragments
+        return visibleFragments.reduce(Text("")) { partial, fragment in
+            partial + styledText(fragment)
+        }
+    }
+
+    private func styledText(_ fragment: PreviewTextFragment) -> Text {
+        var text = Text(fragment.text.isEmpty ? " " : fragment.text)
+            .font(.system(
+                size: fontSize,
+                weight: fragment.isBold ? .semibold : baseWeight,
+                design: (forceMonospace || fragment.isCode) ? .monospaced : .default
+            ))
+            .foregroundColor(fragment.textColor ?? baseColor)
+
+        if fragment.isItalic {
+            text = text.italic()
+        }
+        if fragment.isUnderline || fragment.linkURL != nil {
+            text = text.underline()
+        }
+        if fragment.isStrikethrough {
+            text = text.strikethrough()
+        }
+        if fragment.linkURL != nil {
+            text = text.foregroundColor(AgendaColor.amber)
+        }
+        return text
     }
 }
 
@@ -300,13 +401,13 @@ private struct PreviewImageBlock: View {
                 Image(nsImage: image)
                     .resizable()
                     .scaledToFit()
-                    .frame(maxWidth: .infinity, maxHeight: 260, alignment: .leading)
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .frame(maxWidth: .infinity, maxHeight: PreviewMetrics.mediaMaxHeight, alignment: .leading)
+                    .clipShape(RoundedRectangle(cornerRadius: PreviewMetrics.blockRadius))
 
                 if block.hasVisibleImageLabel {
                     Text(block.imageLabel)
                         .font(.system(size: 13))
-                        .foregroundStyle(AgendaColor.textMuted)
+                        .foregroundStyle(PreviewMetrics.mutedColor)
                         .lineLimit(2)
                 }
             }
@@ -316,13 +417,13 @@ private struct PreviewImageBlock: View {
                     .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(AgendaColor.amber)
                 Text(block.imageLabel)
-                    .font(.system(size: 14))
-                    .foregroundStyle(AgendaColor.textMuted)
+                    .font(.system(size: PreviewMetrics.bodyFontSize))
+                    .foregroundStyle(PreviewMetrics.mutedColor)
                     .lineLimit(1)
             }
-            .padding(.horizontal, 10)
+            .padding(.horizontal, PreviewMetrics.tableCellHPadding)
             .padding(.vertical, 8)
-            .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.045)))
+            .background(RoundedRectangle(cornerRadius: PreviewMetrics.blockRadius).fill(PreviewMetrics.codeBackgroundColor))
         }
     }
 }
@@ -350,6 +451,10 @@ private struct PreviewBlock: Decodable, Identifiable {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    var checkboxContent: PreviewContent {
+        .text(checkboxText)
+    }
+
     var isChecked: Bool {
         if let checked = props?["checked"]?.boolValue { return checked }
         return plainText.range(of: #"^\s*[-*]?\s*\[[xX]\]"#, options: .regularExpression) != nil
@@ -357,6 +462,14 @@ private struct PreviewBlock: Decodable, Identifiable {
 
     var headingLevel: Int {
         props?["level"]?.intValue ?? 2
+    }
+
+    var textColor: Color? {
+        PreviewCSSColor.color(from: props?["textColor"]?.stringValue)
+    }
+
+    var backgroundColor: Color? {
+        PreviewCSSColor.color(from: props?["backgroundColor"]?.stringValue)
     }
 
     var imageLabel: String {
@@ -414,6 +527,19 @@ private enum PreviewContent: Decodable {
         }
     }
 
+    var fragments: [PreviewTextFragment] {
+        switch self {
+        case .text(let value):
+            return [PreviewTextFragment(text: value)]
+        case .inline(let items):
+            return items.flatMap(\.fragments)
+        case .tableContent(let tc):
+            return tc.rows.flatMap { row in
+                row.cells.flatMap { cell in cell.content.flatMap(\.fragments) }
+            }
+        }
+    }
+
     init(from decoder: Decoder) throws {
         if let tc = try? PreviewTableContent(from: decoder) {
             self = .tableContent(tc)
@@ -446,10 +572,123 @@ private struct PreviewInline: Decodable {
     var type: String?
     var text: String?
     var content: [PreviewInline]?
+    var href: String?
+    var url: String?
+    var styles: [String: PreviewJSONValue]?
+    var props: [String: PreviewJSONValue]?
+
+    enum CodingKeys: String, CodingKey {
+        case type, text, content, href, url, styles, props
+    }
 
     var plainText: String {
         if let text { return text }
         return content?.map(\.plainText).joined() ?? ""
+    }
+
+    var fragments: [PreviewTextFragment] {
+        if let text {
+            return [PreviewTextFragment(
+                text: text,
+                styles: styles,
+                linkURL: linkURL
+            )]
+        }
+        return content?.flatMap { child in
+            child.fragments.map { fragment in
+                fragment.merging(parentStyles: styles, parentLinkURL: linkURL)
+            }
+        } ?? []
+    }
+
+    private var linkURL: URL? {
+        let raw = href ?? url ?? props?["href"]?.stringValue ?? props?["url"]?.stringValue
+        guard type == "link" || raw != nil, let raw, !raw.isEmpty else { return nil }
+        return URL(string: raw)
+    }
+}
+
+private struct PreviewTextFragment {
+    var text: String
+    var styles: [String: PreviewJSONValue]? = nil
+    var linkURL: URL? = nil
+
+    var isBold: Bool { boolStyle("bold") }
+    var isItalic: Bool { boolStyle("italic") }
+    var isUnderline: Bool { boolStyle("underline") }
+    var isStrikethrough: Bool { boolStyle("strike") || boolStyle("strikethrough") }
+    var isCode: Bool { boolStyle("code") }
+
+    var textColor: Color? {
+        PreviewCSSColor.color(from: stringStyle("textColor") ?? stringStyle("color"))
+    }
+
+    func merging(parentStyles: [String: PreviewJSONValue]?, parentLinkURL: URL?) -> PreviewTextFragment {
+        var merged = parentStyles ?? [:]
+        styles?.forEach { key, value in merged[key] = value }
+        return PreviewTextFragment(text: text, styles: merged.isEmpty ? nil : merged, linkURL: linkURL ?? parentLinkURL)
+    }
+
+    private func boolStyle(_ key: String) -> Bool {
+        styles?[key]?.boolValue ?? false
+    }
+
+    private func stringStyle(_ key: String) -> String? {
+        styles?[key]?.stringValue
+    }
+}
+
+private enum PreviewCSSColor {
+    static func color(from rawValue: String?) -> Color? {
+        guard let rawValue else { return nil }
+        let value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard value.isEmpty == false, value.lowercased() != "default" else { return nil }
+
+        if value.hasPrefix("#") {
+            return color(fromHex: String(value.dropFirst()))
+        }
+        if value.lowercased().hasPrefix("rgb") {
+            return color(fromRGBFunction: value)
+        }
+        return namedColor(value)
+    }
+
+    private static func color(fromHex hex: String) -> Color? {
+        let expanded: String
+        if hex.count == 3 {
+            expanded = hex.map { "\($0)\($0)" }.joined()
+        } else {
+            expanded = hex
+        }
+        guard expanded.count == 6, let intValue = Int(expanded, radix: 16) else { return nil }
+        let red = Double((intValue >> 16) & 0xff) / 255
+        let green = Double((intValue >> 8) & 0xff) / 255
+        let blue = Double(intValue & 0xff) / 255
+        return Color(red: red, green: green, blue: blue)
+    }
+
+    private static func color(fromRGBFunction value: String) -> Color? {
+        let numbers = value
+            .replacingOccurrences(of: #"rgba?\("#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: ")", with: "")
+            .split(separator: ",")
+            .compactMap { Double($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+        guard numbers.count >= 3 else { return nil }
+        return Color(red: numbers[0] / 255, green: numbers[1] / 255, blue: numbers[2] / 255)
+    }
+
+    private static func namedColor(_ value: String) -> Color? {
+        switch value.lowercased() {
+        case "red": return Color(red: 0.95, green: 0.35, blue: 0.35)
+        case "green": return Color(red: 0.28, green: 0.68, blue: 0.45)
+        case "blue": return Color(red: 0.26, green: 0.56, blue: 0.95)
+        case "yellow": return Color(red: 0.95, green: 0.80, blue: 0.15)
+        case "brown": return Color(red: 0.65, green: 0.45, blue: 0.30)
+        case "pink": return Color(red: 0.93, green: 0.36, blue: 0.62)
+        case "purple": return Color(red: 0.62, green: 0.35, blue: 0.85)
+        case "gray": return Color(red: 0.55, green: 0.55, blue: 0.60)
+        default: return nil
+        }
     }
 }
 

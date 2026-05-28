@@ -6,9 +6,6 @@ struct NoteStreamView: View {
     @Environment(ObservableLibraryStore.self) private var store
     @Binding var searchText: String
     @State private var isSearching = false
-    @State private var editorHeight: CGFloat = 180
-    @State private var capturedPreviewHeight: CGFloat = 180
-    @State private var isHovering = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -138,8 +135,9 @@ private struct StreamNoteRow: View {
     @State private var showDatePicker = false
     @State private var calendarMonth = Date()
     @State private var saveTask: Task<Void, Never>?
-    @State private var editorHeight: CGFloat = 180
-    @State private var capturedPreviewHeight: CGFloat = 180
+    @State private var editorHeight: CGFloat = 0
+    @State private var capturedPreviewHeight: CGFloat = 0
+    @State private var editorHasUserChanges = false
     @State private var isHovering = false
 
     init(note: Note) {
@@ -196,6 +194,7 @@ private struct StreamNoteRow: View {
                 flushDraft()
             } else if newValue == note.id {
                 resetDraft()
+                prepareEditorOverlayForSelection()
             }
         }
         .onChange(of: note.id) { resetDraft() }
@@ -204,25 +203,16 @@ private struct StreamNoteRow: View {
 
     // MARK: - Body
 
-    @ViewBuilder
     private var bodyContent: some View {
-        if isSelected {
-            BlockNoteCardEditor(
-                noteID: note.id,
-                blockJSON: draft.blockJSON,
-                editorHeight: $editorHeight,
-                onChange: { content in
-                    applyEditorContent(content)
-                },
-                onDebouncedSave: { content in
-                    applyEditorContent(content)
-                    saveDraft()
-                }
-            )
-            .frame(height: max(capturedPreviewHeight, editorHeight))
-        } else {
+        let estimatedEditorHeight = BlockNoteEditorHeightEstimator.estimate(from: draft.blockJSON)
+        let stableBodyHeight = max(1, max(capturedPreviewHeight, estimatedEditorHeight))
+
+        return ZStack(alignment: .topLeading) {
             BlockNotePreviewView(note: note)
-                .opacity(isNoteDimmed ? 0.58 : 1)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .opacity(isSelected ? 0 : (isNoteDimmed ? 0.58 : 1))
+                .allowsHitTesting(!isSelected)
                 .background(
                     GeometryReader { geo in
                         Color.clear.preference(key: PreviewHeightKey.self, value: geo.size.height)
@@ -230,8 +220,31 @@ private struct StreamNoteRow: View {
                 )
                 .onPreferenceChange(PreviewHeightKey.self) { h in
                     capturedPreviewHeight = h
+                    if isSelected && !editorHasUserChanges {
+                        editorHeight = h
+                    }
                 }
+
+            if isSelected {
+                BlockNoteCardEditor(
+                    noteID: note.id,
+                    blockJSON: draft.blockJSON,
+                    editorHeight: $editorHeight,
+                    onChange: { content in
+                        applyEditorContent(content)
+                    },
+                    onDebouncedSave: { content in
+                        applyEditorContent(content)
+                        saveDraft()
+                    }
+                )
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .frame(height: stableBodyHeight, alignment: .top)
+                .clipShape(Rectangle())
+                .opacity(isNoteDimmed ? 0.58 : 1)
+            }
         }
+        .frame(height: stableBodyHeight, alignment: .top)
     }
 
     // MARK: - Bullet
@@ -470,8 +483,16 @@ private struct StreamNoteRow: View {
         if let refreshed = store.note(withID: note.id) { draft = StreamNoteDraft(note: refreshed) }
     }
 
+    private func prepareEditorOverlayForSelection() {
+        editorHasUserChanges = false
+        if capturedPreviewHeight > 0 {
+            editorHeight = capturedPreviewHeight
+        }
+    }
+
     private func applyEditorContent(_ content: BlockNoteEditorContent) {
         guard content.noteID == note.id else { return }
+        editorHasUserChanges = true
         draft.blockJSON = content.blockJSON
         draft.plainTextPreview = content.plainTextPreview
         draft.previewHTML = content.previewHTML
@@ -498,6 +519,7 @@ private struct StreamNoteRow: View {
             }
 
             withAnimation(.easeInOut(duration: 0.12)) {
+                prepareEditorOverlayForSelection()
                 store.selectNote(note.id)
             }
         }
@@ -507,9 +529,90 @@ private struct StreamNoteRow: View {
 }
 
 private struct PreviewHeightKey: PreferenceKey {
-    static let defaultValue: CGFloat = 180
+    static let defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = nextValue()
+    }
+}
+
+private enum BlockNoteEditorHeightEstimator {
+    static func estimate(from data: Data) -> CGFloat {
+        guard let raw = try? JSONSerialization.jsonObject(with: data),
+              let blocks = raw as? [[String: Any]] else {
+            return 0
+        }
+
+        let height = blocks.reduce(CGFloat.zero) { partial, block in
+            partial + estimate(block: block, depth: 0)
+        }
+        return min(max(height + 24, 1), 900)
+    }
+
+    private static func estimate(block: [String: Any], depth: Int) -> CGFloat {
+        let type = block["type"] as? String ?? "paragraph"
+        let text = plainText(from: block["content"])
+        let childHeight = (block["children"] as? [[String: Any]])?.reduce(CGFloat.zero) { partial, child in
+            partial + estimate(block: child, depth: depth + 1)
+        } ?? 0
+
+        return estimateOwnHeight(type: type, text: text, content: block["content"], depth: depth) + childHeight
+    }
+
+    private static func estimateOwnHeight(type: String, text: String, content: Any?, depth: Int) -> CGFloat {
+        switch type {
+        case "image":
+            return 282
+        case "table":
+            return CGFloat(max(tableRowCount(from: content), 1)) * 38 + 18
+        case "divider":
+            return 24
+        case "heading":
+            return CGFloat(lineCount(for: text, depth: depth, charactersPerLine: 30)) * 32 + 6
+        case "codeBlock":
+            return CGFloat(lineCount(for: text, depth: depth, charactersPerLine: 42)) * 22 + 18
+        case "quote":
+            return CGFloat(lineCount(for: text, depth: depth, charactersPerLine: 42)) * 24 + 8
+        default:
+            return CGFloat(lineCount(for: text, depth: depth, charactersPerLine: 42)) * 24
+        }
+    }
+
+    private static func lineCount(for text: String, depth: Int, charactersPerLine: Int) -> Int {
+        let adjustedWidth = max(18, charactersPerLine - depth * 6)
+        let paragraphs = text.split(separator: "\n", omittingEmptySubsequences: false)
+        if paragraphs.isEmpty { return 1 }
+        return paragraphs.reduce(0) { partial, paragraph in
+            let count = max(paragraph.count, 1)
+            return partial + Int(ceil(Double(count) / Double(adjustedWidth)))
+        }
+    }
+
+    private static func tableRowCount(from content: Any?) -> Int {
+        if let dict = content as? [String: Any], let rows = dict["rows"] as? [Any] {
+            return rows.count
+        }
+        return 2
+    }
+
+    private static func plainText(from value: Any?) -> String {
+        if let text = value as? String {
+            return text
+        }
+        if let items = value as? [[String: Any]] {
+            return items.map { item in
+                if let text = item["text"] as? String {
+                    return text
+                }
+                return plainText(from: item["content"])
+            }.joined()
+        }
+        if let dict = value as? [String: Any], let rows = dict["rows"] as? [[String: Any]] {
+            return rows.map { row in
+                let cells = row["cells"] as? [[String: Any]] ?? []
+                return cells.map { plainText(from: $0["content"]) }.joined(separator: " ")
+            }.joined(separator: "\n")
+        }
+        return ""
     }
 }
 

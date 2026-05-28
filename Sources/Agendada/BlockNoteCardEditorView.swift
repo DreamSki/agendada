@@ -19,9 +19,11 @@ struct BlockNoteCardEditor: NSViewRepresentable {
     var onDebouncedSave: (BlockNoteEditorContent) -> Void
 
     func makeNSView(context: Context) -> NSView {
-        let container = NSView()
+        let container = NSClipView()
+        container.drawsBackground = false
         container.wantsLayer = true
         container.layer?.backgroundColor = NSColor.clear.cgColor
+        container.layer?.masksToBounds = true
         return container
     }
 
@@ -32,7 +34,7 @@ struct BlockNoteCardEditor: NSViewRepresentable {
         bridge.onChange = onChange
         bridge.onDebouncedSave = onDebouncedSave
         bridge.onHeightChange = { height in
-            let clamped = max(180, min(height, 900))
+            let clamped = max(1, min(height, 900))
             if abs(editorHeight - clamped) > 1 {
                 editorHeight = clamped
             }
@@ -86,6 +88,8 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
 
         let view = PasteInterceptWebView(frame: .zero, configuration: config)
         view.setValue(false, forKey: "drawsBackground")
+        view.wantsLayer = true
+        view.layer?.masksToBounds = true
         view.navigationDelegate = self
         view.allowsBackForwardNavigationGestures = false
         view.pasteHandler = { [weak self] in self?.handleFinderPaste() ?? false }
@@ -100,6 +104,19 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
     }()
 
     func attach(to container: NSView) {
+        if let clipView = container as? NSClipView {
+            if clipView.documentView !== webView {
+                webView.removeFromSuperview()
+                webView.translatesAutoresizingMaskIntoConstraints = true
+                webView.autoresizingMask = [.width, .height]
+                webView.frame = clipView.bounds
+                clipView.documentView = webView
+            } else if webView.frame != clipView.bounds {
+                webView.frame = clipView.bounds
+            }
+            return
+        }
+
         if webView.superview !== container {
             webView.removeFromSuperview()
             webView.translatesAutoresizingMaskIntoConstraints = false
@@ -114,6 +131,11 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
     }
 
     func detach(from container: NSView) {
+        if let clipView = container as? NSClipView, clipView.documentView === webView {
+            clipView.documentView = nil
+            return
+        }
+
         if webView.superview === container {
             webView.removeFromSuperview()
         }
@@ -470,14 +492,14 @@ private func blockNoteHTML() -> String {
           background: transparent;
           font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
           color: #333333;
-          overflow: visible;
+          overflow: hidden;
         }
         body { padding: 0; }
         .editor-shell {
-          min-height: 180px;
+          min-height: 0;
           padding: 0;
           background: transparent;
-          overflow: visible;
+          overflow: hidden;
         }
         .bn-container, .bn-editor {
           background: transparent !important;
@@ -487,10 +509,11 @@ private func blockNoteHTML() -> String {
           font-size: 14px;
           line-height: 1.65;
           caret-color: #F5A623;
-          overflow: visible !important;
+          overflow: hidden !important;
         }
         .bn-block-outer, .bn-block, .bn-block-content {
-          overflow: visible !important;
+          max-width: 100% !important;
+          overflow: hidden !important;
         }
         .bn-block-content[data-content-type="bulletListItem"]::before,
         .bn-block-content[data-content-type="numberedListItem"]::before {
@@ -509,12 +532,33 @@ private func blockNoteHTML() -> String {
         }
         .bn-inline-content {
           min-width: 2px !important;
+          max-width: 100% !important;
+          overflow-wrap: anywhere;
+        }
+        .bn-editor img {
+          max-width: 100% !important;
+          max-height: 260px !important;
+          object-fit: contain !important;
+        }
+        .bn-editor table {
+          width: 100% !important;
+          max-width: 100% !important;
+          table-layout: fixed;
+          border-collapse: collapse;
+          overflow: hidden;
+        }
+        .bn-editor td,
+        .bn-editor th {
+          padding: 7px 10px !important;
+          font-size: 14px !important;
+          line-height: 1.65 !important;
+          overflow-wrap: anywhere;
         }
         .bn-block-content[data-content-type="heading"] {
           color: #1A1A1A;
         }
         .fallback-editor {
-          min-height: 180px;
+          min-height: 0;
           outline: none;
           font-size: 14px;
           line-height: 1.65;
@@ -640,10 +684,44 @@ private func blockNoteHTML() -> String {
         function requestHeight() {
           requestAnimationFrame(function() {
             const root = document.getElementById("root");
-            const height = Math.max(180, Math.ceil(root.scrollHeight + 12));
+            if (!root) {
+              post("editorHeight", 1);
+              return;
+            }
+            const rootRect = root.getBoundingClientRect();
+            let bottom = 0;
+            root.querySelectorAll([
+              ".bn-block-outer",
+              ".bn-block",
+              ".bn-block-content",
+              ".bn-file-block-content",
+              ".bn-visual-media-wrapper",
+              ".bn-editor img",
+              ".bn-editor table",
+              "[role='toolbar']"
+            ].join(",")).forEach(function(element) {
+              const rect = element.getBoundingClientRect();
+              if (rect.height > 0) {
+                bottom = Math.max(bottom, rect.bottom - rootRect.top);
+              }
+            });
+            const height = Math.max(1, Math.ceil(bottom + 24));
             post("editorHeight", height);
           });
         }
+
+        function scheduleHeightChecks() {
+          requestHeight();
+          [40, 120, 300, 700, 1200].forEach(function(delay) {
+            setTimeout(requestHeight, delay);
+          });
+        }
+
+        document.addEventListener("load", function(event) {
+          if (event.target && event.target.tagName === "IMG") {
+            scheduleHeightChecks();
+          }
+        }, true);
 
         window.loadCard = function(cardId, blockJSONText) {
           clearTimeout(window.__agendada.saveTimer);
@@ -672,7 +750,7 @@ private func blockNoteHTML() -> String {
             console.error("Agendada BlockNote loadCard failed", error);
             editor.replaceBlocks(editor.document, emptyBlocks());
           }
-          setTimeout(function() { window.__agendada.suppressChange = false; requestHeight(); }, 0);
+          setTimeout(function() { window.__agendada.suppressChange = false; scheduleHeightChecks(); }, 0);
         };
 
         window.flushCurrentContent = async function() {
@@ -778,9 +856,15 @@ private func blockNoteHTML() -> String {
               window.loadCard(pending.cardId, pending.blockJSONText);
             }
             const observer = new ResizeObserver(requestHeight);
-            observer.observe(document.getElementById("root"));
-            requestHeight();
-            return function() { observer.disconnect(); };
+            const mutationObserver = new MutationObserver(scheduleHeightChecks);
+            const root = document.getElementById("root");
+            observer.observe(root);
+            mutationObserver.observe(root, { subtree: true, childList: true, attributes: true, characterData: true });
+            scheduleHeightChecks();
+            return function() {
+              observer.disconnect();
+              mutationObserver.disconnect();
+            };
           }, [editor]);
 
           return e("div", { className: "editor-shell" },
