@@ -152,14 +152,14 @@ final class ObservableLibraryStore {
         return store.relatedNotes(for: noteID)
     }
 
-    func summaryMarkdownForFilteredNotes() -> String {
+    func summaryForFilteredNotes() -> String {
         observeRevision()
-        return store.summaryMarkdownForFilteredNotes()
+        return store.summaryForFilteredNotes()
     }
 
-    func summaryMarkdown(for noteID: Note.ID) -> String? {
+    func summary(for noteID: Note.ID) -> String? {
         observeRevision()
-        return store.summaryMarkdown(for: noteID)
+        return store.summary(for: noteID)
     }
 
     func addNote(template: NoteTemplate = .blank) {
@@ -244,6 +244,9 @@ final class ObservableLibraryStore {
         noteID: Note.ID,
         title: String,
         body: String,
+        blockJSON: Data? = nil,
+        plainTextPreview: String? = nil,
+        previewHTML: String? = nil,
         scheduledDate: Date?,
         tags: [String],
         people: [String],
@@ -253,6 +256,9 @@ final class ObservableLibraryStore {
             noteID: noteID,
             title: title,
             body: body,
+            blockJSON: blockJSON,
+            plainTextPreview: plainTextPreview,
+            previewHTML: previewHTML,
             scheduledDate: scheduledDate,
             tags: tags,
             people: people,

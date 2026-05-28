@@ -18,7 +18,10 @@ let package = Package(
         ),
         .executableTarget(
             name: "Agendada",
-            dependencies: ["AgendadaCore"]
+            dependencies: ["AgendadaCore"],
+            resources: [
+                .copy("Resources/BlockNoteEditor")
+            ]
         ),
         .testTarget(
             name: "AgendadaTests",

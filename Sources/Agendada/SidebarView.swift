@@ -12,27 +12,24 @@ struct SidebarView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     overviewSection
                         .padding(.top, 2)
-                        .padding(.bottom, 8)
-
-                    if !store.smartOverviews.isEmpty {
-                        smartOverviewsSection
-                    }
+                        .padding(.bottom, 16)
 
                     ForEach(store.categories) { category in
                         categorySection(category)
                     }
                 }
-                .padding(.horizontal, 13)
                 .padding(.top, 46)
                 .padding(.bottom, 18)
             }
 
-            Divider()
-                .opacity(0.55)
-
             bottomToolbar
         }
         .background(AgendaColor.sidebarBg)
+        .overlay(alignment: .trailing) {
+            Rectangle()
+                .fill(AgendaColor.sidebarBorder)
+                .frame(width: 1)
+        }
         .sheet(item: $nameSheet) { sheet in
             NamePromptSheet(sheet: sheet) { name, query in
                 applyNameSheet(sheet, name: name, query: query)
@@ -71,26 +68,12 @@ struct SidebarView: View {
     private var overviewSection: some View {
         VStack(alignment: .leading, spacing: 2) {
             AgendaSidebarSectionLabel("概览")
-                .padding(.bottom, 2)
+                .padding(.bottom, 6)
 
-            sidebarButton("简达", systemImage: "agenda.focus.ring", selection: .overview(.focused), tint: AgendaColor.amber)
-            sidebarButton(todayTitle, systemImage: "calendar", selection: .overview(.today), tint: AgendaColor.tagCyan)
-            sidebarButton("待办事项", systemImage: "checklist", selection: .overview(.tasks), tint: Color(red: 0.95, green: 0.35, blue: 0.35))
-
-            AgendaSidebarStaticRow(title: "废纸篓", systemImage: "trash", tint: AgendaColor.textMuted)
-                .padding(.bottom, 24)
-        }
-    }
-
-    // MARK: - Smart Overviews Section
-
-    private var smartOverviewsSection: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            AgendaSidebarHeader(title: "智能概览", onAdd: nil, menuItems: { EmptyView() })
-
-            ForEach(store.smartOverviews) { smartOverview in
-                smartOverviewRow(smartOverview)
-            }
+            sidebarButton("简达", systemImage: "agenda.focus.dot", selection: .overview(.focused), tint: AgendaColor.amber)
+            sidebarButton(todayTitle, systemImage: "calendar", selection: .overview(.today), tint: Color(red: 0.29, green: 0.56, blue: 0.89))
+            sidebarButton("待办事项", systemImage: "checkmark.circle", selection: .overview(.tasks), tint: Color(red: 0.96, green: 0.32, blue: 0.37))
+            sidebarTrashButton
         }
     }
 
@@ -102,9 +85,6 @@ struct SidebarView: View {
             currentSelection: currentSelection,
             projects: store.projects(in: category.id),
             onSelectProject: { select(.project($0)) },
-            onAddProject: { nameSheet = .newProject(category) },
-            onRenameCategory: { nameSheet = .renameCategory(category) },
-            onDeleteCategory: { deletion = .category(category) },
             onRenameProject: { nameSheet = .renameProject($0) },
             onDeleteProject: { deletion = .project($0) }
         )
@@ -114,14 +94,20 @@ struct SidebarView: View {
 
     private var bottomToolbar: some View {
         HStack(spacing: 0) {
-            Button {
-                nameSheet = .newProject(defaultCategory)
+            Menu {
+                Button("新建项目") {
+                    nameSheet = .newProject(defaultCategory)
+                }
+                Button("新建分类") {
+                    nameSheet = .newCategory
+                }
             } label: {
                 Image(systemName: "plus")
                     .font(.system(size: 16, weight: .heavy))
                     .frame(width: 32, height: 32)
             }
-            .help("新建项目")
+            .menuStyle(.borderlessButton)
+            .help("新建项目或分类")
 
             Spacer()
 
@@ -137,6 +123,7 @@ struct SidebarView: View {
                     .font(.system(size: 14, weight: .medium))
                     .frame(width: 28, height: 28)
             }
+            .foregroundStyle(Color(red: 0.78, green: 0.78, blue: 0.80))
             .help("后退")
 
             Button {} label: {
@@ -144,6 +131,7 @@ struct SidebarView: View {
                     .font(.system(size: 14, weight: .medium))
                     .frame(width: 28, height: 28)
             }
+            .foregroundStyle(Color(red: 0.78, green: 0.78, blue: 0.80))
             .help("前进")
         }
         .buttonStyle(.plain)
@@ -153,7 +141,7 @@ struct SidebarView: View {
         .background(AgendaColor.toolbarCapsuleBg, in: Capsule())
         .overlay(Capsule().stroke(AgendaColor.sidebarBorder, lineWidth: 1))
         .shadow(color: .black.opacity(0.04), radius: 2, y: 1)
-        .padding(.horizontal, 22)
+        .padding(.horizontal, 12)
         .padding(.vertical, 10)
     }
 
@@ -207,28 +195,6 @@ struct SidebarView: View {
         }
     }
 
-    private func smartOverviewRow(_ smartOverview: SmartOverview) -> some View {
-        AgendaSidebarRow(
-            title: smartOverview.name,
-            systemImage: "line.3.horizontal.decrease.circle",
-            isSelected: currentSelection == .smartOverview(smartOverview.id),
-            tint: AgendaColor.amber,
-            selectedTextColor: AgendaColor.amber,
-            showsSelectionBackground: true
-        ) {
-            select(.smartOverview(smartOverview.id))
-        }
-        .contextMenu {
-            Button("重命名") {
-                nameSheet = .renameSmartOverview(smartOverview)
-            }
-
-            Button("删除", role: .destructive) {
-                deletion = .smartOverview(smartOverview)
-            }
-        }
-    }
-
     private var defaultCategory: ProjectCategory? {
         if let selectedProjectID = store.selectedProjectID,
            let categoryID = store.project(withID: selectedProjectID)?.categoryID {
@@ -241,6 +207,19 @@ struct SidebarView: View {
     private var todayTitle: String {
         Date().formatted(.dateTime.year().month().day())
     }
+
+    private var sidebarTrashButton: some View {
+        AgendaSidebarRow(
+            title: "废纸篓",
+            systemImage: "trash",
+            isSelected: false,
+            tint: AgendaColor.textMuted,
+            selectedTextColor: AgendaColor.amber,
+            showsSelectionBackground: false
+        ) {
+            // Trash functionality — P2
+        }
+    }
 }
 
 // MARK: - Category Section (with hover controls)
@@ -250,50 +229,16 @@ private struct CategorySectionView: View {
     let currentSelection: SidebarSelection?
     let projects: [Project]
     let onSelectProject: (Project.ID) -> Void
-    let onAddProject: () -> Void
-    let onRenameCategory: () -> Void
-    let onDeleteCategory: () -> Void
     let onRenameProject: (Project) -> Void
     let onDeleteProject: (Project) -> Void
 
-    @State private var isHoveringHeader = false
-
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 8) {
-                Text(category.name)
-                    .font(AgendaFont.sidebarSection)
-                    .foregroundStyle(AgendaColor.textMuted)
-
-                Spacer()
-
-                if isHoveringHeader {
-                    Button(action: onAddProject) {
-                        Image(systemName: "plus")
-                            .font(.system(size: 14, weight: .medium))
-                            .frame(width: 22, height: 22)
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(AgendaColor.textSecondary)
-                    .help("新建项目")
-
-                    Menu {
-                        Button("重命名") { onRenameCategory() }
-                        Button("删除分类", role: .destructive) { onDeleteCategory() }
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
-                            .font(.system(size: 14, weight: .medium))
-                            .frame(width: 22, height: 22)
-                    }
-                    .menuStyle(.borderlessButton)
-                    .foregroundStyle(AgendaColor.textSecondary)
-                    .help("分类操作")
-                }
-            }
-            .padding(.horizontal, 8)
-            .padding(.top, 18)
-            .padding(.bottom, 5)
-            .onHover { isHoveringHeader = $0 }
+            Text(category.name)
+                .font(AgendaFont.sidebarItem)
+                .foregroundStyle(AgendaColor.textMuted)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 6)
 
             ForEach(projects) { project in
                 AgendaSidebarRow(
@@ -312,6 +257,7 @@ private struct CategorySectionView: View {
                 }
             }
         }
+        .padding(.bottom, 16)
     }
 }
 
@@ -338,9 +284,9 @@ private struct AgendaSidebarRow: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 10) {
+            HStack(spacing: 8) {
                 SidebarIcon(systemImage: systemImage, tint: tint, isSelected: isSelected)
-                    .frame(width: 24, alignment: .center)
+                    .frame(width: 16, alignment: .center)
 
                 Text(title)
                     .font(isSelected ? AgendaFont.sidebarItemActive : AgendaFont.sidebarItem)
@@ -351,7 +297,6 @@ private struct AgendaSidebarRow: View {
 
                 Spacer(minLength: 0)
             }
-            .frame(height: AgendaSpacing.sidebarItemH)
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
             .contentShape(RoundedRectangle(cornerRadius: 6))
@@ -361,7 +306,7 @@ private struct AgendaSidebarRow: View {
                     RoundedRectangle(cornerRadius: 2)
                         .fill(AgendaColor.amber)
                         .frame(width: 4)
-                        .offset(x: -12)
+                        .offset(x: -8)
                         .padding(.vertical, 4)
                 }
             }
@@ -391,15 +336,16 @@ private struct SidebarIcon: View {
         if systemImage == "agenda.note.stack" {
             AgendaStackedDocumentIcon(color: tint)
                 .frame(width: 18, height: 18)
-        } else if systemImage == "agenda.focus.ring" {
+        } else if systemImage == "agenda.focus.dot" {
             ZStack {
                 Circle()
-                    .fill(tint.opacity(isSelected ? 0.18 : 0.06))
-                    .frame(width: 16, height: 16)
+                    .fill(tint)
+                    .frame(width: 10, height: 10)
                 Circle()
-                    .stroke(tint, lineWidth: 2)
-                    .frame(width: 16, height: 16)
+                    .stroke(tint.opacity(0.7), lineWidth: 1)
+                    .frame(width: 10, height: 10)
             }
+            .frame(width: 16, height: 16)
         } else {
             Image(systemName: systemImage)
                 .font(.system(size: AgendaIcon.sidebar))
@@ -456,9 +402,9 @@ private struct AgendaSidebarSectionLabel: View {
 
     var body: some View {
         Text(title)
-            .font(AgendaFont.sidebarSection)
+            .font(AgendaFont.sidebarItem)
             .foregroundStyle(AgendaColor.textMuted)
-            .padding(.horizontal, 8)
+            .padding(.horizontal, 16)
             .padding(.vertical, 6)
     }
 }
@@ -506,7 +452,7 @@ private struct AgendaSidebarHeader<MenuContent: View>: View {
             .foregroundStyle(AgendaColor.textMuted)
             .help("操作")
         }
-        .padding(.horizontal, 8)
+        .padding(.horizontal, 16)
         .padding(.top, 16)
         .padding(.bottom, 5)
     }

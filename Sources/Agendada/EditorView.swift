@@ -4,6 +4,7 @@ import SwiftUI
 struct EditorView: View {
     @Environment(ObservableLibraryStore.self) private var store
     @State private var draft = NoteDraft()
+    @State private var editorHeight: CGFloat = 340
 
     var body: some View {
         Group {
@@ -63,12 +64,15 @@ struct EditorView: View {
                         checklistSummary(note.checklistSummary)
                     }
 
-                    TextEditor(text: $draft.body)
-                        .font(.body)
-                        .scrollContentBackground(.hidden)
-                        .frame(minHeight: 340)
-                        .padding(10)
-                        .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 8))
+                    NoteEditor(
+                        html: $draft.body,
+                        editorHeight: $editorHeight,
+                        placeholder: "笔记正文",
+                        isEditable: true,
+                        minHeight: 340,
+                        maxHeight: 2000
+                    )
+                        .frame(height: max(340, editorHeight))
 
                     relatedNotes(for: note)
                 }
@@ -107,7 +111,7 @@ struct EditorView: View {
 
             Menu {
                 Button("复制摘要") {
-                    if let summary = store.summaryMarkdown(for: note.id) {
+                    if let summary = store.summary(for: note.id) {
                         copyToPasteboard(summary)
                     }
                 }

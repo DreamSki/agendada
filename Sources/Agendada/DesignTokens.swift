@@ -7,7 +7,7 @@ enum AgendaColor {
     static let amberBorder = Color(red: 0.94, green: 0.62, blue: 0.04)
 
     // Card active state — #FFFCF5, border #F5E5C0, handle #F0D59B
-    static let cardActiveFill = Color(red: 1.0, green: 0.988, blue: 0.961)
+    static let cardActiveFill = Color(red: 0.992, green: 0.984, blue: 0.973)
     static let cardActiveBorder = Color(red: 0.961, green: 0.898, blue: 0.753)
     static let cardDragHandle = Color(red: 0.941, green: 0.835, blue: 0.608)
 

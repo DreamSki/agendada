@@ -1,0 +1,159 @@
+:root {
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  min-height: 100%;
+  background: transparent;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+  color: #333333;
+  overflow: hidden !important;
+  -webkit-overflow-scrolling: auto;
+}
+
+body {
+  padding: 0;
+}
+
+.editor-shell {
+  min-height: 180px;
+  padding: 0;
+  background: transparent;
+  overflow: hidden !important;
+}
+
+.bn-container,
+.bn-editor {
+  background: transparent !important;
+}
+
+.bn-editor {
+  padding-inline: 30px 8px !important;
+  font-size: 14px;
+  line-height: 1.65;
+  caret-color: #F5A623;
+  overflow: hidden !important;
+}
+
+.bn-default-styles {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif !important;
+  font-size: 14px !important;
+  line-height: 1.65 !important;
+}
+
+.bn-default-styles p,
+.bn-default-styles h1,
+.bn-default-styles h2,
+.bn-default-styles h3,
+.bn-default-styles h4,
+.bn-default-styles h5,
+.bn-default-styles h6,
+.bn-default-styles li {
+  line-height: 1.65 !important;
+}
+
+.bn-block-outer,
+.bn-block,
+.bn-block-content {
+  overflow: visible !important;
+}
+
+.bn-block-outer {
+  line-height: 1.65 !important;
+}
+
+.bn-block-content {
+  padding: 3px 0 !important;
+}
+
+.bn-block-group .bn-block-group {
+  margin-left: 24px !important;
+}
+
+.bn-block-content[data-content-type="bulletListItem"]::before,
+.bn-block-content[data-content-type="numberedListItem"]::before {
+  color: #8E8E93 !important;
+  flex: 0 0 24px !important;
+  min-width: 24px !important;
+  padding-right: 0 !important;
+}
+
+.bn-block-content[data-content-type="checkListItem"] > div:first-child {
+  flex: 0 0 24px !important;
+  min-width: 24px !important;
+}
+
+.bn-block-content[data-content-type="checkListItem"] input[type="checkbox"] {
+  accent-color: #F5A623;
+  width: 14px;
+  height: 14px;
+}
+
+.bn-inline-content {
+  min-width: 2px !important;
+}
+
+.bn-block-content[data-content-type="heading"] {
+  color: #1A1A1A !important;
+  padding-top: 3px !important;
+  --level: 17px !important;
+  font-weight: 700 !important;
+}
+
+.bn-block-content[data-content-type="heading"][data-level="1"] {
+  --level: 20px !important;
+}
+
+.bn-block-content[data-content-type="heading"][data-level="3"] {
+  --level: 16px !important;
+}
+
+.bn-block-outer[data-prev-type="heading"] > .bn-block > .bn-block-content,
+.bn-block-outer:not([data-prev-type]) > .bn-block > .bn-block-content[data-content-type="heading"] {
+  font-size: var(--level) !important;
+}
+
+.bn-block-content[data-content-type="quote"] blockquote {
+  color: #333333 !important;
+  border-left: 3px solid #F5E5C0 !important;
+  margin: 0 !important;
+  padding-left: 10px !important;
+}
+
+.bn-block-content[data-content-type="codeBlock"] {
+  color: #2E2E30 !important;
+  background-color: rgba(0, 0, 0, 0.045) !important;
+  border-radius: 6px !important;
+}
+
+.bn-block-content[data-content-type="codeBlock"] > pre {
+  padding: 8px 10px !important;
+  white-space: pre-wrap !important;
+}
+
+.bn-block-content[data-content-type="divider"] hr {
+  border-top: 1px solid rgba(0, 0, 0, 0.10) !important;
+  margin: 10px 0 !important;
+}
+
+.fallback-editor {
+  min-height: 180px;
+  outline: none;
+  font-size: 14px;
+  line-height: 1.65;
+  caret-color: #F5A623;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.fallback-editor:empty::before {
+  content: "空白笔记";
+  color: #C7C7CC;
+}

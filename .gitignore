@@ -1,6 +1,7 @@
 .DS_Store
 /.build
 /dist
+/WebEditor/node_modules
 /Packages
 xcuserdata/
 DerivedData/

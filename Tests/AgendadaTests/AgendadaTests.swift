@@ -82,13 +82,13 @@ import Testing
     let store = LibraryStore.sample(today: now)
     store.selectOverview(.tasks)
 
-    let summary = store.summaryMarkdownForFilteredNotes(now: now)
+    let summary = store.summaryForFilteredNotes(now: now)
 
-    #expect(summary.contains("# Agendada 摘要"))
-    #expect(summary.contains("## 重点"))
-    #expect(summary.contains("## 待办"))
+    #expect(summary.contains("Agendada 摘要"))
+    #expect(summary.contains("重点"))
+    #expect(summary.contains("待办"))
     #expect(summary.contains("第一版范围"))
-    #expect(summary.contains("- [ ] 第一版范围：补齐时间线工作流"))
+    #expect(summary.contains("[ ] 第一版范围：补齐时间线工作流"))
     #expect(summary.contains("#MVP"))
     #expect(summary.contains("@产品"))
 }
@@ -97,7 +97,7 @@ import Testing
     let store = LibraryStore.sample()
     let note = try #require(store.filteredNotes().first)
 
-    let summary = try #require(store.summaryMarkdown(for: note.id))
+    let summary = try #require(store.summary(for: note.id))
 
     #expect(summary.contains("笔记数：1"))
     #expect(summary.contains(note.title))
@@ -269,7 +269,7 @@ import Testing
 
     #expect(note.title == "会议纪要")
     #expect(note.tags == ["会议"])
-    #expect(note.body.contains("## 议题"))
+    #expect(note.bodyPlainText.contains("议题"))
 }
 
 @Test func notesCanBeDuplicatedStarredScheduledAndDeleted() async throws {

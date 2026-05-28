@@ -66,12 +66,7 @@ public final class LibraryStore {
             Note(
                 projectID: launch.id,
                 title: "第一版范围",
-                body: """
-                三栏布局、本地数据模型、今天视图、当前关注、标签和基础搜索。
-
-                - [x] 搭好数据模型
-                - [ ] 补齐时间线工作流
-                """,
+                body: "<p>三栏布局、本地数据模型、今天视图、当前关注、标签和基础搜索。</p><ul data-type=\"taskList\"><li data-type=\"taskItem\" data-checked=\"true\"><label><input type=\"checkbox\"></label><div><p>搭好数据模型</p></div></li><li data-type=\"taskItem\" data-checked=\"false\"><label><input type=\"checkbox\"></label><div><p>补齐时间线工作流</p></div></li></ul>",
                 scheduledDate: today,
                 tags: ["MVP", "范围"],
                 people: ["产品"],
@@ -81,7 +76,7 @@ public final class LibraryStore {
             Note(
                 projectID: launch.id,
                 title: "编辑器取舍",
-                body: "第一版先用纯文本编辑区承载内容，保留后续替换为富文本编辑器的边界。",
+                body: "<p>第一版先用纯文本编辑区承载内容，保留后续替换为富文本编辑器的边界。</p>",
                 scheduledDate: tomorrow,
                 tags: ["编辑器"],
                 people: ["工程"]
@@ -89,7 +84,7 @@ public final class LibraryStore {
             Note(
                 projectID: research.id,
                 title: "竞品观察",
-                body: "记录 Apple Notes、Things、Notion、Obsidian 在项目笔记场景里的差异。",
+                body: "<p>记录 Apple Notes、Things、Notion、Obsidian 在项目笔记场景里的差异。</p>",
                 tags: ["调研"],
                 people: ["产品"],
                 status: .open
@@ -97,7 +92,7 @@ public final class LibraryStore {
             Note(
                 projectID: life.id,
                 title: "本周待办",
-                body: "把个人事务也放入同一时间线，验证工作与生活项目共存的体验。",
+                body: "<p>把个人事务也放入同一时间线，验证工作与生活项目共存的体验。</p>",
                 scheduledDate: today,
                 tags: ["个人"],
                 isFocused: false
@@ -258,13 +253,13 @@ public final class LibraryStore {
             .map(\.0)
     }
 
-    public func summaryMarkdownForFilteredNotes(now: Date = Date()) -> String {
-        summaryMarkdown(for: filteredNotes(now: now), now: now)
+    public func summaryForFilteredNotes(now: Date = Date()) -> String {
+        summaryText(for: filteredNotes(now: now), now: now)
     }
 
-    public func summaryMarkdown(for noteID: Note.ID, now: Date = Date()) -> String? {
+    public func summary(for noteID: Note.ID, now: Date = Date()) -> String? {
         guard let note = notes.first(where: { $0.id == noteID }) else { return nil }
-        return summaryMarkdown(for: [note], now: now)
+        return summaryText(for: [note], now: now)
     }
 
     @discardableResult
@@ -292,6 +287,9 @@ public final class LibraryStore {
             projectID: note.projectID,
             title: "\(note.title) 副本",
             body: note.body,
+            blockJSON: note.blockJSON,
+            plainTextPreview: note.plainTextPreview,
+            previewHTML: note.previewHTML,
             scheduledDate: note.scheduledDate,
             tags: note.tags,
             people: note.people,
@@ -429,6 +427,9 @@ public final class LibraryStore {
         noteID: Note.ID,
         title: String,
         body: String,
+        blockJSON: Data? = nil,
+        plainTextPreview: String? = nil,
+        previewHTML: String? = nil,
         scheduledDate: Date?,
         tags: [String],
         people: [String],
@@ -440,6 +441,15 @@ public final class LibraryStore {
 
         notes[index].title = title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "无标题" : title
         notes[index].body = body
+        if let blockJSON {
+            notes[index].blockJSON = blockJSON
+        }
+        if let plainTextPreview {
+            notes[index].plainTextPreview = plainTextPreview
+        }
+        if previewHTML != nil || blockJSON != nil {
+            notes[index].previewHTML = previewHTML
+        }
         notes[index].scheduledDate = scheduledDate
         notes[index].tags = normalizedList(tags)
         notes[index].people = normalizedList(people)
@@ -627,7 +637,7 @@ public final class LibraryStore {
             switch (lhs.scheduledDate, rhs.scheduledDate) {
             case let (lhsDate?, rhsDate?):
                 if lhsDate == rhsDate {
-                    return lhs.editedAt > rhs.editedAt
+                    return lhs.createdAt > rhs.createdAt
                 }
                 return lhsDate < rhsDate
             case (_?, nil):
@@ -635,7 +645,7 @@ public final class LibraryStore {
             case (nil, _?):
                 return false
             case (nil, nil):
-                return lhs.editedAt > rhs.editedAt
+                return lhs.createdAt > rhs.createdAt
             }
         }
     }
@@ -653,7 +663,7 @@ public final class LibraryStore {
 
     private func matchesSearch(_ searchText: String, note: Note, now: Date) -> Bool {
         let terms = searchText.split(separator: " ").map(String.init)
-        let haystack = ([note.title, note.body] + note.tags + note.people).joined(separator: " ").lowercased()
+        let haystack = ([note.title, note.bodyPlainText] + note.tags + note.people).joined(separator: " ").lowercased()
 
         return terms.allSatisfy { term in
             if let tag = prefixedValue("tag:", in: term) {
@@ -698,9 +708,9 @@ public final class LibraryStore {
         }
     }
 
-    private func summaryMarkdown(for summaryNotes: [Note], now: Date) -> String {
+    private func summaryText(for summaryNotes: [Note], now: Date) -> String {
         var lines = [
-            "# Agendada 摘要",
+            "Agendada 摘要",
             "",
             "生成：\(isoDateTime(now))",
             "笔记数：\(summaryNotes.count)"
@@ -718,28 +728,28 @@ public final class LibraryStore {
 
         if !highlightedNotes.isEmpty {
             lines.append("")
-            lines.append("## 重点")
+            lines.append("重点")
             for note in highlightedNotes {
-                lines.append("- \(summaryLine(for: note))")
+                lines.append("  - \(summaryLine(for: note))")
             }
         }
 
         let taskLines = summaryNotes.flatMap { note in
             checklistItems(in: note).map { item in
-                "- [\(item.isCompleted ? "x" : " ")] \(note.title)：\(item.title)"
+                "  - [\(item.isCompleted ? "x" : " ")] \(note.title)：\(item.title)"
             }
         }
 
         if !taskLines.isEmpty {
             lines.append("")
-            lines.append("## 待办")
+            lines.append("待办")
             lines.append(contentsOf: taskLines)
         }
 
         lines.append("")
-        lines.append("## 全部笔记")
+        lines.append("全部笔记")
         for note in summaryNotes {
-            lines.append("- \(summaryLine(for: note))")
+            lines.append("  - \(summaryLine(for: note))")
         }
 
         return lines.joined(separator: "\n")
@@ -781,7 +791,29 @@ public final class LibraryStore {
     }
 
     private func checklistItems(in note: Note) -> [(title: String, isCompleted: Bool)] {
-        note.body.components(separatedBy: .newlines).compactMap { line in
+        let html = note.body
+
+        // Parse task items from HTML
+        let taskPattern = try! NSRegularExpression(
+            pattern: #"<li data-type="taskItem" data-checked="(true|false)"><label><input type="checkbox"></label><div><p>(.*?)</p></div></li>"#,
+            options: []
+        )
+        let nsRange = NSRange(html.startIndex..<html.endIndex, in: html)
+        let matches = taskPattern.matches(in: html, range: nsRange)
+
+        if !matches.isEmpty {
+            return matches.compactMap { match in
+                guard match.numberOfRanges >= 3,
+                      let checkedRange = Range(match.range(at: 1), in: html),
+                      let textRange = Range(match.range(at: 2), in: html) else { return nil }
+                let checked = String(html[checkedRange]) == "true"
+                let text = String(html[textRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+                return (title: text.isEmpty ? "未命名待办" : text, isCompleted: checked)
+            }
+        }
+
+        // Fallback: parse legacy markdown checklists from plain text
+        return note.bodyPlainText.components(separatedBy: .newlines).compactMap { line in
             let trimmedLine = line.trimmingCharacters(in: .whitespacesAndNewlines)
             let lowercasedLine = trimmedLine.lowercased()
             let prefixes: [(String, Bool)] = [
@@ -790,13 +822,8 @@ public final class LibraryStore {
                 ("- [x]", true),
                 ("* [x]", true)
             ]
-
-            guard let prefix = prefixes.first(where: { lowercasedLine.hasPrefix($0.0) }) else {
-                return nil
-            }
-
-            let title = String(trimmedLine.dropFirst(prefix.0.count))
-                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let prefix = prefixes.first(where: { lowercasedLine.hasPrefix($0.0) }) else { return nil }
+            let title = String(trimmedLine.dropFirst(prefix.0.count)).trimmingCharacters(in: .whitespacesAndNewlines)
             return (title: title.isEmpty ? "未命名待办" : title, isCompleted: prefix.1)
         }
     }

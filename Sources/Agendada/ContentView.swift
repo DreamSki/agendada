@@ -3,8 +3,8 @@ import SwiftUI
 
 struct ContentView: View {
     @Environment(ObservableLibraryStore.self) private var store
-    @State private var sidebarWidth: CGFloat = 260
-    @State private var detailWidth: CGFloat = 340
+    @State private var sidebarWidth: CGFloat = 240
+    @State private var detailWidth: CGFloat = 260
 
     var body: some View {
         @Bindable var store = store
@@ -13,8 +13,6 @@ struct ContentView: View {
             SidebarView()
                 .ignoresSafeArea(.container, edges: .top)
                 .frame(width: sidebarWidth)
-
-            Divider()
 
             NoteStreamView(searchText: $store.searchText)
                 .ignoresSafeArea(.container, edges: .top)

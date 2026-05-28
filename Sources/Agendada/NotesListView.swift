@@ -35,7 +35,7 @@ struct NotesListView: View {
                 Spacer()
 
                 Button {
-                    copyToPasteboard(store.summaryMarkdownForFilteredNotes())
+                    copyToPasteboard(store.summaryForFilteredNotes())
                 } label: {
                     Label("复制摘要", systemImage: "doc.on.doc")
                 }
@@ -167,7 +167,7 @@ private struct NoteRow: View {
                 }
             }
 
-            Text(note.body.isEmpty ? "无正文" : note.body)
+            Text(note.bodyPlainText.isEmpty ? "无正文" : note.bodyPlainText)
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .lineLimit(2)

@@ -1,0 +1,803 @@
+import AgendadaCore
+import AppKit
+import SwiftUI
+import WebKit
+
+struct BlockNoteEditorContent: Equatable {
+    var noteID: Note.ID
+    var blockJSON: Data
+    var plainTextPreview: String
+    var previewHTML: String?
+}
+
+@MainActor
+struct BlockNoteCardEditor: NSViewRepresentable {
+    let noteID: Note.ID
+    let blockJSON: Data
+    @Binding var editorHeight: CGFloat
+    var onChange: (BlockNoteEditorContent) -> Void
+    var onDebouncedSave: (BlockNoteEditorContent) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let container = NSView()
+        container.wantsLayer = true
+        container.layer?.backgroundColor = NSColor.clear.cgColor
+        return container
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        // Debug
+        let bridge = SharedBlockNoteWebView.shared
+        bridge.attach(to: nsView)
+        bridge.onChange = onChange
+        bridge.onDebouncedSave = onDebouncedSave
+        bridge.onHeightChange = { height in
+            let clamped = max(180, min(height, 900))
+            if abs(editorHeight - clamped) > 1 {
+                editorHeight = clamped
+            }
+        }
+        bridge.loadCard(noteID: noteID, blockJSON: blockJSON)
+        bridge.setReadOnly(false)
+    }
+
+    static func dismantleNSView(_ nsView: NSView, coordinator: ()) {
+        SharedBlockNoteWebView.shared.detach(from: nsView)
+    }
+}
+
+@MainActor
+final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
+    static let shared = SharedBlockNoteWebView()
+
+    var onChange: ((BlockNoteEditorContent) -> Void)?
+    var onDebouncedSave: ((BlockNoteEditorContent) -> Void)?
+    var onHeightChange: ((CGFloat) -> Void)?
+
+    private var loadedNoteID: Note.ID?
+    private var pendingLoad: (noteID: Note.ID, blockJSON: Data)?
+    private var isReady = false
+
+    private struct PreparedEditorBundle {
+        let editorURL: URL
+        let readAccessURL: URL
+    }
+
+    private struct AssetImportResponse: Encodable {
+        var ok: Bool
+        var assetId: String?
+        var url: String?
+        var name: String?
+        var caption: String?
+        var showPreview: Bool?
+        var error: String?
+    }
+
+    private lazy var webView: WKWebView = {
+        let config = WKWebViewConfiguration()
+        config.defaultWebpagePreferences.allowsContentJavaScript = true
+        config.preferences.setValue(true, forKey: "developerExtrasEnabled")
+
+        let controller = config.userContentController
+        controller.addUserScript(WKUserScript(source: offlineNetworkGuardScript(), injectionTime: .atDocumentStart, forMainFrameOnly: false))
+        ["cardChanged", "cardSaved", "editorFocused", "editorBlurred", "requestAssetImport", "editorHeight", "editorReady"].forEach {
+            controller.add(self, name: $0)
+        }
+
+        let view = PasteInterceptWebView(frame: .zero, configuration: config)
+        view.setValue(false, forKey: "drawsBackground")
+        view.navigationDelegate = self
+        view.allowsBackForwardNavigationGestures = false
+        view.pasteHandler = { [weak self] in self?.handleFinderPaste() ?? false }
+        if let bundle = preparedEditorBundle() {
+            print("Agendada BlockNote editor loading local bundle: \(bundle.editorURL.path)")
+            view.loadFileURL(bundle.editorURL, allowingReadAccessTo: bundle.readAccessURL)
+        } else {
+            assertionFailure("Missing bundled BlockNote editor resources")
+            view.loadHTMLString(blockNoteHTML(), baseURL: nil)
+        }
+        return view
+    }()
+
+    func attach(to container: NSView) {
+        if webView.superview !== container {
+            webView.removeFromSuperview()
+            webView.translatesAutoresizingMaskIntoConstraints = false
+            container.addSubview(webView)
+            NSLayoutConstraint.activate([
+                webView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+                webView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+                webView.topAnchor.constraint(equalTo: container.topAnchor),
+                webView.bottomAnchor.constraint(equalTo: container.bottomAnchor)
+            ])
+        }
+    }
+
+    func detach(from container: NSView) {
+        if webView.superview === container {
+            webView.removeFromSuperview()
+        }
+    }
+
+    func loadCard(noteID: Note.ID, blockJSON: Data) {
+        guard isReady else {
+            pendingLoad = (noteID, blockJSON)
+            return
+        }
+
+        guard loadedNoteID != noteID else {
+            return
+        }
+
+        loadedNoteID = noteID
+        let blockJSONString = String(data: blockJSON, encoding: .utf8) ?? Note.emptyBlockJSONString
+        let script = "window.loadCard(\(jsString(noteID.uuidString)), \(jsString(blockJSONString))); setTimeout(function(){ window.focusEditor && window.focusEditor(); }, 40);"
+        webView.evaluateJavaScript(script)
+    }
+
+    func focusEditor() {
+        webView.evaluateJavaScript("window.focusEditor && window.focusEditor();")
+    }
+
+    func setReadOnly(_ isReadOnly: Bool) {
+        webView.evaluateJavaScript("window.setReadOnly && window.setReadOnly(\(isReadOnly ? "true" : "false"));")
+    }
+
+    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
+        if let scheme = navigationAction.request.url?.scheme?.lowercased(),
+           scheme == "http" || scheme == "https" {
+            decisionHandler(.cancel)
+            return
+        }
+        decisionHandler(.allow)
+    }
+
+    func saveCurrentContentNow(completion: @escaping (BlockNoteEditorContent?) -> Void) {
+        guard isReady, loadedNoteID != nil else {
+            completion(nil)
+            return
+        }
+
+        webView.evaluateJavaScript("window.flushCurrentContent && window.flushCurrentContent();") { [weak self] result, _ in
+            Task { @MainActor in
+                completion(self?.content(from: result as Any))
+            }
+        }
+    }
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        switch message.name {
+        case "editorReady":
+            isReady = true
+            if let pendingLoad {
+                self.pendingLoad = nil
+                loadCard(noteID: pendingLoad.noteID, blockJSON: pendingLoad.blockJSON)
+            }
+
+        case "cardChanged":
+            guard let content = content(from: message.body), content.noteID == loadedNoteID else { return }
+            onChange?(content)
+
+        case "cardSaved":
+            guard let content = content(from: message.body), content.noteID == loadedNoteID else { return }
+            onDebouncedSave?(content)
+
+        case "editorHeight":
+            if let value = message.body as? CGFloat {
+                onHeightChange?(value)
+            } else if let value = message.body as? Double {
+                onHeightChange?(CGFloat(value))
+            } else if let value = message.body as? Int {
+                onHeightChange?(CGFloat(value))
+            }
+
+        case "requestAssetImport":
+            handleAssetImport(message.body)
+
+        default:
+            break
+        }
+    }
+
+    private func preparedEditorBundle() -> PreparedEditorBundle? {
+        guard let resourceURL = Bundle.module.resourceURL else {
+            return nil
+        }
+
+        let bundledEditorURL = resourceURL.appending(path: "BlockNoteEditor", directoryHint: .isDirectory)
+        let bundledIndexURL = bundledEditorURL.appending(path: "index.html")
+        guard FileManager.default.fileExists(atPath: bundledIndexURL.path) else {
+            return nil
+        }
+
+        let appSupportURL = appSupportDirectory()
+        let localEditorURL = appSupportURL.appending(path: "BlockNoteEditor", directoryHint: .isDirectory)
+        let localIndexURL = localEditorURL.appending(path: "index.html")
+
+        do {
+            try FileManager.default.createDirectory(at: appSupportURL, withIntermediateDirectories: true)
+            if FileManager.default.fileExists(atPath: localEditorURL.path) {
+                try FileManager.default.removeItem(at: localEditorURL)
+            }
+            try FileManager.default.copyItem(at: bundledEditorURL, to: localEditorURL)
+            return PreparedEditorBundle(editorURL: localIndexURL, readAccessURL: appSupportURL)
+        } catch {
+            print("Agendada failed to prepare writable BlockNote editor bundle: \(error)")
+            return PreparedEditorBundle(editorURL: bundledIndexURL, readAccessURL: bundledEditorURL)
+        }
+    }
+
+    private func handleAssetImport(_ body: Any) {
+        guard let dictionary = body as? [String: Any],
+              let requestID = dictionary["requestId"] as? String else {
+            return
+        }
+
+        // Handle file copy from local path (pasted from Finder)
+        if let filePath = dictionary["filePath"] as? String,
+           (dictionary["copyFromFile"] as? Bool == true || dictionary["copyFromFile"] as? Int == 1) {
+            let cleanPath = filePath.trimmingCharacters(in: CharacterSet(charactersIn: "'\""))
+            let sourceURL: URL
+            if cleanPath.hasPrefix("file://") {
+                sourceURL = URL(string: cleanPath) ?? URL(fileURLWithPath: String(cleanPath.dropFirst(7)))
+            } else {
+                sourceURL = URL(fileURLWithPath: cleanPath)
+            }
+            let assetID = UUID().uuidString
+            let fname = sanitizedFileName(sourceURL.lastPathComponent)
+            let targetURL = assetsDirectory().appending(path: "\(assetID)-\(fname)")
+            do {
+                try FileManager.default.createDirectory(at: assetsDirectory(), withIntermediateDirectories: true)
+                try FileManager.default.copyItem(at: sourceURL, to: targetURL)
+                resolveAssetImport(requestID: requestID, response: AssetImportResponse(
+                    ok: true, assetId: assetID, url: targetURL.standardizedFileURL.absoluteString,
+                    name: fname, caption: "", showPreview: true, error: nil
+                ))
+            } catch {
+                resolveAssetImport(requestID: requestID, response: AssetImportResponse(ok: false, error: error.localizedDescription))
+            }
+            return
+        }
+
+        guard let base64 = dictionary["base64"] as? String,
+              let data = Data(base64Encoded: base64) else {
+            resolveAssetImport(
+                requestID: requestID,
+                response: AssetImportResponse(ok: false, error: "Invalid image data")
+            )
+            return
+        }
+
+        let originalName = dictionary["fileName"] as? String ?? "image"
+        let mimeType = dictionary["mimeType"] as? String
+        let assetID = UUID().uuidString
+        let fileName = fileNameWithExtension(sanitizedFileName(originalName), mimeType: mimeType)
+        let targetURL = assetsDirectory().appending(path: "\(assetID)-\(fileName)")
+
+        do {
+            try FileManager.default.createDirectory(at: assetsDirectory(), withIntermediateDirectories: true)
+            try data.write(to: targetURL, options: [.atomic])
+            resolveAssetImport(
+                requestID: requestID,
+                response: AssetImportResponse(
+                    ok: true,
+                    assetId: assetID,
+                    url: targetURL.standardizedFileURL.absoluteString,
+                    name: fileName,
+                    caption: "",
+                    showPreview: true,
+                    error: nil
+                )
+            )
+        } catch {
+            resolveAssetImport(
+                requestID: requestID,
+                response: AssetImportResponse(ok: false, error: error.localizedDescription)
+            )
+        }
+    }
+
+    private func resolveAssetImport(requestID: String, response: AssetImportResponse) {
+        guard let data = try? JSONEncoder().encode(response),
+              let json = String(data: data, encoding: .utf8) else {
+            return
+        }
+
+        let script = "window.__agendadaAssetImported && window.__agendadaAssetImported(\(jsString(requestID)), \(json));"
+        webView.evaluateJavaScript(script)
+    }
+
+    private func appSupportDirectory() -> URL {
+        let baseURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.homeDirectoryForCurrentUser
+        return baseURL.appending(path: "Agendada", directoryHint: .isDirectory)
+    }
+
+    private func assetsDirectory() -> URL {
+        appSupportDirectory().appending(path: "Assets", directoryHint: .isDirectory)
+    }
+
+    private func sanitizedFileName(_ value: String) -> String {
+        let invalidCharacters = CharacterSet(charactersIn: "/\\?%*|\"<>:\0")
+        let sanitized = value
+            .components(separatedBy: invalidCharacters)
+            .joined(separator: "-")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return sanitized.isEmpty ? "image" : sanitized
+    }
+
+    private func fileNameWithExtension(_ value: String, mimeType: String?) -> String {
+        if !URL(fileURLWithPath: value).pathExtension.isEmpty {
+            return value
+        }
+
+        switch mimeType?.lowercased() {
+        case "image/jpeg", "image/jpg":
+            return "\(value).jpg"
+        case "image/gif":
+            return "\(value).gif"
+        case "image/webp":
+            return "\(value).webp"
+        case "image/heic":
+            return "\(value).heic"
+        default:
+            return "\(value).png"
+        }
+    }
+
+    private func content(from body: Any) -> BlockNoteEditorContent? {
+        guard let dictionary = body as? [String: Any],
+              let cardIDString = dictionary["cardId"] as? String,
+              let noteID = UUID(uuidString: cardIDString),
+              let blockJSONString = dictionary["blockJSON"] as? String else {
+            return nil
+        }
+
+        let blockJSON = Data(blockJSONString.utf8)
+        let plainTextPreview = dictionary["plainTextPreview"] as? String ?? ""
+        let previewHTML = dictionary["previewHTML"] as? String
+
+        return BlockNoteEditorContent(
+            noteID: noteID,
+            blockJSON: blockJSON,
+            plainTextPreview: plainTextPreview,
+            previewHTML: previewHTML
+        )
+    }
+
+    private func handleFinderPaste() -> Bool {
+        guard isReady, webView.window?.isKeyWindow == true else { return false }
+        let pasteboard = NSPasteboard.general
+        guard let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],
+              !urls.isEmpty else { return false }
+        let exts = Set(["png", "jpg", "jpeg", "gif", "webp", "heic", "tiff", "bmp"])
+        let imgURLs = urls.filter { exts.contains($0.pathExtension.lowercased()) }
+        guard !imgURLs.isEmpty else { return false }
+
+        for src in imgURLs {
+            let assetID = UUID().uuidString
+            let fn = sanitizedFileName(src.lastPathComponent)
+            let dst = assetsDirectory().appending(path: "\(assetID)-\(fn)")
+            do {
+                try FileManager.default.createDirectory(at: assetsDirectory(), withIntermediateDirectories: true)
+                try FileManager.default.copyItem(at: src, to: dst)
+                let urlStr = dst.standardizedFileURL.absoluteString
+                let safe = urlStr.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "\\'")
+                let script = """
+                (function(){var e=window.__agendada&&window.__agendada.editor;if(!e)return;var p=e.getTextCursorPosition(),r=p?p.block:e.document[e.document.length-1];var isEmpty=r&&(!r.content||(Array.isArray(r.content)?r.content.length===0:!String(r.content).trim()));if(isEmpty&&r.type!=='image'){e.updateBlock(r,{type:'image',props:{url:'\(safe)',name:'\(fn)',caption:'',showPreview:true}})}else{e.insertBlocks([{type:'image',props:{url:'\(safe)',name:'\(fn)',caption:'',showPreview:true}}],r,'after')}e.focus();})();
+                """
+                webView.evaluateJavaScript(script)
+            } catch {
+                print("Agendada paste import failed: \(error)")
+            }
+        }
+        return true
+    }
+
+    private func jsString(_ value: String) -> String {
+        guard let data = try? JSONEncoder().encode(value),
+              let encoded = String(data: data, encoding: .utf8) else {
+            return "\"\""
+        }
+        return encoded
+    }
+}
+
+@MainActor
+private final class PasteInterceptWebView: WKWebView {
+    var pasteHandler: (() -> Bool)?
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if event.modifierFlags.contains(.command),
+           event.charactersIgnoringModifiers == "v",
+           pasteHandler?() == true {
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        nextResponder?.scrollWheel(with: event)
+    }
+}
+
+private func offlineNetworkGuardScript() -> String {
+    """
+    (() => {
+      const isRemoteURL = (value) => {
+        try {
+          const url = new URL(typeof value === "string" ? value : value?.url || "", window.location.href);
+          return url.protocol === "http:" || url.protocol === "https:";
+        } catch {
+          return false;
+        }
+      };
+
+      const blockedError = () => new TypeError("Agendada editor runs offline; remote network requests are disabled.");
+
+      const originalFetch = window.fetch;
+      window.fetch = function(input, init) {
+        if (isRemoteURL(input)) {
+          return Promise.reject(blockedError());
+        }
+        return originalFetch.call(this, input, init);
+      };
+
+      const originalOpen = XMLHttpRequest.prototype.open;
+      XMLHttpRequest.prototype.open = function(method, url, ...rest) {
+        if (isRemoteURL(url)) {
+          throw blockedError();
+        }
+        return originalOpen.call(this, method, url, ...rest);
+      };
+    })();
+    """
+}
+
+private func blockNoteHTML() -> String {
+    """
+    <!doctype html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <style>
+        :root { color-scheme: light; }
+        * { box-sizing: border-box; }
+        html, body, #root {
+          margin: 0;
+          min-height: 100%;
+          background: transparent;
+          font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+          color: #333333;
+          overflow: visible;
+        }
+        body { padding: 0; }
+        .editor-shell {
+          min-height: 180px;
+          padding: 0;
+          background: transparent;
+          overflow: visible;
+        }
+        .bn-container, .bn-editor {
+          background: transparent !important;
+        }
+        .bn-editor {
+          padding-inline: 30px 8px !important;
+          font-size: 14px;
+          line-height: 1.65;
+          caret-color: #F5A623;
+          overflow: visible !important;
+        }
+        .bn-block-outer, .bn-block, .bn-block-content {
+          overflow: visible !important;
+        }
+        .bn-block-content[data-content-type="bulletListItem"]::before,
+        .bn-block-content[data-content-type="numberedListItem"]::before {
+          color: #8E8E93 !important;
+          flex: 0 0 24px !important;
+          min-width: 24px !important;
+        }
+        .bn-block-content[data-content-type="checkListItem"] > div:first-child {
+          flex: 0 0 24px !important;
+          min-width: 24px !important;
+        }
+        .bn-block-content[data-content-type="checkListItem"] input[type="checkbox"] {
+          accent-color: #F5A623;
+          width: 14px;
+          height: 14px;
+        }
+        .bn-inline-content {
+          min-width: 2px !important;
+        }
+        .bn-block-content[data-content-type="heading"] {
+          color: #1A1A1A;
+        }
+        .fallback-editor {
+          min-height: 180px;
+          outline: none;
+          font-size: 14px;
+          line-height: 1.65;
+          caret-color: #F5A623;
+          white-space: pre-wrap;
+          word-break: break-word;
+        }
+        .fallback-editor:empty::before {
+          content: "笔记正文";
+          color: #C7C7CC;
+        }
+      </style>
+    </head>
+    <body>
+      <div id="root"></div>
+      <script>
+        window.__agendada = {
+          currentCardId: null,
+          editor: null,
+          fallback: false,
+          readOnly: false,
+          saveTimer: null,
+          pendingLoad: null,
+          suppressChange: false
+        };
+
+        function post(name, payload) {
+          try { window.webkit.messageHandlers[name].postMessage(payload); } catch (error) {}
+        }
+
+        function emptyBlocks() {
+          return [{ type: "paragraph", content: "" }];
+        }
+
+        function normalizeBlocks(value) {
+          if (!Array.isArray(value) || value.length === 0) { return emptyBlocks(); }
+          return sanitizeBlocks(value);
+        }
+
+        function sanitizeBlocks(blocks) {
+          return blocks.map(function(block) {
+            const copy = JSON.parse(JSON.stringify(block));
+            delete copy.id;
+            if (!Array.isArray(copy.children)) { copy.children = []; }
+            if (Array.isArray(copy.children)) { copy.children = sanitizeBlocks(copy.children); }
+            return copy;
+          });
+        }
+
+        function textFromContent(content) {
+          if (typeof content === "string") { return content; }
+          if (!Array.isArray(content)) { return ""; }
+          return content.map(function(part) {
+            if (typeof part === "string") { return part; }
+            return part.text || "";
+          }).join("");
+        }
+
+        function blocksToPlainText(blocks) {
+          const lines = [];
+          function walk(items) {
+            items.forEach(function(block) {
+              const text = textFromContent(block.content).trim();
+              if (text) { lines.push(text); }
+              if (Array.isArray(block.children) && block.children.length) { walk(block.children); }
+            });
+          }
+          walk(blocks || []);
+          return lines.join("\\n").trim();
+        }
+
+        function escapeHTML(value) {
+          return String(value).replace(/[&<>"']/g, function(ch) {
+            if (ch === "&") { return "&amp;"; }
+            if (ch === "<") { return "&lt;"; }
+            if (ch === ">") { return "&gt;"; }
+            if (ch === '"') { return "&quot;"; }
+            return "&#39;";
+          });
+        }
+
+        function fallbackHTML(blocks) {
+          return (blocks || []).map(function(block) {
+            const text = escapeHTML(textFromContent(block.content));
+            switch (block.type) {
+              case "heading": return "<h2>" + text + "</h2>";
+              case "bulletListItem": return "<ul><li>" + text + "</li></ul>";
+              case "numberedListItem": return "<ol><li>" + text + "</li></ol>";
+              case "checkListItem": return "<ul data-type=\\"taskList\\"><li data-type=\\"taskItem\\" data-checked=\\"false\\"><div><p>" + text + "</p></div></li></ul>";
+              case "quote": return "<blockquote>" + text + "</blockquote>";
+              case "codeBlock": return "<pre><code>" + text + "</code></pre>";
+              case "image": return "";
+              default: return text ? "<p>" + text + "</p>" : "";
+            }
+          }).join("");
+        }
+
+        async function snapshot(editor) {
+          const blocks = sanitizeBlocks(editor ? editor.document : emptyBlocks());
+          let previewHTML = fallbackHTML(blocks);
+          if (editor && typeof editor.blocksToHTMLLossy === "function") {
+            try { previewHTML = await editor.blocksToHTMLLossy(blocks); } catch (error) {}
+          }
+          return {
+            cardId: window.__agendada.currentCardId,
+            blockJSON: JSON.stringify(blocks),
+            plainTextPreview: blocksToPlainText(blocks),
+            previewHTML: previewHTML
+          };
+        }
+
+        async function emitChanged(editor) {
+          if (window.__agendada.suppressChange || !window.__agendada.currentCardId) { return; }
+          const payload = await snapshot(editor);
+          post("cardChanged", payload);
+          clearTimeout(window.__agendada.saveTimer);
+          window.__agendada.saveTimer = setTimeout(async function() {
+            post("cardSaved", await snapshot(editor));
+          }, 500);
+          requestHeight();
+        }
+
+        function requestHeight() {
+          requestAnimationFrame(function() {
+            const root = document.getElementById("root");
+            const height = Math.max(180, Math.ceil(root.scrollHeight + 12));
+            post("editorHeight", height);
+          });
+        }
+
+        window.loadCard = function(cardId, blockJSONText) {
+          clearTimeout(window.__agendada.saveTimer);
+          window.__agendada.currentCardId = cardId;
+          let blocks = emptyBlocks();
+          try { blocks = normalizeBlocks(JSON.parse(blockJSONText)); } catch (error) {}
+
+          if (!window.__agendada.editor && !window.__agendada.fallback) {
+            window.__agendada.pendingLoad = { cardId: cardId, blockJSONText: blockJSONText };
+            return;
+          }
+
+          clearTimeout(window.__agendada.saveTimer);
+          if (window.__agendada.fallback) {
+            const fallback = document.querySelector(".fallback-editor");
+            if (fallback) { fallback.innerText = blocksToPlainText(blocks); }
+            requestHeight();
+            return;
+          }
+
+          const editor = window.__agendada.editor;
+          window.__agendada.suppressChange = true;
+          try {
+            editor.replaceBlocks(editor.document, blocks);
+          } catch (error) {
+            console.error("Agendada BlockNote loadCard failed", error);
+            editor.replaceBlocks(editor.document, emptyBlocks());
+          }
+          setTimeout(function() { window.__agendada.suppressChange = false; requestHeight(); }, 0);
+        };
+
+        window.flushCurrentContent = async function() {
+          clearTimeout(window.__agendada.saveTimer);
+          if (!window.__agendada.currentCardId) { return null; }
+          if (window.__agendada.fallback) {
+            const fallback = document.querySelector(".fallback-editor");
+            const text = fallback ? (fallback.innerText || "") : "";
+            const blocks = text.split(/\\n+/).filter(Boolean).map(function(line) {
+              return { type: "paragraph", content: line, children: [] };
+            });
+            const payload = {
+              cardId: window.__agendada.currentCardId,
+              blockJSON: JSON.stringify(blocks.length ? blocks : emptyBlocks()),
+              plainTextPreview: text.trim(),
+              previewHTML: fallbackHTML(blocks)
+            };
+            post("cardSaved", payload);
+            return payload;
+          }
+          const payload = await snapshot(window.__agendada.editor);
+          post("cardSaved", payload);
+          return payload;
+        };
+
+        window.focusEditor = function() {
+          if (window.__agendada.editor && typeof window.__agendada.editor.focus === "function") {
+            window.__agendada.editor.focus();
+          } else {
+            const fallback = document.querySelector(".fallback-editor");
+            if (fallback) { fallback.focus(); }
+          }
+        };
+
+        window.setReadOnly = function(readOnly) {
+          window.__agendada.readOnly = !!readOnly;
+          const fallback = document.querySelector(".fallback-editor");
+          if (fallback) { fallback.contentEditable = readOnly ? "false" : "true"; }
+        };
+
+        function startFallback() {
+          if (window.__agendada.editor || window.__agendada.fallback) { return; }
+          window.__agendada.fallback = true;
+          const root = document.getElementById("root");
+          root.innerHTML = '<div class="fallback-editor" contenteditable="true"></div>';
+          const fallback = root.querySelector(".fallback-editor");
+          fallback.addEventListener("input", async function() {
+            const text = fallback.innerText || "";
+            const blocks = text.split(/\\n+/).filter(Boolean).map(function(line) {
+              return { type: "paragraph", content: line, children: [] };
+            });
+            const payload = {
+              cardId: window.__agendada.currentCardId,
+              blockJSON: JSON.stringify(blocks.length ? blocks : emptyBlocks()),
+              plainTextPreview: text.trim(),
+              previewHTML: fallbackHTML(blocks)
+            };
+            post("cardChanged", payload);
+            clearTimeout(window.__agendada.saveTimer);
+            window.__agendada.saveTimer = setTimeout(function() { post("cardSaved", payload); }, 500);
+            requestHeight();
+          });
+          post("editorReady", "fallback");
+          if (window.__agendada.pendingLoad) {
+            const pending = window.__agendada.pendingLoad;
+            window.__agendada.pendingLoad = null;
+            window.loadCard(pending.cardId, pending.blockJSONText);
+          }
+          requestHeight();
+        }
+
+        setTimeout(startFallback, 5000);
+      </script>
+      <script type="importmap">
+        {
+          "imports": {
+            "react": "./offline-fallback/react.js",
+            "react/jsx-runtime": "./offline-fallback/react-jsx-runtime.js",
+            "react-dom": "./offline-fallback/react-dom.js",
+            "react-dom/client": "./offline-fallback/react-dom-client.js",
+            "@blocknote/react": "./offline-fallback/blocknote-react.js",
+            "@blocknote/mantine": "./offline-fallback/blocknote-mantine.js"
+          }
+        }
+      </script>
+      <script type="module">
+        import React from "react";
+        import { createRoot } from "react-dom/client";
+        import { useCreateBlockNote } from "@blocknote/react";
+        import { BlockNoteView } from "@blocknote/mantine";
+
+        const e = React.createElement;
+
+        function EditorApp() {
+          const editor = useCreateBlockNote({ initialContent: emptyBlocks() });
+
+          React.useEffect(function() {
+            window.__agendada.editor = editor;
+            post("editorReady", "ready");
+            if (window.__agendada.pendingLoad) {
+              const pending = window.__agendada.pendingLoad;
+              window.__agendada.pendingLoad = null;
+              window.loadCard(pending.cardId, pending.blockJSONText);
+            }
+            const observer = new ResizeObserver(requestHeight);
+            observer.observe(document.getElementById("root"));
+            requestHeight();
+            return function() { observer.disconnect(); };
+          }, [editor]);
+
+          return e("div", { className: "editor-shell" },
+            e(BlockNoteView, {
+              editor: editor,
+              editable: !window.__agendada.readOnly,
+              theme: "light",
+              onChange: function() { emitChanged(editor); },
+              onFocus: function() { post("editorFocused", window.__agendada.currentCardId || ""); },
+              onBlur: function() { post("editorBlurred", window.__agendada.currentCardId || ""); }
+            })
+          );
+        }
+
+        createRoot(document.getElementById("root")).render(e(EditorApp));
+      </script>
+    </body>
+    </html>
+    """
+}
