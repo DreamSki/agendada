@@ -23,6 +23,7 @@ struct AgendadaMain {
 @MainActor
 private final class AppDelegate: NSObject, NSApplicationDelegate {
     private var window: NSWindow?
+    private var measurementWindow: NSWindow?
     private let store = ObservableLibraryStore.load()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -40,6 +41,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         let appMenu = NSMenu()
         appMenuItem.submenu = appMenu
         appMenu.addItem(NSMenuItem(title: "关于 Agendada", action: #selector(NSApp.orderFrontStandardAboutPanel(_:)), keyEquivalent: ""))
+        appMenu.addItem(NSMenuItem(title: "样式测量工具", action: #selector(AppDelegate.showMeasurementWindow), keyEquivalent: "m"))
         appMenu.addItem(.separator())
         appMenu.addItem(NSMenuItem(title: "退出 Agendada", action: #selector(NSApp.terminate(_:)), keyEquivalent: "q"))
 
@@ -159,6 +161,31 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         if lineText.hasPrefix(marker) { return }
         tv.setSelectedRange(lineRange)
         tv.insertText(marker, replacementRange: NSRange(location: lineRange.location, length: 0))
+    }
+
+    @objc private func showMeasurementWindow() {
+        if let measurementWindow {
+            measurementWindow.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+
+        let contentView = StyleMeasurementView()
+            .frame(width: 600, height: 700)
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 600, height: 700),
+            styleMask: [.titled, .closable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "样式测量工具"
+        window.center()
+        window.contentView = NSHostingView(rootView: contentView)
+        window.makeKeyAndOrderFront(nil)
+
+        self.measurementWindow = window
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     func showMainWindow() {

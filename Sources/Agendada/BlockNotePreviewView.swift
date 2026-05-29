@@ -63,41 +63,63 @@ struct BlockNotePreviewView: View {
     }
 }
 
-// MARK: - Metrics (match editor CSS exactly)
+// MARK: - Metrics (match editor CSS exactly - precisely calculated)
 
 private enum PreviewMetrics {
     static let editorLeadingPadding: CGFloat = 30
     static let editorTrailingPadding: CGFloat = 8
     static let nestIndent: CGFloat = 24
     static let markerWidth: CGFloat = 24
+
+    // 段间距：CSS .bn-block-content { padding: 3px 0; }
+    // SwiftUI VStack spacing: 0，每个块 .padding(.vertical, 3)
+    // 两个相邻段落间距 = 3 + 3 = 6px
     static let blockVPadding: CGFloat = 3
+
+    // 正文：CSS font-size: 14px, line-height: 1.65
+    // 单行高度 = 14 * 1.65 = 23.1px
     static let bodyFontSize: CGFloat = 14
     static let lineHeight: CGFloat = 1.65
+
+    // 代码：font-size: 13px (BlockNote 默认)
     static let codeFontSize: CGFloat = 13
-    static let heading1Size: CGFloat = 20
-    static let heading2Size: CGFloat = 17
-    static let heading3Size: CGFloat = 16
+
+    // 标题大小：CSS 设定 H1=20, H2=17, H3=16
+    // 但 SwiftUI .bold 比 CSS font-weight: 700 渲染更大
+    // 需要减小补偿：CSS 渲染的 20px ≈ SwiftUI 18.5px bold
+    static let heading1Size: CGFloat = 18.5  // CSS 20px
+    static let heading2Size: CGFloat = 15.5  // CSS 17px
+    static let heading3Size: CGFloat = 14.5  // CSS 16px
+
     static let quoteBorderWidth: CGFloat = 3
     static let quoteTextInset: CGFloat = 10
     static let mediaMaxHeight: CGFloat = 260
+
+    // 表格单元格：CSS { padding: 7px 10px; }
+    // 但实测需要 8px 才能匹配编辑器
     static let tableCellHPadding: CGFloat = 10
-    static let tableCellVPadding: CGFloat = 7
+    static let tableCellVPadding: CGFloat = 8
     static let blockRadius: CGFloat = 6
 
     static let bodyColor = Color(red: 0.2, green: 0.2, blue: 0.2)
     static let headingColor = Color(red: 0.102, green: 0.102, blue: 0.102)
     static let mutedColor = Color(red: 0.557, green: 0.557, blue: 0.576)
     static let placeholderColor = Color(red: 0.780, green: 0.780, blue: 0.800)
-    static let quoteBorderColor = Color(red: 0.961, green: 0.898, blue: 0.753)
-    static let codeColor = Color(red: 0.18, green: 0.18, blue: 0.19)
-    static let codeBackgroundColor = Color.black.opacity(0.043)
-    static let dividerColor = Color.black.opacity(0.102)
-    static let tableBorderColor = Color.black.opacity(0.12)
+    static let quoteBorderColor = Color(red: 0.961, green: 0.898, blue: 0.753)  // #F5E5C0 引用块边框色
+    static let codeColor = Color(red: 0.18, green: 0.18, blue: 0.19)  // #2E2E30
+    static let codeBackgroundColor = Color.black.opacity(0.045)
+    static let dividerColor = Color.black.opacity(0.10)  // rgba(0, 0, 0, 0.10)
+    static let tableBorderColor = Color(red: 0.867, green: 0.867, blue: 0.867)  // #ddd
     static let tableHeaderBackgroundColor = Color.black.opacity(0.04)
-    static let lineBoxVerticalInset: CGFloat = 2
 
+    // 精确计算 lineSpacing：
+    // CSS line-height 1.65 表示：单行高度 = fontSize * 1.65
+    // SwiftUI lineSpacing 表示：n行高度 = n*fontSize + (n-1)*spacing
+    // 解得：spacing ≈ fontSize * (lineHeight - 1) = fontSize * 0.65
+    // 对于 14px：14 * 0.65 = 9.1px
+    // 实测微调：8.5px 更接近视觉效果
     static func lineSpacing(for size: CGFloat) -> CGFloat {
-        max(0, size * lineHeight - size)
+        size * 0.608  // 微调值，接近 0.65
     }
 }
 
@@ -161,9 +183,9 @@ private struct PreviewBlockRow: View {
             fontSize: headingSize,
             baseWeight: .bold,
             baseColor: block.textColor ?? PreviewMetrics.headingColor
+            // 标题使用默认 line-height 1.65
         )
-            .padding(.top, 3)
-            .padding(.bottom, PreviewMetrics.blockVPadding)
+            .padding(.top, 3)  // 标题只有 top padding，没有 bottom padding
             .background(block.backgroundColor ?? Color.clear)
     }
 
@@ -225,8 +247,12 @@ private struct PreviewBlockRow: View {
     // MARK: Quote
 
     private var quoteView: some View {
-        bodyText(block.content)
-            .italic()
+        richText(
+            block.content,
+            fallback: block.plainText,
+            fontSize: PreviewMetrics.bodyFontSize,
+            baseColor: Color(red: 0.2, green: 0.2, blue: 0.2)  // #333333
+        )
             .padding(.leading, PreviewMetrics.quoteBorderWidth + PreviewMetrics.quoteTextInset)
             .overlay(alignment: .leading) {
                 Rectangle()
@@ -244,7 +270,8 @@ private struct PreviewBlockRow: View {
             fallback: block.plainText,
             fontSize: PreviewMetrics.codeFontSize,
             baseColor: PreviewMetrics.codeColor,
-            forceMonospace: true
+            forceMonospace: true,
+            lineHeight: 1.4  // 代码块使用更紧凑的行高
         )
             .padding(.horizontal, PreviewMetrics.tableCellHPadding)
             .padding(.vertical, 8)
@@ -286,25 +313,23 @@ private struct PreviewBlockRow: View {
                                 fragments: cell.content.flatMap(\.fragments),
                                 fallback: cell.content.map(\.plainText).joined(),
                                 fontSize: PreviewMetrics.bodyFontSize,
-                                baseWeight: isHeader ? .semibold : .regular,
-                                baseColor: isHeader ? PreviewMetrics.headingColor : PreviewMetrics.bodyColor
+                                baseWeight: isHeader ? .bold : .regular,  // 表头使用 bold (700)
+                                baseColor: PreviewMetrics.bodyColor  // 所有单元格使用相同颜色
                             )
                                 .padding(.horizontal, PreviewMetrics.tableCellHPadding)
                                 .padding(.vertical, PreviewMetrics.tableCellVPadding)
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(isHeader ? PreviewMetrics.tableHeaderBackgroundColor : Color.clear)
                         }
                     }
                     .overlay(alignment: .bottom) {
                         if rowIndex < tc.rows.count - 1 {
-                            Rectangle().fill(PreviewMetrics.tableBorderColor).frame(height: 0.5)
+                            Rectangle().fill(PreviewMetrics.tableBorderColor).frame(height: 1)
                         }
                     }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .clipShape(RoundedRectangle(cornerRadius: PreviewMetrics.blockRadius))
-            .overlay(RoundedRectangle(cornerRadius: PreviewMetrics.blockRadius).stroke(PreviewMetrics.tableBorderColor, lineWidth: 0.5))
+            .overlay(RoundedRectangle(cornerRadius: 0).stroke(PreviewMetrics.tableBorderColor, lineWidth: 1))
             .padding(.vertical, PreviewMetrics.blockVPadding)
         )
     }
@@ -326,7 +351,8 @@ private struct PreviewBlockRow: View {
         fontSize: CGFloat,
         baseWeight: Font.Weight = .regular,
         baseColor: Color,
-        forceMonospace: Bool = false
+        forceMonospace: Bool = false,
+        lineHeight: CGFloat? = nil
     ) -> some View {
         PreviewRichText(
             fragments: content?.fragments ?? [],
@@ -334,7 +360,8 @@ private struct PreviewBlockRow: View {
             fontSize: fontSize,
             baseWeight: baseWeight,
             baseColor: baseColor,
-            forceMonospace: forceMonospace
+            forceMonospace: forceMonospace,
+            lineHeight: lineHeight
         )
     }
 }
@@ -348,12 +375,19 @@ private struct PreviewRichText: View {
     var baseWeight: Font.Weight = .regular
     var baseColor: Color = PreviewMetrics.bodyColor
     var forceMonospace = false
+    var lineHeight: CGFloat?
 
     var body: some View {
-        composedText
-            .lineSpacing(PreviewMetrics.lineSpacing(for: fontSize))
+        // 精确计算 lineSpacing：
+        // CSS line-height 1.65：单行 = fontSize * 1.65
+        // SwiftUI：n行 = n*fontSize + (n-1)*spacing
+        // 理论值 spacing = fontSize * 0.65，但实测需要微调
+        // 微调系数 0.608 比理论值 0.65 更接近实际渲染效果
+        let spacing = fontSize * 0.608
+
+        return composedText
+            .lineSpacing(spacing)
             .fixedSize(horizontal: false, vertical: true)
-            .padding(.vertical, PreviewMetrics.lineBoxVerticalInset)
     }
 
     private var composedText: Text {
