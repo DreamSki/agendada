@@ -19,12 +19,7 @@ struct BlockNoteCardEditor: NSViewRepresentable {
     var onDebouncedSave: (BlockNoteEditorContent) -> Void
 
     func makeNSView(context: Context) -> NSView {
-        let container = NSClipView()
-        container.drawsBackground = false
-        container.wantsLayer = true
-        container.layer?.backgroundColor = NSColor.clear.cgColor
-        container.layer?.masksToBounds = true
-        return container
+        return NSView()
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
@@ -104,19 +99,6 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
     }()
 
     func attach(to container: NSView) {
-        if let clipView = container as? NSClipView {
-            if clipView.documentView !== webView {
-                webView.removeFromSuperview()
-                webView.translatesAutoresizingMaskIntoConstraints = true
-                webView.autoresizingMask = [.width, .height]
-                webView.frame = clipView.bounds
-                clipView.documentView = webView
-            } else if webView.frame != clipView.bounds {
-                webView.frame = clipView.bounds
-            }
-            return
-        }
-
         if webView.superview !== container {
             webView.removeFromSuperview()
             webView.translatesAutoresizingMaskIntoConstraints = false
@@ -131,11 +113,6 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
     }
 
     func detach(from container: NSView) {
-        if let clipView = container as? NSClipView, clipView.documentView === webView {
-            clipView.documentView = nil
-            return
-        }
-
         if webView.superview === container {
             webView.removeFromSuperview()
         }
@@ -688,24 +665,12 @@ private func blockNoteHTML() -> String {
               post("editorHeight", 1);
               return;
             }
-            const rootRect = root.getBoundingClientRect();
-            let bottom = 0;
-            root.querySelectorAll([
-              ".bn-block-outer",
-              ".bn-block",
-              ".bn-block-content",
-              ".bn-file-block-content",
-              ".bn-visual-media-wrapper",
-              ".bn-editor img",
-              ".bn-editor table",
-              "[role='toolbar']"
-            ].join(",")).forEach(function(element) {
-              const rect = element.getBoundingClientRect();
-              if (rect.height > 0) {
-                bottom = Math.max(bottom, rect.bottom - rootRect.top);
-              }
-            });
-            const height = Math.max(1, Math.ceil(bottom + 24));
+            const editor = root.querySelector(".bn-editor");
+            if (!editor) {
+              post("editorHeight", 1);
+              return;
+            }
+            const height = Math.max(1, Math.ceil(editor.scrollHeight));
             post("editorHeight", height);
           });
         }

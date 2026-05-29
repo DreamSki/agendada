@@ -204,13 +204,17 @@ private struct StreamNoteRow: View {
     // MARK: - Body
 
     private var bodyContent: some View {
-        let estimatedEditorHeight = BlockNoteEditorHeightEstimator.estimate(from: draft.blockJSON)
-        let stableBodyHeight = max(1, max(capturedPreviewHeight, estimatedEditorHeight))
+        // 统一高度：取预览和编辑器的最大值
+        let unifiedHeight = max(capturedPreviewHeight, editorHeight)
+        // 初始时（高度为0）让内容自然扩展
+        let useFixedHeight = unifiedHeight > 0
 
         return ZStack(alignment: .topLeading) {
+            // 预览层
             BlockNotePreviewView(note: note)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
+                .frame(height: useFixedHeight ? unifiedHeight : nil, alignment: .top)
                 .opacity(isSelected ? 0 : (isNoteDimmed ? 0.58 : 1))
                 .allowsHitTesting(!isSelected)
                 .background(
@@ -220,11 +224,9 @@ private struct StreamNoteRow: View {
                 )
                 .onPreferenceChange(PreviewHeightKey.self) { h in
                     capturedPreviewHeight = h
-                    if isSelected && !editorHasUserChanges {
-                        editorHeight = h
-                    }
                 }
 
+            // 编辑器层
             if isSelected {
                 BlockNoteCardEditor(
                     noteID: note.id,
@@ -239,12 +241,11 @@ private struct StreamNoteRow: View {
                     }
                 )
                 .frame(maxWidth: .infinity, alignment: .topLeading)
-                .frame(height: stableBodyHeight, alignment: .top)
-                .clipShape(Rectangle())
+                .frame(height: unifiedHeight, alignment: .top)
                 .opacity(isNoteDimmed ? 0.58 : 1)
             }
         }
-        .frame(height: stableBodyHeight, alignment: .top)
+        .frame(height: useFixedHeight ? unifiedHeight : nil, alignment: .top)
     }
 
     // MARK: - Bullet

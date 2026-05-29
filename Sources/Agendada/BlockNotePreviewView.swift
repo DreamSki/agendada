@@ -495,10 +495,8 @@ private struct PreviewBlock: Decodable, Identifiable {
     }
 
     var isVisuallyEmpty: Bool {
-        switch type {
-        case "divider", "image", "table": return false
-        default: return plainText.isEmpty
-        }
+        // 所有 block 都要显示，包括空段落和空列表项
+        return false
     }
 
     var tableContent: PreviewTableContent? {
