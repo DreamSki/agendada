@@ -515,70 +515,46 @@ private struct StreamNoteRow: View {
     // MARK: - Body
 
     private var bodyContent: some View {
-        let unifiedHeight = max(capturedPreviewHeight, editorHeight)
-        let useFixedHeight = unifiedHeight > 0
+        let cardHeight = max(capturedPreviewHeight, editorHeight)
 
         return ZStack(alignment: .topLeading) {
-            if !isSelected || !editorIsVisible {
-                BlockNotePreviewView(note: note)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-                    .frame(height: useFixedHeight ? unifiedHeight : nil, alignment: .top)
-                    .opacity(isNoteDimmed ? 0.58 : 1)
-                    .allowsHitTesting(!isSelected)
-                    .overlay(
-                        GeometryReader { geo in
-                            Color.clear
-                                .allowsHitTesting(false)
-                                .preference(key: PreviewHeightKey.self, value: geo.size.height)
-                        }
-                    )
-                    .onPreferenceChange(PreviewHeightKey.self) { h in
-                        if h > 0 {
-                            capturedPreviewHeight = h
-                        }
+            // Preview — always present, measures its natural height for card sizing.
+            BlockNotePreviewView(note: note)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .opacity(isSelected && editorIsVisible ? 0 : (isNoteDimmed ? 0.58 : 1))
+                .allowsHitTesting(false)
+                .overlay(
+                    GeometryReader { geo in
+                        Color.clear
+                            .allowsHitTesting(false)
+                            .preference(key: PreviewHeightKey.self, value: geo.size.height)
                     }
-            }
+                )
+                .onPreferenceChange(PreviewHeightKey.self) { h in
+                    if h > 0 { capturedPreviewHeight = h }
+                }
 
+            // Editor
             if isSelected {
                 BlockNoteCardEditor(
                     noteID: note.id,
                     blockJSON: draft.blockJSON,
                     editorHeight: $editorHeight,
-                    onChange: { content in
-                        applyEditorContent(content)
-                    },
+                    onChange: { content in applyEditorContent(content) },
                     onDebouncedSave: { content in
                         applyEditorContent(content)
-                        if editorHasUserChanges {
-                            saveDraft()
-                        }
+                        if editorHasUserChanges { saveDraft() }
                     },
-                    onReady: {
-                        print("[DIAG] onReady n=\(note.id.uuidString.prefix(6)) editorH=\(Int(editorHeight)) capturedPreview=\(Int(capturedPreviewHeight))")
-                        // Only reveal the editor once the WebView has reported a real height,
-                        // otherwise the card height jumps from 0→122→53 in two visible steps.
-                        if editorHeight > 0 {
-                            editorIsVisible = true
-                        }
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                            if editorHeight > 80 && capturedPreviewHeight == 0 {
-                                capturedPreviewHeight = editorHeight
-                            }
-                            // Fallback: show editor even if height hasn't arrived yet
-                            if !editorIsVisible {
-                                editorIsVisible = true
-                            }
-                        }
-                    }
+                    onReady: { editorIsVisible = true }
                 )
                 .frame(maxWidth: .infinity, alignment: .topLeading)
-                .frame(height: unifiedHeight, alignment: .top)
-                .opacity(isNoteDimmed ? 0.58 : 1)
+                .frame(height: cardHeight, alignment: .top)
+                .opacity(editorIsVisible ? (isNoteDimmed ? 0.58 : 1) : 0)
             }
         }
-        .frame(height: useFixedHeight ? unifiedHeight : nil, alignment: .top)
-        .animation(.easeInOut(duration: 0.18), value: unifiedHeight)
+        .frame(height: cardHeight, alignment: .top)
+        .padding(.bottom, 60)
     }
 
     // MARK: - Bullet
@@ -804,16 +780,6 @@ private struct StreamNoteRow: View {
         editorHasUserChanges = false
         editorIsVisible = false
         initialBlockJSON = draft.blockJSON
-        let prevEditorH = editorHeight
-        // Seed a reasonable initial height so the card never starts at 0 px
-        // and never overwrites a valid previous editor height with a smaller
-        // preview height (which would cause a re-expand twitch on re-select).
-        let estimated = BlockNoteEditorHeightEstimator.estimate(from: draft.blockJSON)
-        let floor = max(capturedPreviewHeight, estimated, 28)
-        if editorHeight < floor {
-            editorHeight = floor
-        }
-        print("[DIAG] prepareEditorOverlay n=\(note.id.uuidString.prefix(6)) capturedPreview=\(Int(capturedPreviewHeight)) prevEditor=\(Int(prevEditorH)) estimated=\(Int(estimated)) finalEditor=\(Int(editorHeight))")
     }
 
     private func applyEditorContent(_ content: BlockNoteEditorContent) {
@@ -864,74 +830,6 @@ private struct PreviewHeightKey: PreferenceKey {
     static let defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = nextValue()
-    }
-}
-
-private enum BlockNoteEditorHeightEstimator {
-    static func estimate(from data: Data) -> CGFloat {
-        guard let raw = try? JSONSerialization.jsonObject(with: data),
-              let blocks = raw as? [[String: Any]] else {
-            return 0
-        }
-
-        let height = blocks.reduce(CGFloat.zero) { partial, block in
-            partial + estimate(block: block, depth: 0)
-        }
-        return min(max(height + 24, 1), 900)
-    }
-
-    private static func estimate(block: [String: Any], depth: Int) -> CGFloat {
-        let type = block["type"] as? String ?? "paragraph"
-        let text = plainText(from: block["content"])
-        let childHeight = (block["children"] as? [[String: Any]])?.reduce(CGFloat.zero) { partial, child in
-            partial + estimate(block: child, depth: depth + 1)
-        } ?? 0
-
-        return estimateOwnHeight(type: type, text: text, content: block["content"], depth: depth) + childHeight
-    }
-
-    private static func estimateOwnHeight(type: String, text: String, content: Any?, depth: Int) -> CGFloat {
-        switch type {
-        case "image": return 282
-        case "table": return CGFloat(max(tableRowCount(from: content), 1)) * 38 + 18
-        case "divider": return 24
-        case "heading": return CGFloat(lineCount(for: text, depth: depth, charactersPerLine: 30)) * 32 + 6
-        case "codeBlock": return CGFloat(lineCount(for: text, depth: depth, charactersPerLine: 42)) * 22 + 18
-        case "quote": return CGFloat(lineCount(for: text, depth: depth, charactersPerLine: 42)) * 24 + 8
-        default: return CGFloat(lineCount(for: text, depth: depth, charactersPerLine: 42)) * 24
-        }
-    }
-
-    private static func lineCount(for text: String, depth: Int, charactersPerLine: Int) -> Int {
-        let adjustedWidth = max(18, charactersPerLine - depth * 6)
-        let paragraphs = text.split(separator: "\n", omittingEmptySubsequences: false)
-        if paragraphs.isEmpty { return 1 }
-        return paragraphs.reduce(0) { partial, paragraph in
-            let count = max(paragraph.count, 1)
-            return partial + Int(ceil(Double(count) / Double(adjustedWidth)))
-        }
-    }
-
-    private static func tableRowCount(from content: Any?) -> Int {
-        if let dict = content as? [String: Any], let rows = dict["rows"] as? [Any] { return rows.count }
-        return 2
-    }
-
-    private static func plainText(from value: Any?) -> String {
-        if let text = value as? String { return text }
-        if let items = value as? [[String: Any]] {
-            return items.map { item in
-                if let text = item["text"] as? String { return text }
-                return plainText(from: item["content"])
-            }.joined()
-        }
-        if let dict = value as? [String: Any], let rows = dict["rows"] as? [[String: Any]] {
-            return rows.map { row in
-                let cells = row["cells"] as? [[String: Any]] ?? []
-                return cells.map { plainText(from: $0["content"]) }.joined(separator: " ")
-            }.joined(separator: "\n")
-        }
-        return ""
     }
 }
 

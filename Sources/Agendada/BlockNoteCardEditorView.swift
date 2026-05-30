@@ -29,34 +29,10 @@ struct BlockNoteCardEditor: NSViewRepresentable {
         bridge.onChange = onChange
         bridge.onDebouncedSave = onDebouncedSave
         bridge.onReady = onReady
-        var pendingDownward: DispatchWorkItem?
-        var lastPendingValue: CGFloat = 0
         bridge.onHeightChange = { height in
-            let clamped = max(1, min(height, 900))
-            guard abs(editorHeight - clamped) > 1 else { return }
-            print("[DIAG] WebViewHeight n=\(noteID.uuidString.prefix(6)) raw=\(Int(height)) clamped=\(Int(clamped)) prev=\(Int(editorHeight))")
-            // Reject the 28→122 overshoot: BlockNote's default height (~122 px)
-            // is 4× the empty-card height (~28 px). Cap upward growth at 2× the
-            // floor so short cards go 28→53 directly (never see 122).
-            let floor = max(editorHeight, 28)
-            if clamped > editorHeight && editorHeight < 200 && clamped > floor * 2 {
-                return
-            }
-            // Delay the 122→53 correction: empty cards always settle at ~53 px.
-            // Only apply after a 0.3 s quiet period; user-typed content grows
-            // past 60 px and is applied immediately.
-            if clamped < editorHeight && clamped < 60 {
-                guard lastPendingValue != clamped else { return }
-                lastPendingValue = clamped
-                pendingDownward?.cancel()
-                let work = DispatchWorkItem { editorHeight = clamped }
-                pendingDownward = work
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
-            } else {
-                lastPendingValue = 0
-                pendingDownward?.cancel()
-                editorHeight = clamped
-            }
+            guard bridge.readyForHeight else { return }
+            let h = max(1, height)
+            if abs(editorHeight - h) > 1 { editorHeight = h }
         }
         bridge.loadCard(noteID: noteID, blockJSON: blockJSON, didAttach: didAttach)
         bridge.setReadOnly(false)
@@ -76,6 +52,7 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
     var onHeightChange: ((CGFloat) -> Void)?
     var onReady: (() -> Void)?
     var hasContentChanges = false
+    var readyForHeight = false
 
     /// An opaque white view placed over the WKWebView while loading.
     /// Removed when the editor signals readiness, guaranteeing no flash.
@@ -190,16 +167,11 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
         }
 
         guard loadedNoteID != noteID || lastLoadedBlockJSON != blockJSON else {
-            print("[AGD] 📄 same note+content, didAttach=\(didAttach)")
             if didAttach {
-                print("[AGD] 📄 re-attach, removing cover + showing webView (defer onReady)")
                 blockingCover?.removeFromSuperview()
                 blockingCover = nil
                 webView.isHidden = false
                 webView.alphaValue = 1
-                // Defer onReady so onChange(of: selectedNoteID) fires first
-                // in this render pass (it calls prepareEditorOverlayForSelection
-                // which sets editorIsVisible=false).
                 DispatchQueue.main.async { [weak self] in
                     self?.onReady?()
                 }
@@ -207,7 +179,13 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
             return
         }
 
-        print("[AGD] 📄 loading new content, evaluating JS…")
+        // Gate height reports for 250 ms so BlockNote's initial 122→53 px
+        // jitter doesn't resize the card.
+        readyForHeight = false
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+            self?.readyForHeight = true
+        }
+
         loadedNoteID = noteID
         lastLoadedBlockJSON = blockJSON
         hasContentChanges = false
@@ -215,7 +193,6 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
         let script = "window.loadCard(\(jsString(noteID.uuidString)), \(jsString(blockJSONString))); setTimeout(function(){ window.focusEditor && window.focusEditor(); }, 40);"
         webView.evaluateJavaScript(script) { [weak self] _, _ in
             guard let self else { return }
-            print("[AGD] 📄 JS callback, removing cover + showing webView + onReady")
             self.blockingCover?.removeFromSuperview()
             self.blockingCover = nil
             self.webView.isHidden = false
@@ -375,8 +352,16 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
           styleEl.id = 'agendada-heading-styles';
           styleEl.textContent = `
             .mantine-RichTextEditor-root,
-            .mantine-RichTextEditor-content {
+            .mantine-RichTextEditor-content,
+            .mantine-RichTextEditor-inner {
               padding: 0 !important;
+            }
+            .bn-editor {
+              padding: 0px 8px 0px 0px !important;
+            }
+            .bn-block-content {
+              padding-top: 3px !important;
+              padding-bottom: 3px !important;
             }
             .bn-block-content[data-content-type="heading"]:not([data-level]),
             .bn-block-content[data-content-type="heading"][data-level="1"] {
@@ -670,10 +655,28 @@ private final class PasteInterceptWebView: WKWebView {
     var pasteHandler: (() -> Bool)?
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        if event.modifierFlags.contains(.command),
-           event.charactersIgnoringModifiers == "v",
-           pasteHandler?() == true {
-            return true
+        if event.modifierFlags.contains(.command) {
+            if event.charactersIgnoringModifiers == "v",
+               pasteHandler?() == true {
+                return true
+            }
+            if event.charactersIgnoringModifiers == "a" {
+                // Cmd+A must select all content inside the BlockNote editor.
+                // execCommand('selectAll') doesn't work in React contenteditable.
+                // Use the Selection API to create a range covering the whole editor.
+                evaluateJavaScript("""
+                    (function() {
+                        var editor = document.querySelector('.bn-editor');
+                        if (!editor) return;
+                        var sel = window.getSelection();
+                        var range = document.createRange();
+                        range.selectNodeContents(editor);
+                        sel.removeAllRanges();
+                        sel.addRange(range);
+                    })();
+                    """)
+                return true
+            }
         }
         return super.performKeyEquivalent(with: event)
     }
@@ -742,18 +745,23 @@ private func blockNoteHTML() -> String {
           overflow: hidden;
         }
         .mantine-RichTextEditor-root,
-        .mantine-RichTextEditor-content {
+        .mantine-RichTextEditor-content,
+        .mantine-RichTextEditor-inner {
           padding: 0 !important;
         }
         .bn-container, .bn-editor {
           background: transparent !important;
         }
         .bn-editor {
-          padding-inline: 0px 8px !important;
+          padding: 0px 8px 0px 0px !important;
           font-size: 14px;
           line-height: 1.65;
           font-family: "Avenir Next", -apple-system, sans-serif;
           overflow: hidden !important;
+        }
+        .bn-block-content {
+          padding-top: 3px !important;
+          padding-bottom: 3px !important;
         }
         .bn-block-outer, .bn-block, .bn-block-content {
           max-width: 100% !important;
