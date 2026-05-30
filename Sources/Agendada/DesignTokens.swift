@@ -55,8 +55,8 @@ enum AgendaFont {
     static let breadcrumbContext: Font = .custom("Avenir Next", size: 16)
 
     // Note cards — 20pt Avenir Next Medium title
-    static let cardTitle: Font = .custom("Avenir Next Medium", size: 20)
-    static let cardTitleUnselected: Font = .custom("Avenir Next Medium", size: 20)
+    static let cardTitle: Font = .custom("Avenir Next", size: 20)
+    static let cardTitleUnselected: Font = .custom("Avenir Next", size: 20)
     static let cardBody: Font = .custom("Avenir Next", size: 14)
     static let cardBodyCompact: Font = .custom("Avenir Next", size: 13)
     static let cardMeta: Font = .custom("Avenir Next", size: 13)

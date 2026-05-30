@@ -68,7 +68,7 @@ struct NoteStreamView: View {
                     .buttonStyle(.plain).help("新建笔记").keyboardShortcut("n", modifiers: [.command])
                 }
             }
-            .padding(.horizontal, 32).padding(.top, 16)
+            .padding(.horizontal, 32).padding(.top, 40)
 
             if isSearching {
                 HStack(spacing: 8) {
@@ -269,6 +269,7 @@ private struct StreamNoteRow: View {
     @State private var initialBlockJSON: Data?
     @State private var skipNextCardTap = false
     @State private var showDatePicker = false
+    @State private var showSettingsPopover = false
 
     init(note: Note) {
         self.note = note
@@ -282,9 +283,9 @@ private struct StreamNoteRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .center, spacing: 10) {
-                bulletIcon.frame(width: bulletCol, alignment: .leading)
-                HStack(alignment: .center) {
+            HStack(alignment: .top, spacing: 10) {
+                bulletIcon.frame(width: bulletCol, alignment: .leading).padding(.top, 1)
+                HStack(alignment: .firstTextBaseline) {
                     if isSelected {
                         TextField("无标题", text: $draft.title)
                             .font(AgendaFont.cardTitle)
@@ -545,39 +546,82 @@ private struct StreamNoteRow: View {
             Button { store.duplicateNote(note.id) } label: {
                 Image(systemName: "doc.on.doc").font(.system(size: 16, weight: .medium))
             }.buttonStyle(.plain).help("复制笔记")
-            Menu {
-                Picker("状态", selection: $draft.status) {
-                    ForEach(NoteStatus.allCases, id: \.self) { s in Text(s.title).tag(s) }
-                }
-                Divider()
-                Button(note.isStarred ? "取消标星" : "标星") { store.setStarred(!note.isStarred, noteID: note.id) }
-                Menu("颜色标记") {
-                    Button("无") { store.setNoteColor(nil, noteID: note.id) }
-                    ForEach(NoteColor.allCases, id: \.self) { c in Button(c.title) { store.setNoteColor(c, noteID: note.id) } }
-                }
-                Menu("置顶/置底") {
-                    Button(note.pinState == .pinnedTop ? "取消置顶" : "置顶") {
-                        store.setPinState(note.pinState == .pinnedTop ? .none : .pinnedTop, noteID: note.id)
+            Button {
+                showSettingsPopover = true
+            } label: {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundStyle(AgendaColor.amber)
+            }
+            .buttonStyle(.plain)
+            .frame(width: 24, height: 24)
+            .popover(isPresented: $showSettingsPopover, arrowEdge: .bottom) {
+                VStack(alignment: .leading, spacing: 0) {
+                    Picker("状态", selection: $draft.status) {
+                        ForEach(NoteStatus.allCases, id: \.self) { s in Text(s.title).tag(s) }
                     }
-                    Button(note.pinState == .pinnedBottom ? "取消置底" : "置底") {
-                        store.setPinState(note.pinState == .pinnedBottom ? .none : .pinnedBottom, noteID: note.id)
+                    .pickerStyle(.menu)
+                    .padding(.horizontal, 12).padding(.vertical, 8)
+                    Divider()
+                    Button(action: {
+                        store.setStarred(!note.isStarred, noteID: note.id)
+                        showSettingsPopover = false
+                    }) {
+                        HStack { Text(note.isStarred ? "取消标星" : "标星"); Spacer() }
                     }
-                }
-                Menu("日期") {
-                    Button("指定到今天") { store.scheduleToday(noteID: note.id); resetDraft() }
-                    if note.scheduledDate != nil {
-                        Button("移除日期") {
-                            store.updateNote(noteID: note.id, title: note.title, body: note.body, scheduledDate: nil, tags: note.tags, people: note.people, status: note.status); resetDraft()
+                    .buttonStyle(.plain)
+                    .padding(.horizontal, 12).padding(.vertical, 6)
+                    Menu("颜色标记") {
+                        Button("无") { store.setNoteColor(nil, noteID: note.id); showSettingsPopover = false }
+                        ForEach(NoteColor.allCases, id: \.self) { c in
+                            Button(c.title) { store.setNoteColor(c, noteID: note.id); showSettingsPopover = false }
                         }
                     }
+                    .padding(.horizontal, 12).padding(.vertical, 6)
+                    Menu("置顶/置底") {
+                        Button(note.pinState == .pinnedTop ? "取消置顶" : "置顶") {
+                            store.setPinState(note.pinState == .pinnedTop ? .none : .pinnedTop, noteID: note.id)
+                            showSettingsPopover = false
+                        }
+                        Button(note.pinState == .pinnedBottom ? "取消置底" : "置底") {
+                            store.setPinState(note.pinState == .pinnedBottom ? .none : .pinnedBottom, noteID: note.id)
+                            showSettingsPopover = false
+                        }
+                    }
+                    .padding(.horizontal, 12).padding(.vertical, 6)
+                    Menu("日期") {
+                        Button("指定到今天") { store.scheduleToday(noteID: note.id); resetDraft(); showSettingsPopover = false }
+                        if note.scheduledDate != nil {
+                            Button("移除日期") {
+                                store.updateNote(noteID: note.id, title: note.title, body: note.body, scheduledDate: nil, tags: note.tags, people: note.people, status: note.status)
+                                resetDraft()
+                                showSettingsPopover = false
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 12).padding(.vertical, 6)
+                    Button(action: {
+                        if let s = store.summary(for: note.id) { copyToPasteboard(s) }
+                        showSettingsPopover = false
+                    }) {
+                        HStack { Text("复制摘要"); Spacer() }
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.horizontal, 12).padding(.vertical, 6)
+                    Divider()
+                    Button(role: .destructive, action: {
+                        store.deleteNote(note.id)
+                        showSettingsPopover = false
+                    }) {
+                        HStack { Text("删除笔记"); Spacer() }
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.horizontal, 12).padding(.vertical, 6)
                 }
-                Button("复制摘要") { if let s = store.summary(for: note.id) { copyToPasteboard(s) } }
-                Divider()
-                Button("删除笔记", role: .destructive) { store.deleteNote(note.id) }
-            } label: {
-                Image(systemName: "gearshape").font(.system(size: 16, weight: .medium))
+                .font(.custom("Avenir Next", size: 13))
+                .frame(width: 200)
+                .padding(.vertical, 4)
             }
-            .menuStyle(.borderlessButton).frame(width: 24, height: 24)
         }.foregroundStyle(AgendaColor.amber)
     }
 

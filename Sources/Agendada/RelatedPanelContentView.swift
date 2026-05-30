@@ -9,7 +9,7 @@ struct RelatedPanelContentView: View {
             // Tab header
             panelTabHeader
                 .padding(.horizontal, 16)
-                .padding(.top, 16)
+                .padding(.top, 40)
                 .padding(.bottom, 12)
 
             ScrollView {
