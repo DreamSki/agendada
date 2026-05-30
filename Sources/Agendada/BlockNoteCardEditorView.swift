@@ -92,7 +92,7 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
         let view = PasteInterceptWebView(frame: .zero, configuration: config)
         view.setValue(false, forKey: "drawsBackground")
         view.wantsLayer = true
-        view.layer?.masksToBounds = true
+        view.clipsToBounds = false
         view.navigationDelegate = self
         view.allowsBackForwardNavigationGestures = false
         view.pasteHandler = { [weak self] in self?.handleFinderPaste() ?? false }
@@ -291,6 +291,7 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
         case "cardChanged":
             guard let content = content(from: message.body), content.noteID == loadedNoteID else { return }
             hasContentChanges = true
+            lastLoadedBlockJSON = content.blockJSON
             onChange?(content)
 
         case "cardSaved":
@@ -351,6 +352,7 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
           var styleEl = document.createElement('style');
           styleEl.id = 'agendada-heading-styles';
           styleEl.textContent = `
+            html, body, #root, .editor-shell, .bn-editor { overflow: visible !important; }
             .mantine-RichTextEditor-root,
             .mantine-RichTextEditor-content,
             .mantine-RichTextEditor-inner {
@@ -359,6 +361,7 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
             .bn-editor {
               padding: 0px 8px 0px 0px !important;
             }
+            .bn-suggestion-menu { max-height: 350px !important; }
             .bn-block-content {
               padding-top: 3px !important;
               padding-bottom: 3px !important;

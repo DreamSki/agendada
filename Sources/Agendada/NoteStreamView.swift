@@ -515,7 +515,8 @@ private struct StreamNoteRow: View {
     // MARK: - Body
 
     private var bodyContent: some View {
-        let cardHeight = max(capturedPreviewHeight, editorHeight)
+        let popoverSlack: CGFloat = 0
+        let cardHeight = max(capturedPreviewHeight, editorHeight + popoverSlack)
 
         return ZStack(alignment: .topLeading) {
             // Preview — always present, measures its natural height for card sizing.
