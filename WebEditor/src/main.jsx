@@ -4,8 +4,11 @@ import "./styles.css";
 
 import React from "react";
 import { createRoot } from "react-dom/client";
-import { useCreateBlockNote } from "@blocknote/react";
+import { useCreateBlockNote, GridSuggestionMenuController, getDefaultReactSlashMenuItems } from "@blocknote/react";
 import { BlockNoteView } from "@blocknote/mantine";
+import { filterSuggestionItems } from "@blocknote/core/extensions";
+import { zh } from "@blocknote/core/locales";
+import { MiniSlashMenu } from "./MiniSlashMenu";
 
 window.__agendada = {
   currentCardId: null,
@@ -591,6 +594,7 @@ setTimeout(startFallback, 5000);
 function EditorApp() {
   const editor = useCreateBlockNote({
     initialContent: emptyBlocks(),
+    dictionary: zh,
     placeholders: {
       default: "空白笔记",
       emptyDocument: "空白笔记"
@@ -650,10 +654,26 @@ function EditorApp() {
         editor={editor}
         editable={!window.__agendada.readOnly}
         theme="light"
+        slashMenu={false}
         onChange={() => emitChanged(editor)}
         onFocus={() => post("editorFocused", window.__agendada.currentCardId || "")}
         onBlur={() => post("editorBlurred", window.__agendada.currentCardId || "")}
-      />
+      >
+        <GridSuggestionMenuController
+          triggerCharacter="/"
+          gridSuggestionMenuComponent={MiniSlashMenu}
+          columns={20}
+          getItems={async (query) => {
+            const items = getDefaultReactSlashMenuItems(editor);
+            return filterSuggestionItems(items, query);
+          }}
+          floatingUIOptions={{
+            useFloatingOptions: {
+              placement: "top-start",
+            },
+          }}
+        />
+      </BlockNoteView>
     </div>
   );
 }
