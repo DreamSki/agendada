@@ -28,6 +28,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupMainMenu()
+        // Eagerly initialise the editor WKWebView so itʼs ready before
+        // the user taps any note card.  Without this the very first
+        // card tap triggers lazy init, the page hasnʼt loaded yet,
+        // isReady stays false, and the editor never appears.
+        _ = SharedBlockNoteWebView.shared.webView
         showMainWindow()
     }
 
@@ -56,7 +61,14 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         editMenu.addItem(NSMenuItem(title: "剪切", action: #selector(NSText.cut(_:)), keyEquivalent: "x"))
         editMenu.addItem(NSMenuItem(title: "拷贝", action: #selector(NSText.copy(_:)), keyEquivalent: "c"))
         editMenu.addItem(NSMenuItem(title: "粘贴", action: #selector(NSText.paste(_:)), keyEquivalent: "v"))
-        editMenu.addItem(NSMenuItem(title: "全选", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a"))
+        let selectAllItem = NSMenuItem(title: "全选", action: #selector(AppDelegate.selectAllOrBatch), keyEquivalent: "a")
+        selectAllItem.target = self
+        editMenu.addItem(selectAllItem)
+        editMenu.addItem(.separator())
+        let deleteNoteItem = NSMenuItem(title: "移到废纸篓", action: #selector(AppDelegate.deleteSelectedOrBatch), keyEquivalent: "\u{0008}")
+        deleteNoteItem.keyEquivalentModifierMask = .command
+        deleteNoteItem.target = self
+        editMenu.addItem(deleteNoteItem)
 
         // Format menu
         let formatItem = NSMenuItem()
@@ -161,6 +173,23 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         if lineText.hasPrefix(marker) { return }
         tv.setSelectedRange(lineRange)
         tv.insertText(marker, replacementRange: NSRange(location: lineRange.location, length: 0))
+    }
+
+    @objc private func deleteSelectedOrBatch() {
+        if !store.batchSelectedNoteIDs.isEmpty {
+            store.batchDeleteNotes(store.batchSelectedNoteIDs)
+        } else if let selectedID = store.selectedNoteID {
+            store.deleteNote(selectedID)
+        }
+    }
+
+    @objc private func selectAllOrBatch() {
+        if let firstResponder = NSApp.keyWindow?.firstResponder,
+           firstResponder is NSTextView || firstResponder is NSTextField {
+            NSApp.sendAction(#selector(NSText.selectAll(_:)), to: nil, from: nil)
+            return
+        }
+        store.selectAllFilteredNotes()
     }
 
     @objc private func showMeasurementWindow() {

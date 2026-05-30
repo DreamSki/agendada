@@ -9,6 +9,7 @@ public final class LibraryStore {
     public private(set) var selectedOverview: Overview?
     public private(set) var selectedSmartOverviewID: SmartOverview.ID?
     public private(set) var selectedNoteID: Note.ID?
+    public var batchSelectedNoteIDs: Set<Note.ID> = []
     public var searchText: String
 
     public init(
@@ -105,13 +106,13 @@ public final class LibraryStore {
             notes: notes,
             selectedProjectID: nil,
             selectedOverview: .today,
-            selectedNoteID: notes.first?.id
+            selectedNoteID: nil
         )
     }
 
     public var selectedNote: Note? {
         guard let selectedNoteID else { return nil }
-        return notes.first { $0.id == selectedNoteID }
+        return notes.first { $0.id == selectedNoteID && $0.status != .trashed }
     }
 
     public var allTags: [String] {
@@ -201,14 +202,16 @@ public final class LibraryStore {
         selectedOverview = overview
         selectedProjectID = nil
         selectedSmartOverviewID = nil
-        selectedNoteID = filteredNotes().first?.id
+        selectedNoteID = nil
+        batchSelectedNoteIDs.removeAll()
     }
 
     public func selectProject(_ projectID: Project.ID) {
         selectedProjectID = projectID
         selectedOverview = nil
         selectedSmartOverviewID = nil
-        selectedNoteID = filteredNotes().first?.id
+        selectedNoteID = nil
+        batchSelectedNoteIDs.removeAll()
     }
 
     public func selectSmartOverview(_ smartOverviewID: SmartOverview.ID) {
@@ -216,11 +219,39 @@ public final class LibraryStore {
         selectedSmartOverviewID = smartOverviewID
         selectedOverview = nil
         selectedProjectID = nil
-        selectedNoteID = filteredNotes().first?.id
+        selectedNoteID = nil
+        batchSelectedNoteIDs.removeAll()
     }
 
     public func selectNote(_ noteID: Note.ID) {
         selectedNoteID = noteID
+    }
+
+    // MARK: - Batch Selection
+
+    public func selectAllFilteredNotes(now: Date = Date()) {
+        batchSelectedNoteIDs = Set(filteredNotes(now: now).map(\.id))
+        selectedNoteID = nil
+    }
+
+    public func deselectAllNotes() {
+        batchSelectedNoteIDs.removeAll()
+    }
+
+    public func toggleBatchSelection(noteID: Note.ID) {
+        if batchSelectedNoteIDs.contains(noteID) {
+            batchSelectedNoteIDs.remove(noteID)
+        } else {
+            if batchSelectedNoteIDs.isEmpty {
+                selectedNoteID = nil
+            }
+            batchSelectedNoteIDs.insert(noteID)
+        }
+    }
+
+    public func invertBatchSelection(now: Date = Date()) {
+        let filteredIDs = Set(filteredNotes(now: now).map(\.id))
+        batchSelectedNoteIDs = filteredIDs.subtracting(batchSelectedNoteIDs)
     }
 
     public func note(withID noteID: Note.ID) -> Note? {
@@ -309,10 +340,73 @@ public final class LibraryStore {
     }
 
     public func deleteNote(_ noteID: Note.ID) {
+        guard let index = notes.firstIndex(where: { $0.id == noteID }) else { return }
+        notes[index].status = .trashed
+        notes[index].editedAt = Date()
+        if selectedNoteID == noteID {
+            selectedNoteID = nil
+        }
+    }
+
+    public func permanentlyDeleteNote(_ noteID: Note.ID) {
         notes.removeAll { $0.id == noteID }
         if selectedNoteID == noteID {
-            selectedNoteID = filteredNotes().first?.id
+            selectedNoteID = nil
         }
+    }
+
+    public func restoreNote(_ noteID: Note.ID) {
+        guard let index = notes.firstIndex(where: { $0.id == noteID }) else { return }
+        notes[index].status = .open
+        notes[index].editedAt = Date()
+    }
+
+    public var trashedNotes: [Note] {
+        notes.filter { $0.status == .trashed }
+    }
+
+    public func emptyTrash() {
+        notes.removeAll { $0.status == .trashed }
+    }
+
+    // MARK: - Batch Operations
+
+    public func batchDeleteNotes(_ noteIDs: Set<Note.ID>) {
+        for noteID in noteIDs {
+            guard let index = notes.firstIndex(where: { $0.id == noteID }) else { continue }
+            notes[index].status = .trashed
+            notes[index].editedAt = Date()
+        }
+        batchSelectedNoteIDs.removeAll()
+        if let sid = selectedNoteID, noteIDs.contains(sid) {
+            selectedNoteID = nil
+        }
+    }
+
+    public func batchRestoreNotes(_ noteIDs: Set<Note.ID>) {
+        for noteID in noteIDs {
+            guard let index = notes.firstIndex(where: { $0.id == noteID }) else { continue }
+            notes[index].status = .open
+            notes[index].editedAt = Date()
+        }
+        batchSelectedNoteIDs.removeAll()
+    }
+
+    public func batchPermanentlyDeleteNotes(_ noteIDs: Set<Note.ID>) {
+        notes.removeAll { noteIDs.contains($0.id) }
+        batchSelectedNoteIDs.removeAll()
+        if let sid = selectedNoteID, noteIDs.contains(sid) {
+            selectedNoteID = nil
+        }
+    }
+
+    public func moveNotes(_ noteIDs: Set<Note.ID>, toProject projectID: Project.ID) {
+        for noteID in noteIDs {
+            guard let index = notes.firstIndex(where: { $0.id == noteID }) else { continue }
+            notes[index].projectID = projectID
+            notes[index].editedAt = Date()
+        }
+        batchSelectedNoteIDs.removeAll()
     }
 
     @discardableResult
@@ -328,7 +422,7 @@ public final class LibraryStore {
         selectedProjectID = project.id
         selectedOverview = nil
         selectedSmartOverviewID = nil
-        selectedNoteID = filteredNotes().first?.id
+        selectedNoteID = nil
         return project
     }
 
@@ -359,7 +453,7 @@ public final class LibraryStore {
         if selectedSmartOverviewID == smartOverviewID {
             selectedSmartOverviewID = nil
             selectedOverview = .all
-            selectedNoteID = filteredNotes().first?.id
+            selectedNoteID = nil
         }
     }
 
@@ -392,9 +486,9 @@ public final class LibraryStore {
             selectedProjectID = nil
             selectedOverview = .all
             selectedSmartOverviewID = nil
-            selectedNoteID = filteredNotes().first?.id
+            selectedNoteID = nil
         } else if selectedNoteID.map({ noteID in !notes.contains { $0.id == noteID } }) == true {
-            selectedNoteID = filteredNotes().first?.id
+            selectedNoteID = nil
         }
     }
 
@@ -411,7 +505,7 @@ public final class LibraryStore {
         }
 
         if selectedNoteID.map({ noteID in !notes.contains { $0.id == noteID } }) == true {
-            selectedNoteID = filteredNotes().first?.id
+            selectedNoteID = nil
         }
     }
 
@@ -580,7 +674,7 @@ public final class LibraryStore {
     }
 
     public func filteredNotes(now: Date = Date()) -> [Note] {
-        let baseNotes: [Note]
+        var baseNotes: [Note]
         let savedSearchText: String
 
         if let selectedSmartOverviewID,
@@ -591,7 +685,12 @@ public final class LibraryStore {
             baseNotes = notes.filter { $0.projectID == selectedProjectID }
             savedSearchText = ""
         } else if let selectedOverview {
+            let isTrashView = selectedOverview == .trash
             baseNotes = notes.filter { note in
+                if isTrashView {
+                    return note.status == .trashed
+                }
+                guard note.status != .trashed else { return false }
                 switch selectedOverview {
                 case .today:
                     guard let scheduledDate = note.scheduledDate else { return false }
@@ -607,12 +706,19 @@ public final class LibraryStore {
                     return note.isStarred
                 case .all:
                     return true
+                case .trash:
+                    return false
                 }
             }
             savedSearchText = ""
         } else {
             baseNotes = notes
             savedSearchText = ""
+        }
+
+        // Filter trashed from non-trash views
+        if selectedOverview != .trash {
+            baseNotes = baseNotes.filter { $0.status != .trashed }
         }
 
         let trimmedSavedSearch = savedSearchText.trimmingCharacters(in: .whitespacesAndNewlines)

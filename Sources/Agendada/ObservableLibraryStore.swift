@@ -177,7 +177,78 @@ final class ObservableLibraryStore {
     func deleteNote(_ noteID: Note.ID) {
         store.deleteNote(noteID)
         publishChange()
-        persistNow()
+        persistSoon()
+    }
+
+    func permanentlyDeleteNote(_ noteID: Note.ID) {
+        store.permanentlyDeleteNote(noteID)
+        publishChange()
+        persistSoon()
+    }
+
+    func restoreNote(_ noteID: Note.ID) {
+        store.restoreNote(noteID)
+        publishChange()
+        persistSoon()
+    }
+
+    var trashedNotes: [Note] { store.trashedNotes }
+
+    func emptyTrash() {
+        store.emptyTrash()
+        publishChange()
+        persistSoon()
+    }
+
+    // MARK: - Batch Selection
+
+    var batchSelectedNoteIDs: Set<Note.ID> { store.batchSelectedNoteIDs }
+    var isInBatchMode: Bool { !store.batchSelectedNoteIDs.isEmpty }
+
+    func selectAllFilteredNotes() {
+        store.selectAllFilteredNotes()
+        publishChange()
+    }
+
+    func deselectAllNotes() {
+        store.deselectAllNotes()
+        publishChange()
+    }
+
+    func toggleBatchSelection(noteID: Note.ID) {
+        store.toggleBatchSelection(noteID: noteID)
+        publishChange()
+    }
+
+    func invertBatchSelection() {
+        store.invertBatchSelection()
+        publishChange()
+    }
+
+    // MARK: - Batch Operations
+
+    func batchDeleteNotes(_ noteIDs: Set<Note.ID>) {
+        store.batchDeleteNotes(noteIDs)
+        publishChange()
+        persistSoon()
+    }
+
+    func batchRestoreNotes(_ noteIDs: Set<Note.ID>) {
+        store.batchRestoreNotes(noteIDs)
+        publishChange()
+        persistSoon()
+    }
+
+    func batchPermanentlyDeleteNotes(_ noteIDs: Set<Note.ID>) {
+        store.batchPermanentlyDeleteNotes(noteIDs)
+        publishChange()
+        persistSoon()
+    }
+
+    func moveNotes(_ noteIDs: Set<Note.ID>, toProject projectID: Project.ID) {
+        store.moveNotes(noteIDs, toProject: projectID)
+        publishChange()
+        persistSoon()
     }
 
     func addCategory(name: String) {

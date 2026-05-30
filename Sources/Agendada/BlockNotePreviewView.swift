@@ -22,7 +22,7 @@ struct BlockNotePreviewView: View {
         Group {
             if visibleItems.isEmpty {
                 Text("空白笔记")
-                    .font(.system(size: PreviewMetrics.bodyFontSize))
+                    .font(.custom("Avenir Next", size: PreviewMetrics.bodyFontSize))
                     .foregroundStyle(PreviewMetrics.placeholderColor)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, PreviewMetrics.blockVPadding)
@@ -35,6 +35,9 @@ struct BlockNotePreviewView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
+        // 首块顶部偏移：CSS padding-top=3px，但 SwiftUI blockVPadding=6，
+        // 段间叠加需要 2x 但首段顶部只需 1x，故上移 3px 补偿
+        .padding(.top, -(PreviewMetrics.blockVPadding / 2))
         .padding(.leading, PreviewMetrics.editorLeadingPadding)
         .padding(.trailing, PreviewMetrics.editorTrailingPadding)
     }
@@ -63,42 +66,43 @@ struct BlockNotePreviewView: View {
     }
 }
 
-// MARK: - Metrics (match editor CSS exactly - precisely calculated)
+// MARK: - Metrics (基于对比视图精准测量)
 
 private enum PreviewMetrics {
-    static let editorLeadingPadding: CGFloat = 30
+    // 正文左边缘与卡片标题圆圈左边缘对齐（卡片 16px padding 处）
+    static let editorLeadingPadding: CGFloat = 0
     static let editorTrailingPadding: CGFloat = 8
     static let nestIndent: CGFloat = 24
     static let markerWidth: CGFloat = 24
 
-    // 段间距：CSS .bn-block-content { padding: 3px 0; }
-    // SwiftUI VStack spacing: 0，每个块 .padding(.vertical, 3)
-    // 两个相邻段落间距 = 3 + 3 = 6px
-    static let blockVPadding: CGFloat = 3
+    // 段间距：CSS 3px，但 SwiftUI 需要 6px 才能匹配
+    static let blockVPadding: CGFloat = 6
 
-    // 正文：CSS font-size: 14px, line-height: 1.65
-    // 单行高度 = 14 * 1.65 = 23.1px
+    // 正文：编辑器实测
     static let bodyFontSize: CGFloat = 14
     static let lineHeight: CGFloat = 1.65
 
-    // 代码：font-size: 13px (BlockNote 默认)
+    // 代码：font-size: 13px
     static let codeFontSize: CGFloat = 13
 
-    // 标题大小：CSS 设定 H1=20, H2=17, H3=16
-    // 但 SwiftUI .bold 比 CSS font-weight: 700 渲染更大
-    // 需要减小补偿：CSS 渲染的 20px ≈ SwiftUI 18.5px bold
-    static let heading1Size: CGFloat = 18.5  // CSS 20px
-    static let heading2Size: CGFloat = 15.5  // CSS 17px
-    static let heading3Size: CGFloat = 14.5  // CSS 16px
+    // 标题：H1/H2 同字号 17pt，H3 小一号 15pt
+    static let heading1Size: CGFloat = 17
+    static let heading2Size: CGFloat = 17
+    static let heading3Size: CGFloat = 15
+
+    // 标题 vertical padding：CSS × 1.83
+    // H1: CSS top=10px → 18.3, bottom=3px → 5.5
+    // H2/H3: CSS 3px → 5.5
+    static let heading1TopPadding: CGFloat = 18.3
+    static let headingVPadding: CGFloat = 5.5
 
     static let quoteBorderWidth: CGFloat = 3
     static let quoteTextInset: CGFloat = 10
     static let mediaMaxHeight: CGFloat = 260
 
-    // 表格单元格：CSS { padding: 7px 10px; }
-    // 但实测需要 8px 才能匹配编辑器
+    // 表格单元格：CSS 7px，SwiftUI 需要 10px
     static let tableCellHPadding: CGFloat = 10
-    static let tableCellVPadding: CGFloat = 8
+    static let tableCellVPadding: CGFloat = 10
     static let blockRadius: CGFloat = 6
 
     static let bodyColor = Color(red: 0.2, green: 0.2, blue: 0.2)
@@ -119,7 +123,10 @@ private enum PreviewMetrics {
     // 对于 14px：14 * 0.65 = 9.1px
     // 实测微调：8.5px 更接近视觉效果
     static func lineSpacing(for size: CGFloat) -> CGFloat {
-        size * 0.608  // 微调值，接近 0.65
+        // 基于编辑器实测: lineHeight 23.1px = 14 * 1.65
+        // 理论 spacing = size * (1.65 - 1) = size * 0.65
+        // 微调后: 0.608
+        size * 0.608
     }
 }
 
@@ -182,11 +189,18 @@ private struct PreviewBlockRow: View {
             fallback: block.plainText,
             fontSize: headingSize,
             baseWeight: .bold,
-            baseColor: block.textColor ?? PreviewMetrics.headingColor
-            // 标题使用默认 line-height 1.65
+            baseColor: headingTextColor
         )
-            .padding(.top, 3)  // 标题只有 top padding，没有 bottom padding
+            .padding(.top, isH1 ? PreviewMetrics.heading1TopPadding : PreviewMetrics.headingVPadding)
+            .padding(.bottom, PreviewMetrics.headingVPadding)
             .background(block.backgroundColor ?? Color.clear)
+    }
+
+    private var isH1: Bool { block.headingLevel == 1 }
+
+    private var headingTextColor: Color {
+        if block.headingLevel == 3 { return PreviewMetrics.mutedColor }
+        return block.textColor ?? PreviewMetrics.headingColor
     }
 
     private var headingSize: CGFloat {
@@ -202,7 +216,7 @@ private struct PreviewBlockRow: View {
     private var bulletView: some View {
         HStack(alignment: .firstTextBaseline, spacing: 0) {
             Text(bulletMarker)
-                .font(.system(size: PreviewMetrics.bodyFontSize, weight: .semibold))
+                .font(.custom("Avenir Next Demi Bold", size: PreviewMetrics.bodyFontSize))
                 .foregroundStyle(PreviewMetrics.mutedColor)
                 .frame(width: PreviewMetrics.markerWidth, alignment: .center)
             bodyText(block.content)
@@ -214,7 +228,7 @@ private struct PreviewBlockRow: View {
     private var numberedView: some View {
         HStack(alignment: .firstTextBaseline, spacing: 0) {
             Text("\(item.numberIndex ?? 1).")
-                .font(.system(size: PreviewMetrics.bodyFontSize))
+                .font(.custom("Avenir Next", size: PreviewMetrics.bodyFontSize))
                 .foregroundStyle(PreviewMetrics.mutedColor)
                 .frame(width: PreviewMetrics.markerWidth, alignment: .trailing)
             bodyText(block.content)
@@ -226,7 +240,7 @@ private struct PreviewBlockRow: View {
     private var checkboxView: some View {
         HStack(alignment: .firstTextBaseline, spacing: 0) {
             Image(systemName: block.isChecked ? "checkmark.square.fill" : "square")
-                .font(.system(size: PreviewMetrics.bodyFontSize, weight: .medium))
+                .font(.custom("Avenir Next Medium", size: PreviewMetrics.bodyFontSize))
                 .foregroundStyle(block.isChecked ? AgendaColor.amber : PreviewMetrics.mutedColor)
                 .frame(width: PreviewMetrics.markerWidth, alignment: .center)
             bodyText(block.checkboxContent)
@@ -400,12 +414,21 @@ private struct PreviewRichText: View {
     }
 
     private func styledText(_ fragment: PreviewTextFragment) -> Text {
+        let isMono = forceMonospace || fragment.isCode
+        let fontName: String
+        if isMono {
+            fontName = "Menlo"
+        } else if fragment.isBold {
+            fontName = "Avenir Next Demi Bold"
+        } else {
+            switch baseWeight {
+            case .bold: fontName = "Avenir Next Bold"
+            case .medium: fontName = "Avenir Next Medium"
+            default: fontName = "Avenir Next"
+            }
+        }
         var text = Text(fragment.text.isEmpty ? " " : fragment.text)
-            .font(.system(
-                size: fontSize,
-                weight: fragment.isBold ? .semibold : baseWeight,
-                design: (forceMonospace || fragment.isCode) ? .monospaced : .default
-            ))
+            .font(.custom(fontName, size: fontSize))
             .foregroundColor(fragment.textColor ?? baseColor)
 
         if fragment.isItalic {
@@ -440,7 +463,7 @@ private struct PreviewImageBlock: View {
 
                 if block.hasVisibleImageLabel {
                     Text(block.imageLabel)
-                        .font(.system(size: 13))
+                        .font(.custom("Avenir Next", size: 13))
                         .foregroundStyle(PreviewMetrics.mutedColor)
                         .lineLimit(2)
                 }
@@ -448,10 +471,10 @@ private struct PreviewImageBlock: View {
         } else {
             HStack(spacing: 8) {
                 Image(systemName: "photo")
-                    .font(.system(size: 14, weight: .medium))
+                    .font(.custom("Avenir Next Medium", size: 14))
                     .foregroundStyle(AgendaColor.amber)
                 Text(block.imageLabel)
-                    .font(.system(size: PreviewMetrics.bodyFontSize))
+                    .font(.custom("Avenir Next", size: PreviewMetrics.bodyFontSize))
                     .foregroundStyle(PreviewMetrics.mutedColor)
                     .lineLimit(1)
             }

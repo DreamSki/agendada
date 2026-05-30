@@ -251,18 +251,19 @@ public enum PinState: String, CaseIterable, Codable, Hashable {
 }
 
 public enum NoteStatus: String, CaseIterable, Codable, Hashable {
-    case open, completed, closed
+    case open, completed, closed, trashed
     public var title: String {
         switch self {
         case .open: "进行中"
         case .completed: "已完成"
         case .closed: "已归档"
+        case .trashed: "废纸篓"
         }
     }
 }
 
 public enum Overview: String, CaseIterable, Codable, Identifiable {
-    case today, tasks, upcoming, focused, starred, all
+    case today, tasks, upcoming, focused, starred, all, trash
     public var id: String { rawValue }
     public var title: String {
         switch self {
@@ -272,6 +273,7 @@ public enum Overview: String, CaseIterable, Codable, Identifiable {
         case .focused: "当前关注"
         case .starred: "已标星"
         case .all: "全部笔记"
+        case .trash: "废纸篓"
         }
     }
 }

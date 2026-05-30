@@ -122,6 +122,99 @@ struct NoteStreamView: View {
             }
             .padding(.horizontal, 12).padding(.top, 16).padding(.bottom, 80)
         }
+        .overlay(alignment: .top) {
+            if store.isInBatchMode {
+                batchOperationBar
+                    .padding(.top, 8)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .background {
+            Button("") {
+                if store.isInBatchMode { store.deselectAllNotes() }
+            }
+            .keyboardShortcut(.escape, modifiers: [])
+            .opacity(0)
+            .frame(width: 0, height: 0)
+        }
+    }
+
+    // MARK: - Batch Bar
+
+    private var batchOperationBar: some View {
+        HStack(spacing: 14) {
+            Text("已选 \(store.batchSelectedNoteIDs.count) 项")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.primary)
+
+            Button("全选") { store.selectAllFilteredNotes() }
+                .buttonStyle(.plain)
+                .font(.system(size: 12))
+                .foregroundStyle(AgendaColor.amber)
+
+            Button("反选") { store.invertBatchSelection() }
+                .buttonStyle(.plain)
+                .font(.system(size: 12))
+                .foregroundStyle(AgendaColor.amber)
+
+            Divider().frame(height: 16)
+
+            if store.selectedOverview == .trash {
+                Button("恢复") {
+                    store.batchRestoreNotes(store.batchSelectedNoteIDs)
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 12))
+                .foregroundStyle(AgendaColor.amber)
+
+                Button("彻底删除") {
+                    store.batchPermanentlyDeleteNotes(store.batchSelectedNoteIDs)
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 12))
+                .foregroundStyle(.red)
+            } else {
+                Button("移到废纸篓") {
+                    store.batchDeleteNotes(store.batchSelectedNoteIDs)
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 12))
+                .foregroundStyle(.red)
+
+                if !store.projects.isEmpty {
+                    Menu {
+                        ForEach(store.projects) { project in
+                            Button(project.name) {
+                                store.moveNotes(store.batchSelectedNoteIDs, toProject: project.id)
+                            }
+                        }
+                    } label: {
+                        Text("移动到...")
+                            .font(.system(size: 12))
+                    }
+                    .menuStyle(.borderlessButton)
+                    .frame(width: 70)
+                }
+            }
+
+            Divider().frame(height: 16)
+
+            Button("取消") { store.deselectAllNotes() }
+                .buttonStyle(.plain)
+                .font(.system(size: 12))
+                .foregroundStyle(AgendaColor.textMuted)
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 9)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.white)
+                .shadow(color: .black.opacity(0.08), radius: 8, y: 4)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.black.opacity(0.06), lineWidth: 1)
+        )
     }
 }
 
@@ -132,13 +225,15 @@ private struct StreamNoteRow: View {
     let note: Note
 
     @State private var draft: StreamNoteDraft
-    @State private var showDatePicker = false
-    @State private var calendarMonth = Date()
     @State private var saveTask: Task<Void, Never>?
     @State private var editorHeight: CGFloat = 0
     @State private var capturedPreviewHeight: CGFloat = 0
     @State private var editorHasUserChanges = false
     @State private var isHovering = false
+    @State private var editorIsVisible = false
+    @State private var initialBlockJSON: Data?
+    @State private var skipNextCardTap = false
+    @State private var showDatePicker = false
 
     init(note: Note) {
         self.note = note
@@ -159,16 +254,53 @@ private struct StreamNoteRow: View {
                         .lineLimit(1)
                     Spacer(minLength: 8)
                     if !dateLabel.isEmpty {
-                        Text(dateLabel)
-                            .font(.system(size: 13, weight: isToday ? .medium : .regular))
-                            .foregroundStyle(isToday ? AgendaColor.amber : AgendaColor.textMuted)
+                        Button { showDatePicker = true } label: {
+                            Text(dateLabel)
+                                .font(.system(size: 13, weight: (isSelected && isToday) ? .medium : .regular))
+                                .foregroundStyle((isSelected && isToday) ? AgendaColor.amber : AgendaColor.textMuted)
+                        }
+                        .buttonStyle(.plain)
+                        .popover(isPresented: $showDatePicker, attachmentAnchor: .point(.bottom), arrowEdge: .bottom) {
+                            DateAgendaPanelView(noteID: note.id) {
+                                if let updated = store.note(withID: note.id) {
+                                    draft = StreamNoteDraft(note: updated)
+                                }
+                                showDatePicker = false
+                            }
+                        }
+                    } else if isSelected {
+                        Button { showDatePicker = true } label: {
+                            Image(systemName: "calendar")
+                                .font(.system(size: 13))
+                                .foregroundStyle(AgendaColor.textMuted)
+                        }
+                        .buttonStyle(.plain)
+                        .popover(isPresented: $showDatePicker, attachmentAnchor: .point(.bottom), arrowEdge: .bottom) {
+                            DateAgendaPanelView(noteID: note.id) {
+                                if let updated = store.note(withID: note.id) {
+                                    draft = StreamNoteDraft(note: updated)
+                                }
+                                showDatePicker = false
+                            }
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
             }
             bodyContent.padding(.top, 16)
-        }
+            }
         .padding(24).frame(maxWidth: .infinity)
         .background(RoundedRectangle(cornerRadius: 12).fill(isSelected ? AgendaColor.cardActiveFill : .clear))
+        .overlay(alignment: .leading) {
+            if isHovering && !store.isInBatchMode && !isSelected {
+                RoundedRectangle(cornerRadius: 1.5)
+                    .fill(Color.black.opacity(0.07))
+                    .frame(width: 3)
+                    .blur(radius: 1)
+                    .padding(.vertical, 12)
+                    .offset(x: -1)
+            }
+        }
         .overlay(alignment: .top) {
             if isSelected {
                 RoundedRectangle(cornerRadius: 1).fill(AgendaColor.cardDragHandle).frame(width: 24, height: 3).padding(.top, 6)
@@ -182,7 +314,17 @@ private struct StreamNoteRow: View {
         .padding(.horizontal, 20).contentShape(Rectangle())
         .contextMenu { contextMenuContent }
         .onHover { isHovering = $0 }
-        .onTapGesture { selectNoteAfterSavingActiveEditor() }
+        .onTapGesture {
+            if skipNextCardTap {
+                skipNextCardTap = false
+                return
+            }
+            if store.isInBatchMode {
+                store.toggleBatchSelection(noteID: note.id)
+            } else if store.selectedOverview != .trash {
+                selectNoteAfterSavingActiveEditor()
+            }
+        }
         .onChange(of: draft.title) { scheduleSaveDraft() }
         .onChange(of: draft.hasScheduledDate) { scheduleSaveDraft() }
         .onChange(of: draft.scheduledDate) { scheduleSaveDraft() }
@@ -210,23 +352,7 @@ private struct StreamNoteRow: View {
         let useFixedHeight = unifiedHeight > 0
 
         return ZStack(alignment: .topLeading) {
-            // 预览层
-            BlockNotePreviewView(note: note)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
-                .frame(height: useFixedHeight ? unifiedHeight : nil, alignment: .top)
-                .opacity(isSelected ? 0 : (isNoteDimmed ? 0.58 : 1))
-                .allowsHitTesting(!isSelected)
-                .background(
-                    GeometryReader { geo in
-                        Color.clear.preference(key: PreviewHeightKey.self, value: geo.size.height)
-                    }
-                )
-                .onPreferenceChange(PreviewHeightKey.self) { h in
-                    capturedPreviewHeight = h
-                }
-
-            // 编辑器层
+            // 编辑器在下层 — 即使 WKWebView 提前可见，也会被预览的背景挡住
             if isSelected {
                 BlockNoteCardEditor(
                     noteID: note.id,
@@ -237,12 +363,46 @@ private struct StreamNoteRow: View {
                     },
                     onDebouncedSave: { content in
                         applyEditorContent(content)
-                        saveDraft()
+                        if editorHasUserChanges {
+                            saveDraft()
+                        }
+                    },
+                    onReady: {
+                        editorIsVisible = true
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            if editorHeight > 80 && capturedPreviewHeight == 0 {
+                                capturedPreviewHeight = editorHeight
+                            }
+                        }
                     }
                 )
                 .frame(maxWidth: .infinity, alignment: .topLeading)
                 .frame(height: unifiedHeight, alignment: .top)
                 .opacity(isNoteDimmed ? 0.58 : 1)
+            }
+
+            // 预览在上层 — 加载期间用不透明背景物理遮挡下层的 WKWebView，
+            // 这样即使 WKWebView 提前显示也不会有任何重叠。
+            if !isSelected || !editorIsVisible {
+                BlockNotePreviewView(note: note)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                    .frame(height: useFixedHeight ? unifiedHeight : nil, alignment: .top)
+                    .opacity(isNoteDimmed ? 0.58 : 1)
+                    .allowsHitTesting(!isSelected)
+                    .background(
+                        (isSelected && !editorIsVisible)
+                            ? AgendaColor.cardActiveFill
+                            : Color.clear
+                    )
+                    .background(
+                        GeometryReader { geo in
+                            Color.clear.preference(key: PreviewHeightKey.self, value: geo.size.height)
+                        }
+                    )
+                    .onPreferenceChange(PreviewHeightKey.self) { h in
+                        capturedPreviewHeight = h
+                    }
             }
         }
         .frame(height: useFixedHeight ? unifiedHeight : nil, alignment: .top)
@@ -252,15 +412,36 @@ private struct StreamNoteRow: View {
 
     private var bulletIcon: some View {
         let color = noteColorValue(note.noteColor)
+        let inBatch = store.isInBatchMode
+        let isBatchSelected = store.batchSelectedNoteIDs.contains(note.id)
+
         return ZStack {
-            if isSelected {
-                Image(systemName: "target").font(.system(size: 18, weight: .medium)).foregroundStyle(color)
-            } else if note.bodyPlainText.isEmpty {
-                Circle().fill(color).frame(width: 9, height: 9)
+            if inBatch {
+                Image(systemName: isBatchSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundStyle(isBatchSelected ? AgendaColor.amber : AgendaColor.textMuted)
             } else {
-                Circle().stroke(color, lineWidth: 1.5).frame(width: 12, height: 12)
+                // Outer ring — appears on hover or when selected
+                if isHovering || isSelected {
+                    Circle()
+                        .stroke(color, lineWidth: 1.5)
+                        .frame(width: 18, height: 18)
+                }
+                // Inner dot
+                if note.bodyPlainText.isEmpty {
+                    Circle().fill(color).frame(width: 9, height: 9)
+                } else {
+                    Circle().stroke(color, lineWidth: 1.5).frame(width: 12, height: 12)
+                }
             }
-        }.frame(width: bulletCol, height: 16)
+        }
+        .frame(width: bulletCol, height: 24)
+        .animation(.spring(response: 0.35, dampingFraction: 0.6), value: isHovering || isSelected)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            store.toggleBatchSelection(noteID: note.id)
+            skipNextCardTap = true
+        }
     }
 
     private func noteColorValue(_ c: NoteColor?) -> Color {
@@ -349,112 +530,6 @@ private struct StreamNoteRow: View {
         return Calendar.current.isDateInToday(d)
     }
 
-    // MARK: - Date Panel
-
-    private var customDatePanel: some View {
-        let calendar = Calendar.current
-        let today = calendar.startOfDay(for: Date())
-        let selectedDate = draft.hasScheduledDate ? (draft.scheduledDate ?? today) : (note.scheduledDate ?? today)
-        let days = daysInMonth(calendarMonth, calendar: calendar)
-        let startOfMonth = calendar.date(from: calendar.dateComponents([.year, .month], from: calendarMonth))!
-        let firstWeekday = calendar.component(.weekday, from: startOfMonth)
-        let leadingEmpties = firstWeekday - 1
-
-        return VStack(spacing: 0) {
-            VStack(spacing: 0) {
-                HStack(spacing: 0) {
-                    Text(monthYearString(calendarMonth)).font(.system(size: 14, weight: .semibold)).foregroundStyle(.primary)
-                    Spacer()
-                    Button { calendarMonth = today } label: {
-                        Text("今天").font(.system(size: 11, weight: .medium)).foregroundStyle(AgendaColor.amber)
-                            .padding(.horizontal, 8).padding(.vertical, 3)
-                            .background(RoundedRectangle(cornerRadius: 4).fill(AgendaColor.amber.opacity(0.08)))
-                    }.buttonStyle(.plain)
-                    Button { if let prev = calendar.date(byAdding: .month, value: -1, to: calendarMonth) { calendarMonth = prev } }
-                        label: { Image(systemName: "chevron.left").font(.system(size: 11, weight: .semibold)).frame(width: 24, height: 24) }
-                        .buttonStyle(.plain).foregroundStyle(.secondary)
-                    Button { if let next = calendar.date(byAdding: .month, value: 1, to: calendarMonth) { calendarMonth = next } }
-                        label: { Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold)).frame(width: 24, height: 24) }
-                        .buttonStyle(.plain).foregroundStyle(.secondary)
-                }.padding(.bottom, 12)
-                HStack(spacing: 0) {
-                    ForEach(["日", "一", "二", "三", "四", "五", "六"], id: \.self) { d in
-                        Text(d).font(.system(size: 11)).foregroundStyle(AgendaColor.textMuted).frame(width: 34, height: 22)
-                    }
-                }.padding(.bottom, 2)
-                let totalCells = leadingEmpties + days
-                let rows = Int(ceil(Double(totalCells) / 7.0))
-                let notesOnDates = noteDatesInMonth(startOfMonth, days: days, calendar: calendar)
-                ForEach(0..<rows, id: \.self) { row in
-                    HStack(spacing: 0) {
-                        ForEach(0..<7, id: \.self) { col in
-                            let cellIndex = row * 7 + col
-                            if cellIndex < leadingEmpties || cellIndex >= totalCells {
-                                Color.clear.frame(width: 34, height: 32)
-                            } else {
-                                let day = cellIndex - leadingEmpties + 1
-                                let cellDate = calendar.date(byAdding: .day, value: day - 1, to: startOfMonth)!
-                                let isSel = calendar.isDate(cellDate, inSameDayAs: selectedDate)
-                                let isTodayCell = calendar.isDate(cellDate, inSameDayAs: today)
-                                let hasNotes = notesOnDates.contains(day)
-                                Button {
-                                    draft.hasScheduledDate = true; draft.scheduledDate = calendar.startOfDay(for: cellDate)
-                                    scheduleSaveDraft(); showDatePicker = false
-                                } label: {
-                                    ZStack {
-                                        if isSel { Circle().fill(AgendaColor.amber).frame(width: 24, height: 24) }
-                                        Text("\(day)").font(.system(size: 13, weight: isSel ? .semibold : (isTodayCell ? .medium : .regular)))
-                                            .foregroundStyle(isSel ? .white : (isTodayCell ? AgendaColor.amber : .primary))
-                                    }.frame(width: 34, height: 32)
-                                    .overlay(alignment: .bottom) {
-                                        if hasNotes && !isSel { Circle().fill(AgendaColor.amber.opacity(0.6)).frame(width: 4, height: 4).padding(.bottom, 2) }
-                                    }
-                                }.buttonStyle(.plain)
-                            }
-                        }
-                    }
-                }
-            }.padding(18)
-            Divider()
-            HStack(spacing: 0) {
-                if dateLabel.isEmpty == false {
-                    Button { draft.hasScheduledDate = false; draft.scheduledDate = nil; scheduleSaveDraft(); showDatePicker = false }
-                        label: { Text("清除日期").font(.system(size: 12)) }
-                        .buttonStyle(.plain).foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button("取消") { draft.hasScheduledDate = note.scheduledDate != nil; draft.scheduledDate = note.scheduledDate; showDatePicker = false }
-                    .buttonStyle(.plain).font(.system(size: 13)).foregroundStyle(.secondary).padding(.trailing, 12)
-                Button("指定日期") { scheduleSaveDraft(); showDatePicker = false }
-                    .buttonStyle(.plain).font(.system(size: 13, weight: .medium)).foregroundStyle(.white)
-                    .padding(.horizontal, 16).padding(.vertical, 5)
-                    .background(RoundedRectangle(cornerRadius: 5).fill(AgendaColor.amber))
-            }.padding(.horizontal, 18).padding(.vertical, 10)
-        }.frame(width: 272)
-    }
-
-    private func noteDatesInMonth(_ startOfMonth: Date, days: Int, calendar: Calendar) -> Set<Int> {
-        guard let range = calendar.range(of: .day, in: .month, for: startOfMonth) else { return [] }
-        var result = Set<Int>()
-        for day in range {
-            guard let date = calendar.date(byAdding: .day, value: day - 1, to: startOfMonth) else { continue }
-            if store.filteredNotes().contains(where: { note in
-                guard let d = note.scheduledDate else { return false }
-                return calendar.isDate(d, inSameDayAs: date)
-            }) { result.insert(day) }
-        }
-        return result
-    }
-
-    private func daysInMonth(_ date: Date, calendar: Calendar) -> Int {
-        calendar.range(of: .day, in: .month, for: date)?.count ?? 30
-    }
-
-    private func monthYearString(_ date: Date) -> String {
-        let fm = DateFormatter(); fm.locale = Locale(identifier: "zh_CN"); fm.dateFormat = "yyyy年M月"
-        return fm.string(from: date)
-    }
-
     // MARK: - Save/Draft
 
     private func saveDraft() {
@@ -486,14 +561,19 @@ private struct StreamNoteRow: View {
 
     private func prepareEditorOverlayForSelection() {
         editorHasUserChanges = false
-        if capturedPreviewHeight > 0 {
+        editorIsVisible = false
+        initialBlockJSON = draft.blockJSON
+        if editorHeight < 80 && capturedPreviewHeight > 0 {
             editorHeight = capturedPreviewHeight
         }
     }
 
     private func applyEditorContent(_ content: BlockNoteEditorContent) {
         guard content.noteID == note.id else { return }
-        editorHasUserChanges = true
+        if content.blockJSON != initialBlockJSON {
+            editorHasUserChanges = true
+        }
+        SharedBlockNoteWebView.shared.hasContentChanges = true
         draft.blockJSON = content.blockJSON
         draft.plainTextPreview = content.plainTextPreview
         draft.previewHTML = content.previewHTML
@@ -503,8 +583,9 @@ private struct StreamNoteRow: View {
     private func selectNoteAfterSavingActiveEditor() {
         guard store.selectedNoteID != note.id else { return }
 
+        let hadChanges = SharedBlockNoteWebView.shared.hasContentChanges
         SharedBlockNoteWebView.shared.saveCurrentContentNow { content in
-            if let content, let activeNote = store.note(withID: content.noteID) {
+            if hadChanges, let content, let activeNote = store.note(withID: content.noteID) {
                 store.updateNote(
                     noteID: activeNote.id,
                     title: activeNote.title,

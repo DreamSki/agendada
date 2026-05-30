@@ -17,24 +17,25 @@ struct BlockNoteCardEditor: NSViewRepresentable {
     @Binding var editorHeight: CGFloat
     var onChange: (BlockNoteEditorContent) -> Void
     var onDebouncedSave: (BlockNoteEditorContent) -> Void
+    var onReady: (() -> Void)?
 
     func makeNSView(context: Context) -> NSView {
         return NSView()
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
-        // Debug
         let bridge = SharedBlockNoteWebView.shared
-        bridge.attach(to: nsView)
+        let didAttach = bridge.attach(to: nsView)
         bridge.onChange = onChange
         bridge.onDebouncedSave = onDebouncedSave
+        bridge.onReady = onReady
         bridge.onHeightChange = { height in
             let clamped = max(1, min(height, 900))
             if abs(editorHeight - clamped) > 1 {
                 editorHeight = clamped
             }
         }
-        bridge.loadCard(noteID: noteID, blockJSON: blockJSON)
+        bridge.loadCard(noteID: noteID, blockJSON: blockJSON, didAttach: didAttach)
         bridge.setReadOnly(false)
     }
 
@@ -50,8 +51,11 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
     var onChange: ((BlockNoteEditorContent) -> Void)?
     var onDebouncedSave: ((BlockNoteEditorContent) -> Void)?
     var onHeightChange: ((CGFloat) -> Void)?
+    var onReady: (() -> Void)?
+    var hasContentChanges = false
 
     private var loadedNoteID: Note.ID?
+    private var lastLoadedBlockJSON: Data?
     private var pendingLoad: (noteID: Note.ID, blockJSON: Data)?
     private var isReady = false
 
@@ -98,40 +102,63 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
         return view
     }()
 
-    func attach(to container: NSView) {
-        if webView.superview !== container {
-            webView.removeFromSuperview()
-            webView.translatesAutoresizingMaskIntoConstraints = false
-            container.addSubview(webView)
-            NSLayoutConstraint.activate([
-                webView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-                webView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-                webView.topAnchor.constraint(equalTo: container.topAnchor),
-                webView.bottomAnchor.constraint(equalTo: container.bottomAnchor)
-            ])
-        }
+    @discardableResult
+    func attach(to container: NSView) -> Bool {
+        guard webView.superview !== container else { return false }
+        webView.isHidden = true
+        webView.alphaValue = 0
+        webView.removeFromSuperview()
+        webView.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(webView)
+        NSLayoutConstraint.activate([
+            webView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            webView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            webView.topAnchor.constraint(equalTo: container.topAnchor),
+            webView.bottomAnchor.constraint(equalTo: container.bottomAnchor)
+        ])
+        container.needsLayout = true
+        container.layoutSubtreeIfNeeded()
+        return true
     }
 
     func detach(from container: NSView) {
         if webView.superview === container {
+            webView.isHidden = true
+            webView.alphaValue = 0
             webView.removeFromSuperview()
         }
     }
 
-    func loadCard(noteID: Note.ID, blockJSON: Data) {
+    func loadCard(noteID: Note.ID, blockJSON: Data, didAttach: Bool = false) {
         guard isReady else {
             pendingLoad = (noteID, blockJSON)
             return
         }
 
-        guard loadedNoteID != noteID else {
+        guard loadedNoteID != noteID || lastLoadedBlockJSON != blockJSON else {
+            if didAttach {
+                webView.isHidden = false
+                webView.alphaValue = 1
+                onReady?()
+            }
             return
         }
 
         loadedNoteID = noteID
+        lastLoadedBlockJSON = blockJSON
+        hasContentChanges = false
         let blockJSONString = String(data: blockJSON, encoding: .utf8) ?? Note.emptyBlockJSONString
         let script = "window.loadCard(\(jsString(noteID.uuidString)), \(jsString(blockJSONString))); setTimeout(function(){ window.focusEditor && window.focusEditor(); }, 40);"
-        webView.evaluateJavaScript(script)
+        webView.evaluateJavaScript(script) { [weak self] _, _ in
+            guard let self else { return }
+            // The preview layer has an opaque background that physically
+            // blocks the WKWebView beneath it, so we can show the editor
+            // immediately without any timing tricks.
+            self.webView.isHidden = false
+            self.webView.alphaValue = 1
+            self.webView.needsDisplay = true
+            self.onReady?()
+        }
     }
 
     func focusEditor() {
@@ -140,6 +167,39 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
 
     func setReadOnly(_ isReadOnly: Bool) {
         webView.evaluateJavaScript("window.setReadOnly && window.setReadOnly(\(isReadOnly ? "true" : "false"));")
+    }
+
+    var pendingSearchQuery: String?
+    var pendingSearchCompletion: ((Int) -> Void)?
+
+    func searchInEditor(query: String, completion: @escaping (Int) -> Void) {
+        guard isReady else {
+            pendingSearchQuery = query
+            pendingSearchCompletion = completion
+            return
+        }
+        let safe = query.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "\\'")
+        webView.evaluateJavaScript("window.searchInEditor && window.searchInEditor('\(safe)')") { result, _ in
+            completion((result as? Int) ?? 0)
+        }
+    }
+
+    func navigateMatch(direction: Int, completion: @escaping (_ current: Int, _ total: Int) -> Void) {
+        webView.evaluateJavaScript("window.navigateMatch && window.navigateMatch(\(direction))") { result, _ in
+            if let dict = result as? [String: Any],
+               let c = dict["current"] as? Int,
+               let t = dict["total"] as? Int {
+                completion(c, t)
+            } else {
+                completion(0, 0)
+            }
+        }
+    }
+
+    func clearSearch() {
+        pendingSearchQuery = nil
+        pendingSearchCompletion = nil
+        webView.evaluateJavaScript("window.clearSearch && window.clearSearch();")
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
@@ -168,13 +228,24 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
         switch message.name {
         case "editorReady":
             isReady = true
+            injectMeasurementFunction()
             if let pendingLoad {
                 self.pendingLoad = nil
                 loadCard(noteID: pendingLoad.noteID, blockJSON: pendingLoad.blockJSON)
             }
+            if let q = pendingSearchQuery, !q.isEmpty {
+                let cb = pendingSearchCompletion ?? { _ in }
+                pendingSearchQuery = nil
+                pendingSearchCompletion = nil
+                let safe = q.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "\\'")
+                webView.evaluateJavaScript("window.searchInEditor && window.searchInEditor('\(safe)')") { result, _ in
+                    cb((result as? Int) ?? 0)
+                }
+            }
 
         case "cardChanged":
             guard let content = content(from: message.body), content.noteID == loadedNoteID else { return }
+            hasContentChanges = true
             onChange?(content)
 
         case "cardSaved":
@@ -224,6 +295,123 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
             print("Agendada failed to prepare writable BlockNote editor bundle: \(error)")
             return PreparedEditorBundle(editorURL: bundledIndexURL, readAccessURL: bundledEditorURL)
         }
+    }
+
+    private func injectMeasurementFunction() {
+        let script = """
+        (function() {
+          if (window.__agendadaInjected) return;
+          window.__agendadaInjected = true;
+
+          var styleEl = document.createElement('style');
+          styleEl.id = 'agendada-heading-styles';
+          styleEl.textContent = `
+            .bn-block-content[data-content-type="heading"]:not([data-level]),
+            .bn-block-content[data-content-type="heading"][data-level="1"] {
+              font-size: 17px !important;
+              font-weight: 700 !important;
+              line-height: 1.65 !important;
+              padding-top: 10px !important;
+              padding-bottom: 3px !important;
+              color: #1A1A1A !important;
+            }
+            .bn-block-content[data-content-type="heading"][data-level="2"] {
+              font-size: 17px !important;
+              font-weight: 700 !important;
+              line-height: 1.65 !important;
+              padding-top: 3px !important;
+              padding-bottom: 3px !important;
+              color: #1A1A1A !important;
+            }
+            .bn-block-content[data-content-type="heading"][data-level="3"] {
+              font-size: 15px !important;
+              font-weight: 700 !important;
+              line-height: 1.65 !important;
+              padding-top: 3px !important;
+              padding-bottom: 3px !important;
+              color: #555555 !important;
+            }
+          `;
+          document.head.appendChild(styleEl);
+
+          var searchStyleEl = document.createElement('style');
+          searchStyleEl.id = 'agendada-search-styles';
+          searchStyleEl.textContent = '::highlight(agendada-search) { background-color: #FFE066; color: inherit; } ::highlight(agendada-search-active) { background-color: #F5A623; color: inherit; }';
+          document.head.appendChild(searchStyleEl);
+
+          window.__agendadaSearch = { matches: [], currentIdx: -1 };
+
+          window.searchInEditor = function(query) {
+            try { CSS.highlights.delete('agendada-search'); } catch(e) {}
+            try { CSS.highlights.delete('agendada-search-active'); } catch(e) {}
+            window.__agendadaSearch = { matches: [], currentIdx: -1 };
+            if (!query || !query.trim()) return 0;
+            var editor = document.querySelector('.bn-editor') || document.querySelector('.mantine-RichTextEditor-root') || document.getElementById('root');
+            if (!editor) return 0;
+            var walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
+            var ranges = [];
+            var lower = query.toLowerCase();
+            while (walker.nextNode()) {
+              var node = walker.currentNode;
+              if (node.parentElement && (node.parentElement.tagName === 'SCRIPT' || node.parentElement.tagName === 'STYLE')) continue;
+              var text = node.textContent.toLowerCase();
+              var idx = 0;
+              while ((idx = text.indexOf(lower, idx)) !== -1) {
+                var r = new Range();
+                r.setStart(node, idx);
+                r.setEnd(node, idx + query.length);
+                ranges.push(r);
+                idx += query.length;
+              }
+            }
+            if (ranges.length > 0) {
+              try {
+                var h = new Highlight();
+                for (var i = 0; i < ranges.length; i++) { h.add(ranges[i]); }
+                CSS.highlights.set('agendada-search', h);
+              } catch(e) {}
+              window.__agendadaSearch = { matches: ranges, currentIdx: 0 };
+              try { ranges[0].startContainer.parentElement.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch(e) {}
+              try {
+                CSS.highlights.delete('agendada-search-active');
+                var ah = new Highlight(); ah.add(ranges[0]);
+                CSS.highlights.set('agendada-search-active', ah);
+              } catch(e) {}
+            }
+            return ranges.length;
+          };
+
+          window.navigateMatch = function(direction) {
+            var s = window.__agendadaSearch;
+            if (!s || s.matches.length === 0) return { current: 0, total: 0 };
+            s.currentIdx += direction;
+            if (s.currentIdx >= s.matches.length) s.currentIdx = 0;
+            if (s.currentIdx < 0) s.currentIdx = s.matches.length - 1;
+            var range = s.matches[s.currentIdx];
+            try {
+              CSS.highlights.delete('agendada-search-active');
+              var ah = new Highlight(); ah.add(range);
+              CSS.highlights.set('agendada-search-active', ah);
+            } catch(e) {}
+            try { range.startContainer.parentElement.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch(e) {}
+            return { current: s.currentIdx + 1, total: s.matches.length };
+          };
+
+          window.clearSearch = function() {
+            try { CSS.highlights.clear(); } catch(e) {}
+            try { CSS.highlights.delete('agendada-search'); } catch(e) {}
+            try { CSS.highlights.delete('agendada-search-active'); } catch(e) {}
+            window.__agendadaSearch = { matches: [], currentIdx: -1 };
+            try {
+              var root = document.getElementById('root');
+              if (root) { root.style.willChange = 'auto'; void root.offsetHeight; }
+            } catch(e) {}
+          };
+
+          console.log("Agendada: heading styles + search injected");
+        })();
+        """
+        webView.evaluateJavaScript(script)
     }
 
     private func handleAssetImport(_ body: Any) {
@@ -690,6 +878,7 @@ private func blockNoteHTML() -> String {
 
         window.loadCard = function(cardId, blockJSONText) {
           clearTimeout(window.__agendada.saveTimer);
+          window.clearSearch && window.clearSearch();
           window.__agendada.currentCardId = cardId;
           let blocks = emptyBlocks();
           try { blocks = normalizeBlocks(JSON.parse(blockJSONText)); } catch (error) {}

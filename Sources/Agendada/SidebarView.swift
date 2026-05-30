@@ -209,15 +209,19 @@ struct SidebarView: View {
     }
 
     private var sidebarTrashButton: some View {
-        AgendaSidebarRow(
-            title: "废纸篓",
+        let trashCount = store.trashedNotes.count
+        let title = trashCount > 0 ? "废纸篓 (\(trashCount))" : "废纸篓"
+        let isSelected = store.selectedOverview == .trash
+
+        return AgendaSidebarRow(
+            title: title,
             systemImage: "trash",
-            isSelected: false,
+            isSelected: isSelected,
             tint: AgendaColor.textMuted,
             selectedTextColor: AgendaColor.amber,
             showsSelectionBackground: false
         ) {
-            // Trash functionality — P2
+            store.selectOverview(.trash)
         }
     }
 }

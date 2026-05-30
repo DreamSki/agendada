@@ -305,3 +305,179 @@ import Testing
     #expect(store.project(withID: project.id) == nil)
     #expect(store.filteredNotes().contains { $0.id == note.id } == false)
 }
+
+// MARK: - Batch Selection Tests
+
+@Test func batchSelectAllAndDeselect() async throws {
+    let store = LibraryStore.sample()
+    store.selectOverview(.all)
+
+    store.selectAllFilteredNotes()
+    #expect(store.batchSelectedNoteIDs.isEmpty == false)
+    #expect(store.batchSelectedNoteIDs.count == store.filteredNotes().count)
+
+    store.deselectAllNotes()
+    #expect(store.batchSelectedNoteIDs.isEmpty)
+}
+
+@Test func batchInvertSelection() async throws {
+    let store = LibraryStore.sample()
+    store.selectOverview(.all)
+    let allIDs = Set(store.filteredNotes().map(\.id))
+
+    // Start with empty selection, invert should select all
+    store.invertBatchSelection()
+    #expect(store.batchSelectedNoteIDs == allIDs)
+
+    // Invert again should deselect all
+    store.invertBatchSelection()
+    #expect(store.batchSelectedNoteIDs.isEmpty)
+}
+
+@Test func batchDeleteMovesNotesToTrash() async throws {
+    let store = LibraryStore.sample()
+    store.selectOverview(.all)
+    let notes = store.filteredNotes()
+    let ids = Set(notes.prefix(2).map(\.id))
+
+    store.batchDeleteNotes(ids)
+
+    // Batch selection cleared
+    #expect(store.batchSelectedNoteIDs.isEmpty)
+
+    // Notes are now trashed
+    for id in ids {
+        let note = store.note(withID: id)
+        #expect(note?.status == .trashed)
+    }
+
+    // Not visible in normal view
+    #expect(store.filteredNotes().contains { ids.contains($0.id) } == false)
+}
+
+@Test func batchRestoreNotesFromTrash() async throws {
+    let store = LibraryStore.sample()
+    store.selectOverview(.all)
+
+    // First batch delete some notes
+    let notes = store.filteredNotes()
+    let ids = Set(notes.prefix(2).map(\.id))
+    store.batchDeleteNotes(ids)
+
+    // Now restore them
+    store.batchRestoreNotes(ids)
+
+    // Batch selection cleared
+    #expect(store.batchSelectedNoteIDs.isEmpty)
+
+    // Notes are back to open
+    for id in ids {
+        let note = store.note(withID: id)
+        #expect(note?.status == .open)
+    }
+}
+
+@Test func batchPermanentlyDeleteNotesRemovesThem() async throws {
+    let store = LibraryStore.sample()
+    store.selectOverview(.all)
+
+    // First batch delete to trash
+    let notes = store.filteredNotes()
+    let ids = Set(notes.prefix(1).map(\.id))
+    store.batchDeleteNotes(ids)
+
+    // Then permanently delete
+    store.batchPermanentlyDeleteNotes(ids)
+
+    #expect(store.batchSelectedNoteIDs.isEmpty)
+    for id in ids {
+        #expect(store.note(withID: id) == nil)
+    }
+}
+
+@Test func batchMoveNotesToProject() async throws {
+    let store = LibraryStore()
+    let category = store.addCategory(name: "工作")
+    let sourceProject = store.addProject(name: "源项目", categoryID: category.id)
+    let targetProject = store.addProject(name: "目标项目", categoryID: category.id)
+
+    _ = store.addProject(name: "源项目") // re-select source since addProject navigates
+    store.selectProject(sourceProject.id)
+
+    let note1 = store.addNote(title: "笔记1")
+    let note2 = store.addNote(title: "笔记2")
+
+    let ids: Set<Note.ID> = [note1.id, note2.id]
+    store.moveNotes(ids, toProject: targetProject.id)
+
+    #expect(store.batchSelectedNoteIDs.isEmpty)
+    #expect(store.note(withID: note1.id)?.projectID == targetProject.id)
+    #expect(store.note(withID: note2.id)?.projectID == targetProject.id)
+}
+
+@Test func batchSelectionClearsOnNavigation() async throws {
+    let store = LibraryStore.sample()
+    store.selectOverview(.all)
+    store.selectAllFilteredNotes()
+    #expect(store.batchSelectedNoteIDs.isEmpty == false)
+
+    // Switching overview should clear batch selection
+    store.selectOverview(.today)
+    #expect(store.batchSelectedNoteIDs.isEmpty)
+}
+
+@Test func batchSelectionNotPersistedInSnapshot() async throws {
+    let store = LibraryStore.sample()
+    store.selectOverview(.all)
+    store.selectAllFilteredNotes()
+    #expect(store.batchSelectedNoteIDs.isEmpty == false)
+
+    let snapshot = store.snapshot()
+    // Snapshot does not include batch selection — verified by round-trip
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    let data = try encoder.encode(snapshot)
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+    let decoded = try decoder.decode(LibrarySnapshot.self, from: data)
+
+    // The decoded store should have no batch selection
+    let restored = LibraryStore(snapshot: decoded)
+    #expect(restored.batchSelectedNoteIDs.isEmpty)
+}
+
+@Test func togglingBatchSelectionEntersBatchMode() async throws {
+    let store = LibraryStore.sample()
+    store.selectOverview(.all)
+
+    guard let firstNote = store.filteredNotes().first else {
+        #expect(Bool(false), "Expected at least one note")
+        return
+    }
+
+    // Toggle a note into batch selection
+    store.toggleBatchSelection(noteID: firstNote.id)
+    #expect(store.batchSelectedNoteIDs.contains(firstNote.id))
+
+    // Toggle it off
+    store.toggleBatchSelection(noteID: firstNote.id)
+    #expect(store.batchSelectedNoteIDs.contains(firstNote.id) == false)
+}
+
+@Test func batchSelectionClearsSelectedNoteID() async throws {
+    let store = LibraryStore.sample()
+    store.selectOverview(.all)
+
+    // First select a note normally
+    guard let firstNote = store.filteredNotes().first else {
+        #expect(Bool(false), "Expected at least one note")
+        return
+    }
+    store.selectNote(firstNote.id)
+    #expect(store.selectedNoteID == firstNote.id)
+
+    // Enter batch mode — should clear selectedNoteID
+    store.toggleBatchSelection(noteID: firstNote.id)
+    #expect(store.selectedNoteID == nil)
+    #expect(store.batchSelectedNoteIDs.contains(firstNote.id))
+}
