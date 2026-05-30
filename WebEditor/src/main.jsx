@@ -9,6 +9,7 @@ import { BlockNoteView } from "@blocknote/mantine";
 import { filterSuggestionItems } from "@blocknote/core/extensions";
 import { zh } from "@blocknote/core/locales";
 import { MiniSlashMenu } from "./MiniSlashMenu";
+import { ColorMenu, HighlightMenu, createColorItems, createHighlightItems } from "./ColorMenu";
 
 window.__agendada = {
   currentCardId: null,
@@ -655,6 +656,7 @@ function EditorApp() {
         editable={!window.__agendada.readOnly}
         theme="light"
         slashMenu={false}
+        formattingToolbar={true}
         onChange={() => emitChanged(editor)}
         onFocus={() => post("editorFocused", window.__agendada.currentCardId || "")}
         onBlur={() => post("editorBlurred", window.__agendada.currentCardId || "")}
@@ -665,6 +667,34 @@ function EditorApp() {
           columns={20}
           getItems={async (query) => {
             const items = getDefaultReactSlashMenuItems(editor);
+            return filterSuggestionItems(items, query);
+          }}
+          floatingUIOptions={{
+            useFloatingOptions: {
+              placement: "top-start",
+            },
+          }}
+        />
+        <GridSuggestionMenuController
+          triggerCharacter="!"
+          gridSuggestionMenuComponent={ColorMenu}
+          columns={20}
+          getItems={async (query) => {
+            const items = createColorItems(editor);
+            return filterSuggestionItems(items, query);
+          }}
+          floatingUIOptions={{
+            useFloatingOptions: {
+              placement: "top-start",
+            },
+          }}
+        />
+        <GridSuggestionMenuController
+          triggerCharacter="«"
+          gridSuggestionMenuComponent={HighlightMenu}
+          columns={20}
+          getItems={async (query) => {
+            const items = createHighlightItems(editor);
             return filterSuggestionItems(items, query);
           }}
           floatingUIOptions={{

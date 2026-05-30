@@ -408,42 +408,43 @@ private struct PreviewRichText: View {
         let visibleFragments = fragments.isEmpty
             ? [PreviewTextFragment(text: fallback.isEmpty ? " " : fallback)]
             : fragments
-        return visibleFragments.reduce(Text("")) { partial, fragment in
-            partial + styledText(fragment)
+        var attributed = AttributedString("")
+        for fragment in visibleFragments {
+            attributed += styledAttributed(fragment)
         }
+        return Text(attributed)
     }
 
-    private func styledText(_ fragment: PreviewTextFragment) -> Text {
+    private func styledAttributed(_ fragment: PreviewTextFragment) -> AttributedString {
+        let display = fragment.text.isEmpty ? " " : fragment.text
+        var attr = AttributedString(display)
+
         let isMono = forceMonospace || fragment.isCode
         let fontName: String
         if isMono {
             fontName = "Menlo"
-        } else if fragment.isBold {
-            fontName = "Avenir Next Demi Bold"
         } else {
-            switch baseWeight {
-            case .bold: fontName = "Avenir Next Bold"
-            case .medium: fontName = "Avenir Next Medium"
-            default: fontName = "Avenir Next"
+            if fragment.isBold {
+                fontName = "Avenir Next Demi Bold"
+            } else {
+                switch baseWeight {
+                case .bold: fontName = "Avenir Next Bold"
+                case .medium: fontName = "Avenir Next Medium"
+                default: fontName = "Avenir Next"
+                }
             }
         }
-        var text = Text(fragment.text.isEmpty ? " " : fragment.text)
-            .font(.custom(fontName, size: fontSize))
-            .foregroundColor(fragment.textColor ?? baseColor)
-
-        if fragment.isItalic {
-            text = text.italic()
+        attr.font = .custom(fontName, size: fontSize)
+        attr.foregroundColor = fragment.linkURL == nil ? (fragment.textColor ?? baseColor) : AgendaColor.amber
+        attr.underlineStyle = (fragment.isUnderline || fragment.linkURL != nil) ? .single : nil
+        attr.strikethroughStyle = fragment.isStrikethrough ? .single : nil
+        if let bg = fragment.backgroundColor {
+            attr.backgroundColor = bg
         }
-        if fragment.isUnderline || fragment.linkURL != nil {
-            text = text.underline()
+        if let linkURL = fragment.linkURL {
+            attr.link = linkURL
         }
-        if fragment.isStrikethrough {
-            text = text.strikethrough()
-        }
-        if fragment.linkURL != nil {
-            text = text.foregroundColor(AgendaColor.amber)
-        }
-        return text
+        return attr
     }
 }
 
@@ -678,6 +679,10 @@ private struct PreviewTextFragment {
         PreviewCSSColor.color(from: stringStyle("textColor") ?? stringStyle("color"))
     }
 
+    var backgroundColor: Color? {
+        PreviewCSSColor.color(from: stringStyle("backgroundColor"))
+    }
+
     func merging(parentStyles: [String: PreviewJSONValue]?, parentLinkURL: URL?) -> PreviewTextFragment {
         var merged = parentStyles ?? [:]
         styles?.forEach { key, value in merged[key] = value }
@@ -735,6 +740,7 @@ private enum PreviewCSSColor {
     private static func namedColor(_ value: String) -> Color? {
         switch value.lowercased() {
         case "red": return Color(red: 0.95, green: 0.35, blue: 0.35)
+        case "orange": return Color(red: 0.95, green: 0.60, blue: 0.10)
         case "green": return Color(red: 0.28, green: 0.68, blue: 0.45)
         case "blue": return Color(red: 0.26, green: 0.56, blue: 0.95)
         case "yellow": return Color(red: 0.95, green: 0.80, blue: 0.15)
