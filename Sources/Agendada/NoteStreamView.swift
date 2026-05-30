@@ -13,6 +13,11 @@ struct NoteStreamView: View {
             noteStreamContent
         }
         .background(Color.white)
+        .onChange(of: searchText) { _, newValue in
+            if newValue.isEmpty {
+                SharedBlockNoteWebView.shared.clearSearch()
+            }
+        }
     }
 
     // MARK: - Header
@@ -23,32 +28,33 @@ struct NoteStreamView: View {
                 HStack(alignment: .firstTextBaseline, spacing: 12) {
                     if let categoryName = breadcrumbCategoryName {
                         Text(categoryName)
-                            .font(.system(size: 15, weight: .regular))
+                            .font(AgendaFont.breadcrumbCategory)
                             .foregroundStyle(AgendaColor.textMuted)
                     }
                     Text(mainTitle)
-                        .font(.system(size: 20, weight: .bold))
+                        .font(AgendaFont.breadcrumbTitle)
                         .foregroundStyle(Color(red: 0.173, green: 0.173, blue: 0.180))
                     if let context = breadcrumbContext {
                         Text(context)
-                            .font(.system(size: 15, weight: .regular))
+                            .font(AgendaFont.breadcrumbContext)
                             .foregroundStyle(AgendaColor.textMuted)
                             .lineLimit(1)
                             .truncationMode(.tail)
                     }
                 }
                 Spacer()
-                HStack(spacing: 16) {
+                HStack(spacing: 12) {
+                    sortPicker
                     Button {
                         copyToPasteboard(store.summaryForFilteredNotes())
                     } label: {
                         Image(systemName: "sparkles")
-                            .font(.system(size: 18, weight: .medium))
+                            .font(.system(size: 16, weight: .medium))
                     }
                     .buttonStyle(.plain).foregroundStyle(AgendaColor.textMuted).help("复制摘要")
                     Button { withAnimation(.easeInOut(duration: 0.16)) { isSearching.toggle() } } label: {
                         Image(systemName: "magnifyingglass")
-                            .font(.system(size: 18, weight: .medium))
+                            .font(.system(size: 16, weight: .medium))
                     }
                     .buttonStyle(.plain).foregroundStyle(AgendaColor.textMuted).help("搜索")
                     Button {
@@ -71,9 +77,12 @@ struct NoteStreamView: View {
                         .foregroundStyle(AgendaColor.textMuted)
                     TextField("搜索标题、正文、标签或人员", text: $searchText)
                         .textFieldStyle(.plain)
-                        .font(.system(size: 13))
+                        .font(.custom("Avenir Next", size: 13))
                     if !searchText.isEmpty {
-                        Button { searchText = "" } label: {
+                        Button {
+                            searchText = ""
+                            SharedBlockNoteWebView.shared.clearSearch()
+                        } label: {
                             Image(systemName: "xmark.circle.fill")
                                 .font(.system(size: 13, weight: .medium))
                                 .foregroundStyle(AgendaColor.textMuted)
@@ -88,6 +97,31 @@ struct NoteStreamView: View {
                 .padding(.top, 10)
             }
         }
+    }
+
+    private var sortPicker: some View {
+        @Bindable var store = store
+        return Menu {
+            ForEach(NoteSortOrder.allCases, id: \.self) { order in
+                Button {
+                    store.sortOrder = order
+                } label: {
+                    HStack {
+                        Text(order.title)
+                        if store.sortOrder == order {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: "arrow.up.arrow.down")
+                .font(.system(size: 14, weight: .medium))
+        }
+        .menuStyle(.borderlessButton)
+        .frame(width: 22)
+        .foregroundStyle(AgendaColor.textMuted)
+        .help("排序方式")
     }
 
     private var mainTitle: String {
@@ -117,7 +151,7 @@ struct NoteStreamView: View {
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(notes) { note in
                     StreamNoteRow(note: note)
-                        .id(note.id).padding(.bottom, 32)
+                        .id(note.id).padding(.bottom, AgendaSpacing.cardGap)
                 }
             }
             .padding(.horizontal, 12).padding(.top, 16).padding(.bottom, 80)
@@ -144,17 +178,17 @@ struct NoteStreamView: View {
     private var batchOperationBar: some View {
         HStack(spacing: 14) {
             Text("已选 \(store.batchSelectedNoteIDs.count) 项")
-                .font(.system(size: 13, weight: .medium))
+                .font(AgendaFont.metaLabel)
                 .foregroundStyle(.primary)
 
             Button("全选") { store.selectAllFilteredNotes() }
                 .buttonStyle(.plain)
-                .font(.system(size: 12))
+                .font(.custom("Avenir Next", size: 12))
                 .foregroundStyle(AgendaColor.amber)
 
             Button("反选") { store.invertBatchSelection() }
                 .buttonStyle(.plain)
-                .font(.system(size: 12))
+                .font(.custom("Avenir Next", size: 12))
                 .foregroundStyle(AgendaColor.amber)
 
             Divider().frame(height: 16)
@@ -164,21 +198,21 @@ struct NoteStreamView: View {
                     store.batchRestoreNotes(store.batchSelectedNoteIDs)
                 }
                 .buttonStyle(.plain)
-                .font(.system(size: 12))
+                .font(.custom("Avenir Next", size: 12))
                 .foregroundStyle(AgendaColor.amber)
 
                 Button("彻底删除") {
                     store.batchPermanentlyDeleteNotes(store.batchSelectedNoteIDs)
                 }
                 .buttonStyle(.plain)
-                .font(.system(size: 12))
+                .font(.custom("Avenir Next", size: 12))
                 .foregroundStyle(.red)
             } else {
                 Button("移到废纸篓") {
                     store.batchDeleteNotes(store.batchSelectedNoteIDs)
                 }
                 .buttonStyle(.plain)
-                .font(.system(size: 12))
+                .font(.custom("Avenir Next", size: 12))
                 .foregroundStyle(.red)
 
                 if !store.projects.isEmpty {
@@ -190,7 +224,7 @@ struct NoteStreamView: View {
                         }
                     } label: {
                         Text("移动到...")
-                            .font(.system(size: 12))
+                            .font(.custom("Avenir Next", size: 12))
                     }
                     .menuStyle(.borderlessButton)
                     .frame(width: 70)
@@ -201,7 +235,7 @@ struct NoteStreamView: View {
 
             Button("取消") { store.deselectAllNotes() }
                 .buttonStyle(.plain)
-                .font(.system(size: 12))
+                .font(.custom("Avenir Next", size: 12))
                 .foregroundStyle(AgendaColor.textMuted)
         }
         .padding(.horizontal, 18)
@@ -225,6 +259,7 @@ private struct StreamNoteRow: View {
     let note: Note
 
     @State private var draft: StreamNoteDraft
+    @State private var initialDraft: StreamNoteDraft
     @State private var saveTask: Task<Void, Never>?
     @State private var editorHeight: CGFloat = 0
     @State private var capturedPreviewHeight: CGFloat = 0
@@ -237,7 +272,9 @@ private struct StreamNoteRow: View {
 
     init(note: Note) {
         self.note = note
-        _draft = State(initialValue: StreamNoteDraft(note: note))
+        let d = StreamNoteDraft(note: note)
+        _draft = State(initialValue: d)
+        _initialDraft = State(initialValue: d)
     }
 
     private var isSelected: Bool { store.selectedNoteID == note.id }
@@ -245,25 +282,34 @@ private struct StreamNoteRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .center, spacing: 12) {
+            HStack(alignment: .center, spacing: 10) {
                 bulletIcon.frame(width: bulletCol, alignment: .leading)
                 HStack(alignment: .center) {
-                    Text(note.title.isEmpty ? "无标题" : note.title)
-                        .font(.system(size: 18, weight: note.bodyPlainText.isEmpty ? .semibold : .bold))
-                        .foregroundStyle(isNoteDimmed ? .secondary : Color(red: 0.102, green: 0.102, blue: 0.102))
-                        .lineLimit(1)
+                    if isSelected {
+                        TextField("无标题", text: $draft.title)
+                            .font(AgendaFont.cardTitle)
+                            .textFieldStyle(.plain)
+                            .foregroundStyle(isNoteDimmed ? .secondary : Color(red: 0.102, green: 0.102, blue: 0.102))
+                            .lineLimit(1)
+                    } else {
+                        Text(note.title.isEmpty ? "无标题" : note.title)
+                            .font(AgendaFont.cardTitle)
+                            .foregroundStyle(isNoteDimmed ? .secondary : Color(red: 0.102, green: 0.102, blue: 0.102))
+                            .lineLimit(1)
+                    }
                     Spacer(minLength: 8)
                     if !dateLabel.isEmpty {
                         Button { showDatePicker = true } label: {
                             Text(dateLabel)
-                                .font(.system(size: 13, weight: (isSelected && isToday) ? .medium : .regular))
-                                .foregroundStyle((isSelected && isToday) ? AgendaColor.amber : AgendaColor.textMuted)
+                                .font(.custom(dateFontName, size: 13))
+                                .foregroundStyle(dateColor)
                         }
                         .buttonStyle(.plain)
                         .popover(isPresented: $showDatePicker, attachmentAnchor: .point(.bottom), arrowEdge: .bottom) {
                             DateAgendaPanelView(noteID: note.id) {
                                 if let updated = store.note(withID: note.id) {
                                     draft = StreamNoteDraft(note: updated)
+                                    initialDraft = draft
                                 }
                                 showDatePicker = false
                             }
@@ -279,6 +325,7 @@ private struct StreamNoteRow: View {
                             DateAgendaPanelView(noteID: note.id) {
                                 if let updated = store.note(withID: note.id) {
                                     draft = StreamNoteDraft(note: updated)
+                                    initialDraft = draft
                                 }
                                 showDatePicker = false
                             }
@@ -287,18 +334,16 @@ private struct StreamNoteRow: View {
                     }
                 }
             }
-            bodyContent.padding(.top, 16)
+            bodyContent.padding(.top, 6)
             }
-        .padding(24).frame(maxWidth: .infinity)
+        .padding(.horizontal, 20).padding(.vertical, 16).frame(maxWidth: .infinity)
         .background(RoundedRectangle(cornerRadius: 12).fill(isSelected ? AgendaColor.cardActiveFill : .clear))
         .overlay(alignment: .leading) {
             if isHovering && !store.isInBatchMode && !isSelected {
                 RoundedRectangle(cornerRadius: 1.5)
                     .fill(Color.black.opacity(0.07))
                     .frame(width: 3)
-                    .blur(radius: 1)
-                    .padding(.vertical, 12)
-                    .offset(x: -1)
+                    .padding(.vertical, 16)
             }
         }
         .overlay(alignment: .top) {
@@ -307,9 +352,16 @@ private struct StreamNoteRow: View {
             }
         }
         .overlay(alignment: .bottomTrailing) {
-            if isSelected || isHovering { actionMenu.padding(16) }
+            if isSelected {
+                actionMenu.padding(12)
+            } else if !store.isInBatchMode {
+                Text(relativeEditedAt)
+                    .font(.custom("Avenir Next", size: 11))
+                    .foregroundStyle(AgendaColor.textMuted)
+                    .padding(12)
+            }
         }
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(isSelected ? AgendaColor.cardActiveBorder : .clear, lineWidth: 1.5))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(isSelected ? AgendaColor.cardActiveBorder : .clear, lineWidth: 0.75))
         .shadow(color: isSelected ? .black.opacity(0.04) : .clear, radius: 4, x: 0, y: 2)
         .padding(.horizontal, 20).contentShape(Rectangle())
         .contextMenu { contextMenuContent }
@@ -346,13 +398,27 @@ private struct StreamNoteRow: View {
     // MARK: - Body
 
     private var bodyContent: some View {
-        // 统一高度：取预览和编辑器的最大值
         let unifiedHeight = max(capturedPreviewHeight, editorHeight)
-        // 初始时（高度为0）让内容自然扩展
         let useFixedHeight = unifiedHeight > 0
 
         return ZStack(alignment: .topLeading) {
-            // 编辑器在下层 — 即使 WKWebView 提前可见，也会被预览的背景挡住
+            if !isSelected || !editorIsVisible {
+                BlockNotePreviewView(note: note)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                    .frame(height: useFixedHeight ? unifiedHeight : nil, alignment: .top)
+                    .opacity(isNoteDimmed ? 0.58 : 1)
+                    .allowsHitTesting(!isSelected)
+                    .background(
+                        GeometryReader { geo in
+                            Color.clear.preference(key: PreviewHeightKey.self, value: geo.size.height)
+                        }
+                    )
+                    .onPreferenceChange(PreviewHeightKey.self) { h in
+                        capturedPreviewHeight = h
+                    }
+            }
+
             if isSelected {
                 BlockNoteCardEditor(
                     noteID: note.id,
@@ -380,30 +446,6 @@ private struct StreamNoteRow: View {
                 .frame(height: unifiedHeight, alignment: .top)
                 .opacity(isNoteDimmed ? 0.58 : 1)
             }
-
-            // 预览在上层 — 加载期间用不透明背景物理遮挡下层的 WKWebView，
-            // 这样即使 WKWebView 提前显示也不会有任何重叠。
-            if !isSelected || !editorIsVisible {
-                BlockNotePreviewView(note: note)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-                    .frame(height: useFixedHeight ? unifiedHeight : nil, alignment: .top)
-                    .opacity(isNoteDimmed ? 0.58 : 1)
-                    .allowsHitTesting(!isSelected)
-                    .background(
-                        (isSelected && !editorIsVisible)
-                            ? AgendaColor.cardActiveFill
-                            : Color.clear
-                    )
-                    .background(
-                        GeometryReader { geo in
-                            Color.clear.preference(key: PreviewHeightKey.self, value: geo.size.height)
-                        }
-                    )
-                    .onPreferenceChange(PreviewHeightKey.self) { h in
-                        capturedPreviewHeight = h
-                    }
-            }
         }
         .frame(height: useFixedHeight ? unifiedHeight : nil, alignment: .top)
     }
@@ -421,17 +463,15 @@ private struct StreamNoteRow: View {
                     .font(.system(size: 18, weight: .medium))
                     .foregroundStyle(isBatchSelected ? AgendaColor.amber : AgendaColor.textMuted)
             } else {
-                // Outer ring — appears on hover or when selected
                 if isHovering || isSelected {
                     Circle()
-                        .stroke(color, lineWidth: 1.5)
-                        .frame(width: 18, height: 18)
+                        .stroke(color, lineWidth: 1)
+                        .frame(width: 20, height: 20)
                 }
-                // Inner dot
                 if note.bodyPlainText.isEmpty {
-                    Circle().fill(color).frame(width: 9, height: 9)
+                    Circle().fill(color).frame(width: 10, height: 10)
                 } else {
-                    Circle().stroke(color, lineWidth: 1.5).frame(width: 12, height: 12)
+                    Circle().stroke(color, lineWidth: 1).frame(width: 14, height: 14)
                 }
             }
         }
@@ -460,6 +500,43 @@ private struct StreamNoteRow: View {
     }
 
     private var isNoteDimmed: Bool { note.status == .completed || note.status == .closed }
+
+    // MARK: - Date
+
+    private var dateColor: Color {
+        (isSelected || isHovering || isToday) ? AgendaColor.amber : AgendaColor.textMuted
+    }
+
+    private var dateFontName: String {
+        (isSelected || isHovering || isToday) ? "Avenir Next Medium" : "Avenir Next"
+    }
+
+    private var dateLabel: String {
+        guard let d = draft.hasScheduledDate ? draft.scheduledDate : note.scheduledDate else { return "" }
+        if Calendar.current.isDateInToday(d) { return "今天" }
+        if Calendar.current.isDateInTomorrow(d) { return "明天" }
+        if Calendar.current.isDateInYesterday(d) { return "昨天" }
+        let fm = DateFormatter(); fm.locale = Locale(identifier: "zh_CN"); fm.dateFormat = "M月d日 EEEE"
+        return fm.string(from: d)
+    }
+    private var isToday: Bool {
+        guard let d = draft.hasScheduledDate ? draft.scheduledDate : note.scheduledDate else { return false }
+        return Calendar.current.isDateInToday(d)
+    }
+
+    // MARK: - Edited At
+
+    private var relativeEditedAt: String {
+        let interval = Date().timeIntervalSince(note.editedAt)
+        if interval < 0 { return "刚刚" }
+        if interval < 60 { return "刚刚" }
+        if interval < 3600 { return "\(Int(interval / 60)) 分钟前" }
+        if interval < 86400 { return "\(Int(interval / 3600)) 小时前" }
+        if interval < 172800 { return "昨天" }
+        if interval < 604800 { return "\(Int(interval / 86400)) 天前" }
+        let fm = DateFormatter(); fm.locale = Locale(identifier: "zh_CN"); fm.dateFormat = "M月d日"
+        return fm.string(from: note.editedAt)
+    }
 
     // MARK: - Action Menu
 
@@ -515,21 +592,6 @@ private struct StreamNoteRow: View {
         Button("删除笔记", role: .destructive) { store.deleteNote(note.id) }
     }
 
-    // MARK: - Date
-
-    private var dateLabel: String {
-        guard let d = draft.hasScheduledDate ? draft.scheduledDate : note.scheduledDate else { return "" }
-        if Calendar.current.isDateInToday(d) { return "今天" }
-        if Calendar.current.isDateInTomorrow(d) { return "明天" }
-        if Calendar.current.isDateInYesterday(d) { return "昨天" }
-        let fm = DateFormatter(); fm.locale = Locale(identifier: "zh_CN"); fm.dateFormat = "M月d日 EEEE"
-        return fm.string(from: d)
-    }
-    private var isToday: Bool {
-        guard let d = draft.hasScheduledDate ? draft.scheduledDate : note.scheduledDate else { return false }
-        return Calendar.current.isDateInToday(d)
-    }
-
     // MARK: - Save/Draft
 
     private func saveDraft() {
@@ -541,9 +603,11 @@ private struct StreamNoteRow: View {
                          previewHTML: draft.previewHTML,
                          scheduledDate: sd, tags: splitList(draft.tagsText),
                          people: splitList(draft.peopleText), status: draft.status)
+        initialDraft = draft
     }
 
     private func scheduleSaveDraft() {
+        if draft == initialDraft { return }
         saveTask?.cancel()
         saveTask = Task {
             try? await Task.sleep(nanoseconds: 350_000_000)
@@ -556,7 +620,10 @@ private struct StreamNoteRow: View {
 
     private func resetDraft() {
         saveTask?.cancel(); saveTask = nil
-        if let refreshed = store.note(withID: note.id) { draft = StreamNoteDraft(note: refreshed) }
+        if let refreshed = store.note(withID: note.id) {
+            draft = StreamNoteDraft(note: refreshed)
+            initialDraft = draft
+        }
     }
 
     private func prepareEditorOverlayForSelection() {
@@ -642,20 +709,13 @@ private enum BlockNoteEditorHeightEstimator {
 
     private static func estimateOwnHeight(type: String, text: String, content: Any?, depth: Int) -> CGFloat {
         switch type {
-        case "image":
-            return 282
-        case "table":
-            return CGFloat(max(tableRowCount(from: content), 1)) * 38 + 18
-        case "divider":
-            return 24
-        case "heading":
-            return CGFloat(lineCount(for: text, depth: depth, charactersPerLine: 30)) * 32 + 6
-        case "codeBlock":
-            return CGFloat(lineCount(for: text, depth: depth, charactersPerLine: 42)) * 22 + 18
-        case "quote":
-            return CGFloat(lineCount(for: text, depth: depth, charactersPerLine: 42)) * 24 + 8
-        default:
-            return CGFloat(lineCount(for: text, depth: depth, charactersPerLine: 42)) * 24
+        case "image": return 282
+        case "table": return CGFloat(max(tableRowCount(from: content), 1)) * 38 + 18
+        case "divider": return 24
+        case "heading": return CGFloat(lineCount(for: text, depth: depth, charactersPerLine: 30)) * 32 + 6
+        case "codeBlock": return CGFloat(lineCount(for: text, depth: depth, charactersPerLine: 42)) * 22 + 18
+        case "quote": return CGFloat(lineCount(for: text, depth: depth, charactersPerLine: 42)) * 24 + 8
+        default: return CGFloat(lineCount(for: text, depth: depth, charactersPerLine: 42)) * 24
         }
     }
 
@@ -670,21 +730,15 @@ private enum BlockNoteEditorHeightEstimator {
     }
 
     private static func tableRowCount(from content: Any?) -> Int {
-        if let dict = content as? [String: Any], let rows = dict["rows"] as? [Any] {
-            return rows.count
-        }
+        if let dict = content as? [String: Any], let rows = dict["rows"] as? [Any] { return rows.count }
         return 2
     }
 
     private static func plainText(from value: Any?) -> String {
-        if let text = value as? String {
-            return text
-        }
+        if let text = value as? String { return text }
         if let items = value as? [[String: Any]] {
             return items.map { item in
-                if let text = item["text"] as? String {
-                    return text
-                }
+                if let text = item["text"] as? String { return text }
                 return plainText(from: item["content"])
             }.joined()
         }

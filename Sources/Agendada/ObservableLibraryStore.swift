@@ -24,6 +24,18 @@ final class ObservableLibraryStore {
         }
     }
 
+    var sortOrder: NoteSortOrder {
+        get {
+            observeRevision()
+            return store.sortOrder
+        }
+        set {
+            store.sortOrder = newValue
+            publishChange()
+            persistSoon()
+        }
+    }
+
     init(seed: LibraryStore, repository: FileLibraryRepository = FileLibraryRepository()) {
         self.store = seed
         self.repository = repository

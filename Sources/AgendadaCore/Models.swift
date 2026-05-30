@@ -307,6 +307,22 @@ public struct RelatedNote: Identifiable, Hashable {
 
 // MARK: - NoteTemplate
 
+public enum NoteSortOrder: String, CaseIterable, Codable {
+    case scheduledDateDesc
+    case scheduledDateAsc
+    case editedAtDesc
+    case createdAtDesc
+
+    public var title: String {
+        switch self {
+        case .scheduledDateDesc: "日期（新→旧）"
+        case .scheduledDateAsc: "日期（旧→新）"
+        case .editedAtDesc: "最近编辑"
+        case .createdAtDesc: "最近创建"
+        }
+    }
+}
+
 public enum NoteTemplate: String, CaseIterable, Codable, Identifiable {
     case blank, meeting, weeklyReview, projectReview, research
     public var id: String { rawValue }

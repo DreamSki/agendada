@@ -49,44 +49,44 @@ enum AgendaColor {
 }
 
 enum AgendaFont {
-    // Header breadcrumb — 15px category, 20px bold title
-    static let breadcrumbCategory: Font = .system(size: 15, weight: .regular)
-    static let breadcrumbTitle: Font = .system(size: 20, weight: .bold)
-    static let breadcrumbContext: Font = .system(size: 15, weight: .regular)
+    // Header breadcrumb — Avenir Next
+    static let breadcrumbCategory: Font = .custom("Avenir Next", size: 20)
+    static let breadcrumbTitle: Font = .custom("Avenir Next Medium", size: 20)
+    static let breadcrumbContext: Font = .custom("Avenir Next", size: 16)
 
-    // Note cards
-    static let cardTitle: Font = .system(size: 18, weight: .bold)
-    static let cardTitleUnselected: Font = .system(size: 18, weight: .semibold)
-    static let cardBody: Font = .system(size: 14)
-    static let cardBodyCompact: Font = .system(size: 13)
-    static let cardMeta: Font = .system(size: 13)
+    // Note cards — 20pt Avenir Next Medium title
+    static let cardTitle: Font = .custom("Avenir Next Medium", size: 20)
+    static let cardTitleUnselected: Font = .custom("Avenir Next Medium", size: 20)
+    static let cardBody: Font = .custom("Avenir Next", size: 14)
+    static let cardBodyCompact: Font = .custom("Avenir Next", size: 13)
+    static let cardMeta: Font = .custom("Avenir Next", size: 13)
 
     // Metadata inline
-    static let metaLabel: Font = .system(size: 13, weight: .medium)
-    static let chipLabel: Font = .system(size: 13, weight: .semibold)
+    static let metaLabel: Font = .custom("Avenir Next Medium", size: 13)
+    static let chipLabel: Font = .custom("Avenir Next Demi Bold", size: 13)
 
-    // Sidebar — 11px section headers, 13px items
-    static let sidebarSection: Font = .system(size: 11, weight: .semibold)
-    static let sidebarItem: Font = .system(size: 13, weight: .regular)
-    static let sidebarItemActive: Font = .system(size: 13, weight: .medium)
+    // Sidebar
+    static let sidebarSection: Font = .custom("Avenir Next Demi Bold", size: 11)
+    static let sidebarItem: Font = .custom("Avenir Next", size: 13)
+    static let sidebarItemActive: Font = .custom("Avenir Next Medium", size: 13)
 
-    // Panel — 12px section headers, 13px titles, 11px subtitles
-    static let panelSectionHeader: Font = .system(size: 12, weight: .medium)
-    static let panelTitle: Font = .system(size: 13, weight: .medium)
-    static let panelBody: Font = .system(size: 13)
-    static let panelSubtitle: Font = .system(size: 11)
+    // Panel
+    static let panelSectionHeader: Font = .custom("Avenir Next Medium", size: 12)
+    static let panelTitle: Font = .custom("Avenir Next Medium", size: 13)
+    static let panelBody: Font = .custom("Avenir Next", size: 13)
+    static let panelSubtitle: Font = .custom("Avenir Next", size: 11)
 
     // Date chips
-    static let dateChip: Font = .system(size: 13, weight: .medium)
-    static let dateUnselected: Font = .system(size: 13)
+    static let dateChip: Font = .custom("Avenir Next Medium", size: 13)
+    static let dateUnselected: Font = .custom("Avenir Next", size: 13)
 }
 
 enum AgendaSpacing {
     // Card
     static let cardPaddingH: CGFloat = 20
-    static let cardPaddingV: CGFloat = 20
+    static let cardPaddingV: CGFloat = 16
     static let cardRadius: CGFloat = 12
-    static let cardGap: CGFloat = 32      // mb-8 for normal, 40 for active
+    static let cardGap: CGFloat = 20
 
     // Content area
     static let contentPaddingH: CGFloat = 32

@@ -54,6 +54,10 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
     var onReady: (() -> Void)?
     var hasContentChanges = false
 
+    /// An opaque white view placed over the WKWebView while loading.
+    /// Removed when the editor signals readiness, guaranteeing no flash.
+    private var blockingCover: NSView?
+
     private var loadedNoteID: Note.ID?
     private var lastLoadedBlockJSON: Data?
     private var pendingLoad: (noteID: Note.ID, blockJSON: Data)?
@@ -104,10 +108,15 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
 
     @discardableResult
     func attach(to container: NSView) -> Bool {
-        guard webView.superview !== container else { return false }
+        guard webView.superview !== container else { print("[AGD] 🔗 attach SKIP (same container)"); return false }
+        print("[AGD] 🔗 attach webView to new container, wasHidden=\(webView.isHidden)")
         webView.isHidden = true
         webView.alphaValue = 0
         webView.removeFromSuperview()
+        // Remove any leftover blocking cover from a previous attach.
+        blockingCover?.removeFromSuperview()
+        blockingCover = nil
+
         webView.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(webView)
         NSLayoutConstraint.activate([
@@ -116,6 +125,23 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
             webView.topAnchor.constraint(equalTo: container.topAnchor),
             webView.bottomAnchor.constraint(equalTo: container.bottomAnchor)
         ])
+
+        // Place an opaque cover *above* the WKWebView so that even if the
+        // WKWebView paints before SwiftUI removes the preview, nothing leaks
+        // through.  The cover is removed when the card is truly ready.
+        let cover = NSView()
+        cover.wantsLayer = true
+        cover.layer?.backgroundColor = NSColor.white.cgColor
+        cover.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(cover, positioned: .above, relativeTo: webView)
+        NSLayoutConstraint.activate([
+            cover.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            cover.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            cover.topAnchor.constraint(equalTo: container.topAnchor),
+            cover.bottomAnchor.constraint(equalTo: container.bottomAnchor)
+        ])
+        blockingCover = cover
+
         container.needsLayout = true
         container.layoutSubtreeIfNeeded()
         return true
@@ -123,27 +149,42 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
 
     func detach(from container: NSView) {
         if webView.superview === container {
+            print("[AGD] 🔌 detach webView, removing cover")
             webView.isHidden = true
             webView.alphaValue = 0
+            blockingCover?.removeFromSuperview()
+            blockingCover = nil
             webView.removeFromSuperview()
         }
     }
 
     func loadCard(noteID: Note.ID, blockJSON: Data, didAttach: Bool = false) {
+        print("[AGD] 📄 loadCard note=\(noteID.uuidString.prefix(8)) didAttach=\(didAttach) isReady=\(isReady) loadedNoteID=\(loadedNoteID?.uuidString.prefix(8) ?? "nil")")
         guard isReady else {
+            print("[AGD] 📄 NOT ready, storing pendingLoad")
             pendingLoad = (noteID, blockJSON)
             return
         }
 
         guard loadedNoteID != noteID || lastLoadedBlockJSON != blockJSON else {
+            print("[AGD] 📄 same note+content, didAttach=\(didAttach)")
             if didAttach {
+                print("[AGD] 📄 re-attach, removing cover + showing webView (defer onReady)")
+                blockingCover?.removeFromSuperview()
+                blockingCover = nil
                 webView.isHidden = false
                 webView.alphaValue = 1
-                onReady?()
+                // Defer onReady so onChange(of: selectedNoteID) fires first
+                // in this render pass (it calls prepareEditorOverlayForSelection
+                // which sets editorIsVisible=false).
+                DispatchQueue.main.async { [weak self] in
+                    self?.onReady?()
+                }
             }
             return
         }
 
+        print("[AGD] 📄 loading new content, evaluating JS…")
         loadedNoteID = noteID
         lastLoadedBlockJSON = blockJSON
         hasContentChanges = false
@@ -151,9 +192,9 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
         let script = "window.loadCard(\(jsString(noteID.uuidString)), \(jsString(blockJSONString))); setTimeout(function(){ window.focusEditor && window.focusEditor(); }, 40);"
         webView.evaluateJavaScript(script) { [weak self] _, _ in
             guard let self else { return }
-            // The preview layer has an opaque background that physically
-            // blocks the WKWebView beneath it, so we can show the editor
-            // immediately without any timing tricks.
+            print("[AGD] 📄 JS callback, removing cover + showing webView + onReady")
+            self.blockingCover?.removeFromSuperview()
+            self.blockingCover = nil
             self.webView.isHidden = false
             self.webView.alphaValue = 1
             self.webView.needsDisplay = true
@@ -212,11 +253,14 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
     }
 
     func saveCurrentContentNow(completion: @escaping (BlockNoteEditorContent?) -> Void) {
+        print("[AGD] 💾 saveCurrentContentNow isReady=\(isReady) loadedNoteID=\(loadedNoteID?.uuidString.prefix(8) ?? "nil")")
         guard isReady, loadedNoteID != nil else {
+            print("[AGD] 💾 NOT ready, returning nil")
             completion(nil)
             return
         }
 
+        print("[AGD] 💾 evaluating flushCurrentContent JS…")
         webView.evaluateJavaScript("window.flushCurrentContent && window.flushCurrentContent();") { [weak self] result, _ in
             Task { @MainActor in
                 completion(self?.content(from: result as Any))
@@ -227,6 +271,7 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         switch message.name {
         case "editorReady":
+            print("[AGD] 🚀 editorReady isReady→true, pendingLoad=\(pendingLoad != nil ? "yes" : "no")")
             isReady = true
             injectMeasurementFunction()
             if let pendingLoad {
@@ -314,6 +359,7 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
               padding-top: 10px !important;
               padding-bottom: 3px !important;
               color: #1A1A1A !important;
+              font-family: "Avenir Next", -apple-system, sans-serif !important;
             }
             .bn-block-content[data-content-type="heading"][data-level="2"] {
               font-size: 17px !important;
@@ -322,6 +368,7 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
               padding-top: 3px !important;
               padding-bottom: 3px !important;
               color: #1A1A1A !important;
+              font-family: "Avenir Next", -apple-system, sans-serif !important;
             }
             .bn-block-content[data-content-type="heading"][data-level="3"] {
               font-size: 15px !important;
@@ -330,6 +377,7 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
               padding-top: 3px !important;
               padding-bottom: 3px !important;
               color: #555555 !important;
+              font-family: "Avenir Next", -apple-system, sans-serif !important;
             }
           `;
           document.head.appendChild(styleEl);
@@ -655,7 +703,7 @@ private func blockNoteHTML() -> String {
           margin: 0;
           min-height: 100%;
           background: transparent;
-          font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+          font-family: "Avenir Next", -apple-system, sans-serif;
           color: #333333;
           overflow: hidden;
         }
@@ -670,10 +718,10 @@ private func blockNoteHTML() -> String {
           background: transparent !important;
         }
         .bn-editor {
-          padding-inline: 30px 8px !important;
+          padding-inline: 0px 8px !important;
           font-size: 14px;
           line-height: 1.65;
-          caret-color: #F5A623;
+          font-family: "Avenir Next", -apple-system, sans-serif;
           overflow: hidden !important;
         }
         .bn-block-outer, .bn-block, .bn-block-content {

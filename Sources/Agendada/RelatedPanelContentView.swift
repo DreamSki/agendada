@@ -50,7 +50,7 @@ struct RelatedPanelContentView: View {
                 Image(systemName: "calendar")
                     .font(.system(size: 15, weight: .regular))
                 Text("时间轴")
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.custom("Avenir Next Medium", size: 13))
                     .foregroundStyle(.primary)
             }
 
@@ -68,19 +68,19 @@ struct RelatedPanelContentView: View {
     private var integrationInfoCard: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text("Agenda + 日历 + 提醒事项")
-                .font(.system(size: 13, weight: .bold))
+                .font(.custom("Avenir Next Demi Bold", size: 13))
                 .foregroundStyle(.primary)
                 .padding(.bottom, 8)
 
             Text("Agenda 旨在与\u{201C}日历\u{201D}和\u{201C}提醒事项\u{201D}协同使用。向 Agenda 开放\u{201C}日历\u{201D}和\u{201C}提醒事项\u{201D}的访问权限，享受使 Agenda 独特出众的功能优势。")
-                .font(.system(size: 12))
+                .font(.custom("Avenir Next", size: 12))
                 .foregroundStyle(AgendaColor.textMuted)
                 .lineSpacing(4)
                 .padding(.bottom, 12)
 
             HStack(spacing: 0) {
                 Text("了解更多")
-                    .font(.system(size: 12))
+                    .font(.custom("Avenir Next", size: 12))
                     .foregroundStyle(AgendaColor.textMuted)
 
                 Spacer()
@@ -89,7 +89,7 @@ struct RelatedPanelContentView: View {
                     requestIntegrationsAccess()
                 }
                 .buttonStyle(.plain)
-                .font(.system(size: 12, weight: .medium))
+                .font(.custom("Avenir Next Medium", size: 12))
                 .foregroundStyle(AgendaColor.amber)
             }
         }
@@ -124,12 +124,12 @@ struct RelatedPanelContentView: View {
         Button(action: action) {
             HStack(spacing: 8) {
                 Image(systemName: systemImage)
-                    .font(.system(size: 12))
+                    .font(.custom("Avenir Next", size: 12))
                     .foregroundStyle(AgendaColor.amber)
                     .frame(width: 16)
 
                 Text(title)
-                    .font(.system(size: 12))
+                    .font(.custom("Avenir Next", size: 12))
                     .foregroundStyle(.primary)
 
                 Spacer()
@@ -202,12 +202,12 @@ struct RelatedPanelContentView: View {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(note.title)
                                         .lineLimit(1)
-                                        .font(.system(size: 13, weight: .medium))
+                                        .font(.custom("Avenir Next Medium", size: 13))
                                         .foregroundStyle(note.status == .open ? .primary : .secondary)
 
                                     if let project = store.project(withID: note.projectID) {
                                         Text(project.name)
-                                            .font(.system(size: 11))
+                                            .font(.custom("Avenir Next", size: 11))
                                             .foregroundStyle(AgendaColor.textMuted)
                                     }
                                 }
@@ -248,11 +248,11 @@ struct RelatedPanelContentView: View {
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(relatedNote.title)
                                             .lineLimit(1)
-                                            .font(.system(size: 13, weight: .medium))
+                                            .font(.custom("Avenir Next Medium", size: 13))
                                             .foregroundStyle(.primary.opacity(0.85))
 
                                         Text(relatedNote.reasons.joined(separator: " / "))
-                                            .font(.system(size: 11))
+                                            .font(.custom("Avenir Next", size: 11))
                                             .foregroundStyle(AgendaColor.textMuted)
                                             .lineLimit(1)
                                     }
@@ -281,14 +281,14 @@ struct RelatedPanelContentView: View {
                 .frame(width: 18)
 
             Text(title)
-                .font(.system(size: 12, weight: .medium))
+                .font(.custom("Avenir Next Medium", size: 12))
                 .foregroundStyle(AgendaColor.textMuted)
         }
     }
 
     private func emptyPanelText(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 13))
+            .font(.custom("Avenir Next", size: 13))
             .foregroundStyle(AgendaColor.textMuted)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.leading, 14)

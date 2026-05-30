@@ -11,6 +11,7 @@ public final class LibraryStore {
     public private(set) var selectedNoteID: Note.ID?
     public var batchSelectedNoteIDs: Set<Note.ID> = []
     public var searchText: String
+    public var sortOrder: NoteSortOrder = .scheduledDateDesc
 
     public init(
         categories: [ProjectCategory] = [],
@@ -21,7 +22,8 @@ public final class LibraryStore {
         selectedOverview: Overview? = .today,
         selectedSmartOverviewID: SmartOverview.ID? = nil,
         selectedNoteID: Note.ID? = nil,
-        searchText: String = ""
+        searchText: String = "",
+        sortOrder: NoteSortOrder = .scheduledDateDesc
     ) {
         self.categories = categories
         self.projects = projects
@@ -32,6 +34,7 @@ public final class LibraryStore {
         self.selectedSmartOverviewID = selectedSmartOverviewID
         self.selectedNoteID = selectedNoteID
         self.searchText = searchText
+        self.sortOrder = sortOrder
     }
 
     public convenience init(snapshot: LibrarySnapshot) {
@@ -44,7 +47,8 @@ public final class LibraryStore {
             selectedOverview: snapshot.selectedOverview,
             selectedSmartOverviewID: snapshot.selectedSmartOverviewID,
             selectedNoteID: snapshot.selectedNoteID,
-            searchText: snapshot.searchText
+            searchText: snapshot.searchText,
+            sortOrder: snapshot.sortOrder
         )
     }
 
@@ -740,17 +744,24 @@ public final class LibraryStore {
                 if rhs.pinState == .pinnedBottom { return true }
             }
 
-            switch (lhs.scheduledDate, rhs.scheduledDate) {
-            case let (lhsDate?, rhsDate?):
-                if lhsDate == rhsDate {
-                    return lhs.createdAt > rhs.createdAt
+            switch sortOrder {
+            case .scheduledDateDesc:
+                switch (lhs.scheduledDate, rhs.scheduledDate) {
+                case let (l?, r?): return l > r
+                case (nil, _?): return false
+                case (_?, nil): return true
+                case (nil, nil): return lhs.createdAt > rhs.createdAt
                 }
-                return lhsDate < rhsDate
-            case (_?, nil):
-                return true
-            case (nil, _?):
-                return false
-            case (nil, nil):
+            case .scheduledDateAsc:
+                switch (lhs.scheduledDate, rhs.scheduledDate) {
+                case let (l?, r?): return l < r
+                case (_?, nil): return true
+                case (nil, _?): return false
+                case (nil, nil): return lhs.createdAt > rhs.createdAt
+                }
+            case .editedAtDesc:
+                return lhs.editedAt > rhs.editedAt
+            case .createdAtDesc:
                 return lhs.createdAt > rhs.createdAt
             }
         }
@@ -1007,7 +1018,8 @@ public final class LibraryStore {
             selectedOverview: selectedOverview,
             selectedSmartOverviewID: selectedSmartOverviewID,
             selectedNoteID: selectedNoteID,
-            searchText: searchText
+            searchText: searchText,
+            sortOrder: sortOrder
         )
     }
 }
