@@ -6,11 +6,13 @@ struct NoteStreamView: View {
     @Environment(ObservableLibraryStore.self) private var store
     @Binding var searchText: String
     @State private var isSearching = false
+    @State private var showSortPopover = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            streamHeader
+        ZStack(alignment: .top) {
             noteStreamContent
+            headerGradient
+            streamHeader
         }
         .background(Color.white)
         .onChange(of: searchText) { _, newValue in
@@ -43,34 +45,113 @@ struct NoteStreamView: View {
                     }
                 }
                 Spacer()
-                HStack(spacing: 12) {
-                    sortPicker
-                    Button {
-                        copyToPasteboard(store.summaryForFilteredNotes())
-                    } label: {
-                        Image(systemName: "sparkles")
-                            .font(.system(size: 16, weight: .medium))
-                    }
-                    .buttonStyle(.plain).foregroundStyle(AgendaColor.textMuted).help("复制摘要")
-                    Button { withAnimation(.easeInOut(duration: 0.16)) { isSearching.toggle() } } label: {
-                        Image(systemName: "magnifyingglass")
-                            .font(.system(size: 16, weight: .medium))
-                    }
-                    .buttonStyle(.plain).foregroundStyle(AgendaColor.textMuted).help("搜索")
-                    Button {
-                        store.addNote(template: .blank)
-                    } label: {
-                        Circle()
-                            .fill(AgendaColor.amber).frame(width: 28, height: 28)
-                            .overlay { Image(systemName: "plus").font(.system(size: 18, weight: .heavy)).foregroundStyle(.white) }
-                            .shadow(color: .black.opacity(0.06), radius: 2, y: 1)
-                    }
-                    .buttonStyle(.plain).help("新建笔记").keyboardShortcut("n", modifiers: [.command])
+                if store.isInBatchMode {
+                    batchActions
+                } else {
+                    headerActions
                 }
             }
-            .padding(.horizontal, 32).padding(.top, 40)
+            .padding(.horizontal, 32).padding(.top, 30)
+        }
+    }
 
-            if isSearching {
+    private var headerActions: some View {
+        HStack(spacing: 12) {
+            sortButton
+            glassIconButton(systemName: "sparkles", action: { copyToPasteboard(store.summaryForFilteredNotes()) }, help: "复制摘要")
+            searchButton
+            plusButton
+        }
+    }
+
+    private var batchActions: some View {
+        HStack(spacing: 12) {
+            if store.selectedOverview == .trash {
+                glassTextButton("恢复", action: { store.batchRestoreNotes(store.batchSelectedNoteIDs) })
+                glassTextButton("彻底删除", role: .destructive, action: { store.batchPermanentlyDeleteNotes(store.batchSelectedNoteIDs) })
+            } else {
+                glassTextButton("废纸篓", role: .destructive, action: { store.batchDeleteNotes(store.batchSelectedNoteIDs) })
+                if !store.projects.isEmpty {
+                    Menu {
+                        ForEach(store.projects) { project in
+                            Button(project.name) {
+                                store.moveNotes(store.batchSelectedNoteIDs, toProject: project.id)
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text("移动到")
+                                .font(.custom("Avenir Next", size: 14))
+                            Image(systemName: "chevron.down")
+                                .font(.system(size: 9, weight: .medium))
+                        }
+                        .foregroundStyle(Color(red: 0.118, green: 0.118, blue: 0.118))
+                        .padding(.horizontal, 14).padding(.vertical, 8)
+                    }
+                    .menuStyle(.borderlessButton)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .shadow(color: .black.opacity(0.06), radius: 4, y: 1)
+                }
+            }
+            glassTextButton("取消", action: { store.deselectAllNotes() })
+        }
+    }
+
+    private var sortButton: some View {
+        Button { showSortPopover = true } label: {
+            Image(systemName: "line.3.horizontal")
+                .font(.system(size: 16, weight: .medium))
+                .frame(width: 36, height: 36)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(Color(red: 0.118, green: 0.118, blue: 0.118))
+        .background(.ultraThinMaterial, in: Circle())
+        .shadow(color: .black.opacity(0.06), radius: 4, y: 1)
+        .help("排序方式")
+        .popover(isPresented: $showSortPopover, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(NoteSortOrder.allCases, id: \.self) { order in
+                    Button {
+                        store.sortOrder = order
+                        showSortPopover = false
+                    } label: {
+                        HStack {
+                            Text(order.title)
+                            Spacer()
+                            if store.sortOrder == order {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundStyle(AgendaColor.amber)
+                            }
+                        }
+                        .padding(.horizontal, 12).padding(.vertical, 7)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .font(.custom("Avenir Next", size: 13))
+            .padding(.vertical, 4)
+            .frame(width: 180)
+        }
+    }
+
+    private var searchButton: some View {
+        Button { isSearching = true } label: {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 16, weight: .medium))
+                .frame(width: 36, height: 36)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(isSearching ? AgendaColor.amber : Color(red: 0.118, green: 0.118, blue: 0.118))
+        .background(.ultraThinMaterial, in: Circle())
+        .shadow(color: .black.opacity(0.06), radius: 4, y: 1)
+        .help("搜索")
+        .popover(isPresented: $isSearching, arrowEdge: .bottom) {
+            VStack(spacing: 0) {
                 HStack(spacing: 8) {
                     Image(systemName: "magnifyingglass")
                         .font(.system(size: 13, weight: .medium))
@@ -78,6 +159,7 @@ struct NoteStreamView: View {
                     TextField("搜索标题、正文、标签或人员", text: $searchText)
                         .textFieldStyle(.plain)
                         .font(.custom("Avenir Next", size: 13))
+                        .frame(width: 220)
                     if !searchText.isEmpty {
                         Button {
                             searchText = ""
@@ -90,38 +172,74 @@ struct NoteStreamView: View {
                         .buttonStyle(.plain)
                     }
                 }
-                .padding(.horizontal, 10)
-                .frame(height: 30)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.045)))
-                .padding(.horizontal, 32)
-                .padding(.top, 10)
+                .padding(.horizontal, 10).padding(.vertical, 8)
             }
+            .frame(width: 300)
+            .background(.regularMaterial)
         }
     }
 
-    private var sortPicker: some View {
-        @Bindable var store = store
-        return Menu {
-            ForEach(NoteSortOrder.allCases, id: \.self) { order in
-                Button {
-                    store.sortOrder = order
-                } label: {
-                    HStack {
-                        Text(order.title)
-                        if store.sortOrder == order {
-                            Image(systemName: "checkmark")
-                        }
-                    }
-                }
-            }
+    private var plusButton: some View {
+        Button {
+            store.addNote(template: .blank)
         } label: {
-            Image(systemName: "arrow.up.arrow.down")
-                .font(.system(size: 14, weight: .medium))
+            Image(systemName: "plus")
+                .font(.system(size: 18, weight: .bold))
+                .foregroundStyle(AgendaColor.amber)
+                .frame(width: 36, height: 36)
+                .contentShape(Rectangle())
         }
-        .menuStyle(.borderlessButton)
-        .frame(width: 22)
-        .foregroundStyle(AgendaColor.textMuted)
-        .help("排序方式")
+        .buttonStyle(.plain)
+        .background(.ultraThinMaterial, in: Circle())
+        .shadow(color: .black.opacity(0.06), radius: 4, y: 1)
+        .help("新建笔记")
+        .keyboardShortcut("n", modifiers: [.command])
+    }
+
+    private func glassIconButton(systemName: String, action: @escaping () -> Void, help: String) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 16, weight: .medium))
+                .frame(width: 36, height: 36)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(Color(red: 0.118, green: 0.118, blue: 0.118))
+        .background(.ultraThinMaterial, in: Circle())
+        .shadow(color: .black.opacity(0.06), radius: 4, y: 1)
+        .help(help)
+    }
+
+    private func glassTextButton(_ label: String, role: ButtonRole? = nil, action: @escaping () -> Void) -> some View {
+        Button(role: role, action: action) {
+            Text(label)
+                .font(.custom("Avenir Next", size: 14))
+                .padding(.horizontal, 14).padding(.vertical, 8)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(role == .destructive ? .red : Color(red: 0.118, green: 0.118, blue: 0.118))
+        .background(.ultraThinMaterial, in: Capsule())
+        .shadow(color: .black.opacity(0.06), radius: 4, y: 1)
+    }
+
+    private var headerGradient: some View {
+        LinearGradient(
+            gradient: Gradient(stops: [
+                .init(color: .white, location: 0.0),
+                .init(color: .white.opacity(0.9), location: 0.25),
+                .init(color: .white.opacity(0.8), location: 0.45),
+                .init(color: .white.opacity(0.6), location: 0.60),
+                .init(color: .white.opacity(0.5), location: 0.70),
+                .init(color: .white.opacity(0.35), location: 0.80),
+                .init(color: .white.opacity(0.20), location: 0.90),
+                .init(color: .white.opacity(0.10), location: 0.95),
+                .init(color: .clear, location: 1.0),
+            ]),
+            startPoint: .top,
+            endPoint: .bottom
+        )
+        .frame(height: 70)
+        .allowsHitTesting(false)
     }
 
     private var mainTitle: String {
@@ -138,6 +256,7 @@ struct NoteStreamView: View {
     }
 
     private var breadcrumbContext: String? {
+        if store.isInBatchMode { return "已选 \(store.batchSelectedNoteIDs.count) 项" }
         if store.selectedOverview != nil { return "\(store.filteredNotes().count) 条笔记" }
         if let note = store.selectedNoteID.flatMap({ store.note(withID: $0) }) { return note.title }
         return nil
@@ -154,14 +273,7 @@ struct NoteStreamView: View {
                         .id(note.id).padding(.bottom, AgendaSpacing.cardGap)
                 }
             }
-            .padding(.horizontal, 12).padding(.top, 16).padding(.bottom, 80)
-        }
-        .overlay(alignment: .top) {
-            if store.isInBatchMode {
-                batchOperationBar
-                    .padding(.top, 8)
-                    .transition(.move(edge: .top).combined(with: .opacity))
-            }
+            .padding(.horizontal, 12).padding(.top, 100).padding(.bottom, 80)
         }
         .background {
             Button("") {
@@ -173,82 +285,91 @@ struct NoteStreamView: View {
         }
     }
 
-    // MARK: - Batch Bar
+}
 
-    private var batchOperationBar: some View {
-        HStack(spacing: 14) {
-            Text("已选 \(store.batchSelectedNoteIDs.count) 项")
-                .font(AgendaFont.metaLabel)
-                .foregroundStyle(.primary)
+// MARK: - Card Title
 
-            Button("全选") { store.selectAllFilteredNotes() }
-                .buttonStyle(.plain)
-                .font(.custom("Avenir Next", size: 12))
-                .foregroundStyle(AgendaColor.amber)
+private struct AgendadaCardTitle: View {
+    let title: String
+    @Binding var draftTitle: String
+    let isSelected: Bool
+    let isDimmed: Bool
 
-            Button("反选") { store.invertBatchSelection() }
-                .buttonStyle(.plain)
-                .font(.custom("Avenir Next", size: 12))
-                .foregroundStyle(AgendaColor.amber)
+    private var fgColor: Color {
+        isDimmed ? .secondary : Color(red: 0.102, green: 0.102, blue: 0.102)
+    }
 
-            Divider().frame(height: 16)
-
-            if store.selectedOverview == .trash {
-                Button("恢复") {
-                    store.batchRestoreNotes(store.batchSelectedNoteIDs)
-                }
-                .buttonStyle(.plain)
-                .font(.custom("Avenir Next", size: 12))
-                .foregroundStyle(AgendaColor.amber)
-
-                Button("彻底删除") {
-                    store.batchPermanentlyDeleteNotes(store.batchSelectedNoteIDs)
-                }
-                .buttonStyle(.plain)
-                .font(.custom("Avenir Next", size: 12))
-                .foregroundStyle(.red)
-            } else {
-                Button("移到废纸篓") {
-                    store.batchDeleteNotes(store.batchSelectedNoteIDs)
-                }
-                .buttonStyle(.plain)
-                .font(.custom("Avenir Next", size: 12))
-                .foregroundStyle(.red)
-
-                if !store.projects.isEmpty {
-                    Menu {
-                        ForEach(store.projects) { project in
-                            Button(project.name) {
-                                store.moveNotes(store.batchSelectedNoteIDs, toProject: project.id)
-                            }
-                        }
-                    } label: {
-                        Text("移动到...")
-                            .font(.custom("Avenir Next", size: 12))
-                    }
-                    .menuStyle(.borderlessButton)
-                    .frame(width: 70)
-                }
-            }
-
-            Divider().frame(height: 16)
-
-            Button("取消") { store.deselectAllNotes() }
-                .buttonStyle(.plain)
-                .font(.custom("Avenir Next", size: 12))
-                .foregroundStyle(AgendaColor.textMuted)
+    var body: some View {
+        ZStack(alignment: .leading) {
+            // Preview — always in layout, determines HStack height & baseline.
+            Text(title.isEmpty ? "无标题" : title)
+                .font(AgendaFont.cardTitle)
+                .foregroundStyle(fgColor)
+                .lineLimit(1)
+                .opacity(isSelected ? 0 : 1)
+                .allowsHitTesting(false)
+            // Editor — custom NSTextField that never shifts on focus.
+            StableTextField(
+                text: $draftTitle,
+                placeholder: "无标题",
+                font: NSFont(name: "Avenir Next", size: 20) ?? .systemFont(ofSize: 20),
+                textColor: isDimmed ? .secondaryLabelColor : NSColor(red: 0.102, green: 0.102, blue: 0.102, alpha: 1),
+                isEnabled: isSelected
+            )
+            .opacity(isSelected ? 1 : 0)
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 9)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color.white)
-                .shadow(color: .black.opacity(0.08), radius: 8, y: 4)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.black.opacity(0.06), lineWidth: 1)
-        )
+    }
+}
+
+// MARK: - Stable TextField (no focus-ring baseline shift)
+
+private struct StableTextField: NSViewRepresentable {
+    @Binding var text: String
+    let placeholder: String
+    let font: NSFont
+    let textColor: NSColor
+    let isEnabled: Bool
+
+    func makeNSView(context: Context) -> NSTextField {
+        let tf = NSTextField()
+        tf.isBezeled = false
+        tf.isBordered = false
+        tf.drawsBackground = false
+        tf.focusRingType = .none
+        tf.font = font
+        tf.textColor = textColor
+        tf.placeholderString = placeholder
+        tf.lineBreakMode = .byTruncatingTail
+        tf.cell?.isScrollable = true
+        tf.cell?.wraps = false
+        tf.delegate = context.coordinator
+        return tf
+    }
+
+    func updateNSView(_ tf: NSTextField, context: Context) {
+        if tf.stringValue != text {
+            tf.stringValue = text
+        }
+        tf.font = font
+        tf.textColor = textColor
+        // isEnabled controls whether it can become first responder
+        tf.isEnabled = isEnabled
+        tf.isSelectable = isEnabled
+        tf.isEditable = isEnabled
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text)
+    }
+
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        let text: Binding<String>
+        init(text: Binding<String>) { self.text = text }
+
+        func controlTextDidChange(_ obj: Notification) {
+            guard let tf = obj.object as? NSTextField else { return }
+            text.wrappedValue = tf.stringValue
+        }
     }
 }
 
@@ -286,18 +407,12 @@ private struct StreamNoteRow: View {
             HStack(alignment: .top, spacing: 10) {
                 bulletIcon.frame(width: bulletCol, alignment: .leading).padding(.top, 1)
                 HStack(alignment: .firstTextBaseline) {
-                    if isSelected {
-                        TextField("无标题", text: $draft.title)
-                            .font(AgendaFont.cardTitle)
-                            .textFieldStyle(.plain)
-                            .foregroundStyle(isNoteDimmed ? .secondary : Color(red: 0.102, green: 0.102, blue: 0.102))
-                            .lineLimit(1)
-                    } else {
-                        Text(note.title.isEmpty ? "无标题" : note.title)
-                            .font(AgendaFont.cardTitle)
-                            .foregroundStyle(isNoteDimmed ? .secondary : Color(red: 0.102, green: 0.102, blue: 0.102))
-                            .lineLimit(1)
-                    }
+                    AgendadaCardTitle(
+                        title: note.title,
+                        draftTitle: $draft.title,
+                        isSelected: isSelected,
+                        isDimmed: isNoteDimmed
+                    )
                     Spacer(minLength: 8)
                     if !dateLabel.isEmpty {
                         Button { showDatePicker = true } label: {
@@ -345,6 +460,7 @@ private struct StreamNoteRow: View {
                     .fill(Color.black.opacity(0.07))
                     .frame(width: 3)
                     .padding(.vertical, 16)
+                    .offset(x: -11)
             }
         }
         .overlay(alignment: .top) {
@@ -410,13 +526,17 @@ private struct StreamNoteRow: View {
                     .frame(height: useFixedHeight ? unifiedHeight : nil, alignment: .top)
                     .opacity(isNoteDimmed ? 0.58 : 1)
                     .allowsHitTesting(!isSelected)
-                    .background(
+                    .overlay(
                         GeometryReader { geo in
-                            Color.clear.preference(key: PreviewHeightKey.self, value: geo.size.height)
+                            Color.clear
+                                .allowsHitTesting(false)
+                                .preference(key: PreviewHeightKey.self, value: geo.size.height)
                         }
                     )
                     .onPreferenceChange(PreviewHeightKey.self) { h in
-                        capturedPreviewHeight = h
+                        if h > 0 {
+                            capturedPreviewHeight = h
+                        }
                     }
             }
 
@@ -435,10 +555,19 @@ private struct StreamNoteRow: View {
                         }
                     },
                     onReady: {
-                        editorIsVisible = true
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        print("[DIAG] onReady n=\(note.id.uuidString.prefix(6)) editorH=\(Int(editorHeight)) capturedPreview=\(Int(capturedPreviewHeight))")
+                        // Only reveal the editor once the WebView has reported a real height,
+                        // otherwise the card height jumps from 0→122→53 in two visible steps.
+                        if editorHeight > 0 {
+                            editorIsVisible = true
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
                             if editorHeight > 80 && capturedPreviewHeight == 0 {
                                 capturedPreviewHeight = editorHeight
+                            }
+                            // Fallback: show editor even if height hasn't arrived yet
+                            if !editorIsVisible {
+                                editorIsVisible = true
                             }
                         }
                     }
@@ -449,6 +578,7 @@ private struct StreamNoteRow: View {
             }
         }
         .frame(height: useFixedHeight ? unifiedHeight : nil, alignment: .top)
+        .animation(.easeInOut(duration: 0.18), value: unifiedHeight)
     }
 
     // MARK: - Bullet
@@ -674,9 +804,16 @@ private struct StreamNoteRow: View {
         editorHasUserChanges = false
         editorIsVisible = false
         initialBlockJSON = draft.blockJSON
-        if editorHeight < 80 && capturedPreviewHeight > 0 {
-            editorHeight = capturedPreviewHeight
+        let prevEditorH = editorHeight
+        // Seed a reasonable initial height so the card never starts at 0 px
+        // and never overwrites a valid previous editor height with a smaller
+        // preview height (which would cause a re-expand twitch on re-select).
+        let estimated = BlockNoteEditorHeightEstimator.estimate(from: draft.blockJSON)
+        let floor = max(capturedPreviewHeight, estimated, 28)
+        if editorHeight < floor {
+            editorHeight = floor
         }
+        print("[DIAG] prepareEditorOverlay n=\(note.id.uuidString.prefix(6)) capturedPreview=\(Int(capturedPreviewHeight)) prevEditor=\(Int(prevEditorH)) estimated=\(Int(estimated)) finalEditor=\(Int(editorHeight))")
     }
 
     private func applyEditorContent(_ content: BlockNoteEditorContent) {
@@ -692,7 +829,8 @@ private struct StreamNoteRow: View {
     }
 
     private func selectNoteAfterSavingActiveEditor() {
-        guard store.selectedNoteID != note.id else { return }
+        print("[TAP-DEBUG] selectNote called note=\(note.id.uuidString.prefix(6)) currentSelected=\(store.selectedNoteID?.uuidString.prefix(6) ?? "nil")")
+        guard store.selectedNoteID != note.id else { print("[TAP-DEBUG]   -> already selected, skip"); return }
 
         let hadChanges = SharedBlockNoteWebView.shared.hasContentChanges
         SharedBlockNoteWebView.shared.saveCurrentContentNow { content in
@@ -712,6 +850,7 @@ private struct StreamNoteRow: View {
             }
 
             withAnimation(.easeInOut(duration: 0.12)) {
+                print("[TAP-DEBUG]   -> selecting note \(note.id.uuidString.prefix(6))")
                 prepareEditorOverlayForSelection()
                 store.selectNote(note.id)
             }

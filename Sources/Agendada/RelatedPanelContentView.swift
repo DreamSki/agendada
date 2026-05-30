@@ -5,33 +5,41 @@ struct RelatedPanelContentView: View {
     @Environment(ObservableLibraryStore.self) private var store
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Tab header
-            panelTabHeader
-                .padding(.horizontal, 16)
-                .padding(.top, 40)
-                .padding(.bottom, 12)
-
+        ZStack(alignment: .top) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
-                    // Combined info card — matches reference design
                     integrationInfoCard
                         .padding(.top, 4)
 
-                    // Quick date actions (when note selected)
                     if store.selectedNote != nil {
                         quickActionsSection
                     }
 
-                    // 最近编辑
                     recentSection
-
-                    // 相关笔记
                     relatedSection
                 }
                 .padding(.horizontal, 16)
+                .padding(.top, 60)
                 .padding(.bottom, 32)
             }
+
+            VStack(spacing: 0) {
+                panelTabHeader
+                    .padding(.horizontal, 16)
+                    .padding(.top, 30)
+                    .padding(.bottom, 12)
+            }
+            .background(
+                LinearGradient(
+                    gradient: Gradient(stops: [
+                        .init(color: Color(red: 0.980, green: 0.980, blue: 0.980).opacity(0.97), location: 0.0),
+                        .init(color: Color(red: 0.980, green: 0.980, blue: 0.980).opacity(0.80), location: 0.55),
+                        .init(color: .clear, location: 1.0),
+                    ]),
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
         }
         .navigationTitle("")
         .background(AgendaColor.panelBg)

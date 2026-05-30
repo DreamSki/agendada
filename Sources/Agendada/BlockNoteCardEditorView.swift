@@ -29,9 +29,32 @@ struct BlockNoteCardEditor: NSViewRepresentable {
         bridge.onChange = onChange
         bridge.onDebouncedSave = onDebouncedSave
         bridge.onReady = onReady
+        var pendingDownward: DispatchWorkItem?
+        var lastPendingValue: CGFloat = 0
         bridge.onHeightChange = { height in
             let clamped = max(1, min(height, 900))
-            if abs(editorHeight - clamped) > 1 {
+            guard abs(editorHeight - clamped) > 1 else { return }
+            print("[DIAG] WebViewHeight n=\(noteID.uuidString.prefix(6)) raw=\(Int(height)) clamped=\(Int(clamped)) prev=\(Int(editorHeight))")
+            // Reject the 28→122 overshoot: BlockNote's default height (~122 px)
+            // is 4× the empty-card height (~28 px). Cap upward growth at 2× the
+            // floor so short cards go 28→53 directly (never see 122).
+            let floor = max(editorHeight, 28)
+            if clamped > editorHeight && editorHeight < 200 && clamped > floor * 2 {
+                return
+            }
+            // Delay the 122→53 correction: empty cards always settle at ~53 px.
+            // Only apply after a 0.3 s quiet period; user-typed content grows
+            // past 60 px and is applied immediately.
+            if clamped < editorHeight && clamped < 60 {
+                guard lastPendingValue != clamped else { return }
+                lastPendingValue = clamped
+                pendingDownward?.cancel()
+                let work = DispatchWorkItem { editorHeight = clamped }
+                pendingDownward = work
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
+            } else {
+                lastPendingValue = 0
+                pendingDownward?.cancel()
                 editorHeight = clamped
             }
         }
@@ -351,6 +374,10 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
           var styleEl = document.createElement('style');
           styleEl.id = 'agendada-heading-styles';
           styleEl.textContent = `
+            .mantine-RichTextEditor-root,
+            .mantine-RichTextEditor-content {
+              padding: 0 !important;
+            }
             .bn-block-content[data-content-type="heading"]:not([data-level]),
             .bn-block-content[data-content-type="heading"][data-level="1"] {
               font-size: 17px !important;
@@ -713,6 +740,10 @@ private func blockNoteHTML() -> String {
           padding: 0;
           background: transparent;
           overflow: hidden;
+        }
+        .mantine-RichTextEditor-root,
+        .mantine-RichTextEditor-content {
+          padding: 0 !important;
         }
         .bn-container, .bn-editor {
           background: transparent !important;
