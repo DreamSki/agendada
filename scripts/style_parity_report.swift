@@ -1,5 +1,6 @@
 #!/usr/bin/env swift
 
+import AppKit
 import Foundation
 
 struct Check {
@@ -28,12 +29,15 @@ enum ReportError: Error, CustomStringConvertible {
 let root = findPackageRoot()
 let previewPath = root.appendingPathComponent("Sources/Agendada/BlockNotePreviewView.swift")
 let cssPath = root.appendingPathComponent("WebEditor/src/styles.css")
+let editorBridgePath = root.appendingPathComponent("Sources/Agendada/BlockNoteCardEditorView.swift")
 
 let previewSource = try read(previewPath.path)
 let cssSource = try read(cssPath.path)
+let editorBridgeSource = try read(editorBridgePath.path)
 
 let preview = PreviewMetrics(source: previewSource)
 let css = CSSMetrics(source: cssSource)
+let runtime = RuntimeStyleOverrides(source: editorBridgeSource)
 
 let checks: [Check] = [
     numeric("layout", "content leading inset", preview.value("editorLeadingPadding"), css.paddingInlineLeading, tolerance: 0.5, note: "Horizontal start position inside the same overlay frame."),
@@ -41,31 +45,33 @@ let checks: [Check] = [
     numeric("layout", "nested block indent", preview.value("nestIndent"), css.nestedIndent, tolerance: 0.5, note: ""),
     numeric("text", "body font size", preview.value("bodyFontSize"), css.bodyFontSize, tolerance: 0.1, note: ""),
     numeric("text", "body line-height ratio", preview.value("lineHeight"), css.bodyLineHeight, tolerance: 0.01, note: ""),
-    text("text", "font family", preview.fontFamilies, css.fontFamily, note: "Different font stacks change glyph width, wrapping, and measured row height."),
+    numeric("text", "body rendered line box", preview.lineBoxHeight(fontSizeName: "bodyFontSize", lineHeight: preview.value("lineHeight"), fontName: "Avenir Next"), css.bodyLineBoxHeight, tolerance: 0.5, note: "Uses AppKit font metrics for the SwiftUI side; catches lineSpacing conversions that look right on paper but render differently."),
+    fontFamily("text", "font family", preview.fontFamilies, css.fontFamily),
     numeric("paragraph", "block vertical padding", preview.value("blockVPadding"), css.blockPaddingVertical, tolerance: 0.5, note: "SwiftUI applies this on both top and bottom, with an extra first-block top compensation."),
-    numeric("paragraph", "lineSpacing coefficient", preview.lineSpacingCoefficient, css.bodyLineHeight.map { $0 - 1 }, tolerance: 0.02, note: "SwiftUI Text lineSpacing is not the same unit as CSS line-height; this is a drift signal, not a direct pixel equivalence."),
     numeric("heading", "H1 font size", preview.value("heading1Size"), css.heading1FontSize, tolerance: 0.5, note: ""),
     numeric("heading", "H2 font size", preview.value("heading2Size"), css.heading2FontSize, tolerance: 0.5, note: ""),
     numeric("heading", "H3 font size", preview.value("heading3Size"), css.heading3FontSize, tolerance: 0.5, note: ""),
-    numeric("heading", "H1 top padding", preview.value("heading1TopPadding"), css.headingTopPadding, tolerance: 0.5, note: "CSS currently declares 3px for all heading blocks."),
-    numeric("heading", "heading bottom padding", preview.value("headingVPadding"), css.blockPaddingVertical, tolerance: 0.5, note: ""),
+    numeric("heading", "H1 top padding", preview.value("heading1TopPadding"), css.heading1TopPadding, tolerance: 0.5, note: ""),
+    numeric("heading", "heading bottom padding", preview.value("headingVPadding"), css.headingBottomPadding, tolerance: 0.5, note: ""),
     numeric("list", "marker column width", preview.value("markerWidth"), css.markerWidth, tolerance: 0.5, note: ""),
     numeric("list", "checkbox visual size", preview.value("bodyFontSize"), css.checkboxSize, tolerance: 0.5, note: "Preview uses SF Symbol font size, editor uses input width/height."),
     numeric("quote", "border width", preview.value("quoteBorderWidth"), css.quoteBorderWidth, tolerance: 0.5, note: ""),
     numeric("quote", "text inset", preview.value("quoteTextInset"), css.quoteInset, tolerance: 0.5, note: ""),
-    numeric("code", "font size", preview.value("codeFontSize"), nil, tolerance: 0.5, note: "Editor CSS does not pin code block font-size; BlockNote/theme default decides it."),
+    numeric("code", "font size", preview.value("codeFontSize"), css.codeFontSize, tolerance: 0.5, note: ""),
     numeric("code", "horizontal padding", preview.value("tableCellHPadding"), css.codePaddingHorizontal, tolerance: 0.5, note: ""),
     numeric("code", "vertical padding", 8, css.codePaddingVertical, tolerance: 0.5, note: ""),
     numeric("code", "corner radius", preview.value("blockRadius"), css.codeRadius, tolerance: 0.5, note: ""),
-    numeric("code", "requested line-height", preview.codeLineHeightArgument, nil, tolerance: 0.01, note: preview.usesLineHeightParameter ? "Applied by PreviewRichText." : "Preview passes lineHeight: 1.4, but PreviewRichText ignores the parameter."),
+    numeric("code", "requested line-height", preview.codeLineHeightArgument, css.codeLineHeight, tolerance: 0.01, note: preview.usesLineHeightParameter ? "Applied by PreviewRichText." : "Preview passes lineHeight: 1.4, but PreviewRichText ignores the parameter."),
+    numeric("code", "rendered line box", preview.lineBoxHeight(fontSizeName: "codeFontSize", lineHeight: preview.codeLineHeightArgument, fontName: "Menlo"), css.codeLineBoxHeight, tolerance: 0.5, note: "Uses AppKit metrics for Menlo in the SwiftUI preview."),
     numeric("divider", "rule thickness", 1, css.dividerThickness, tolerance: 0.1, note: ""),
     numeric("divider", "vertical margin/padding", 10, css.dividerMarginVertical, tolerance: 0.5, note: ""),
     numeric("table", "cell horizontal padding", preview.value("tableCellHPadding"), css.tableCellPaddingHorizontal, tolerance: 0.5, note: "Editor table cells are governed by BlockNote table CSS unless explicitly overridden."),
     numeric("table", "cell vertical padding", preview.value("tableCellVPadding"), css.tableCellPaddingVertical, tolerance: 0.5, note: "Editor table cells are governed by BlockNote table CSS unless explicitly overridden."),
-    text("table", "column width model", "equal flexible SwiftUI columns", "BlockNote table layout/default column widths", note: "Preview uses maxWidth infinity for each cell; editor may preserve table column sizing."),
-    text("inline", "background highlight padding", preview.inlineBackgroundSummary, "1px 3px with 3px radius", note: "CSS highlight adds padding and rounded clone decoration; preview needs the same visual box model to match wrapping."),
-    text("inline", "link decoration", "amber + underline", "BlockNote/theme link style", note: "Editor CSS does not explicitly mirror preview link color."),
-    text("media", "image max height", "\(format(preview.value("mediaMaxHeight")))px", "not pinned in editor CSS", note: "Preview caps images at 260px; editor media sizing comes from BlockNote."),
+    text("table", "column width model", "equal flexible/full-width columns", css.tableColumnModel, note: ""),
+    text("inline", "background highlight padding", preview.inlineBackgroundSummary, css.inlineBackgroundSummary, note: ""),
+    text("inline", "link decoration", "amber + underline", css.linkDecorationSummary, note: ""),
+    numeric("media", "image max height", preview.value("mediaMaxHeight"), css.mediaMaxHeight, tolerance: 0.5, note: ""),
+    text("runtime", "post-load metric overrides", "no editor metric overrides", runtime.editorMetricOverrideSummary, note: "The app injects helper CSS after the editor loads; this catches rules that would override styles.css inside the real WKWebView."),
 ]
 
 print("Agendada card preview vs editor style parity report")
@@ -137,6 +143,32 @@ func text(_ area: String, _ metric: String, _ preview: String, _ editor: String,
     )
 }
 
+func fontFamily(_ area: String, _ metric: String, _ preview: String, _ editor: String) -> Check {
+    let previewPrimary = canonicalPrimaryFont(preview)
+    let editorPrimary = canonicalPrimaryFont(editor)
+    return Check(
+        area: area,
+        metric: metric,
+        preview: preview,
+        editor: editor,
+        status: previewPrimary == editorPrimary ? "MATCH" : "DIFF",
+        note: previewPrimary == editorPrimary
+            ? "Primary family matches; preview uses explicit Avenir Next weight names while editor uses CSS font-weight plus a fallback stack."
+            : "Different primary font families change glyph width, wrapping, and measured row height."
+    )
+}
+
+func canonicalPrimaryFont(_ value: String) -> String {
+    let lowercased = value.lowercased()
+    if lowercased.contains("avenir next") { return "avenir next" }
+    if lowercased.contains("inter") { return "inter" }
+    return value
+        .split(separator: ",")
+        .first
+        .map { String($0).trimmingCharacters(in: CharacterSet(charactersIn: " \"'").union(.whitespacesAndNewlines)).lowercased() }
+        ?? value.lowercased()
+}
+
 func format(_ value: Double?) -> String {
     guard let value else { return "nil" }
     if abs(value.rounded() - value) < 0.0001 {
@@ -153,9 +185,16 @@ struct PreviewMetrics {
         return firstNumber(pattern)
     }
 
-    var lineSpacingCoefficient: Double? {
-        let values = numbers(#"size\s*\*\s*([0-9]+(?:\.[0-9]+)?)"#)
-        return values.last
+    func lineBoxHeight(fontSizeName: String, lineHeight: Double?, fontName: String) -> Double? {
+        guard let size = value(fontSizeName), let lineHeight else { return nil }
+        guard source.contains("naturalLineBox") && source.contains("verticalInset") else {
+            return nil
+        }
+        let font = NSFont(name: fontName, size: size) ?? .systemFont(ofSize: size)
+        let naturalLineBox = NSLayoutManager().defaultLineHeight(for: font)
+        let targetLineBox = size * lineHeight
+        let extraLeading = max(0, targetLineBox - naturalLineBox)
+        return naturalLineBox + extraLeading
     }
 
     var codeLineHeightArgument: Double? {
@@ -213,11 +252,43 @@ struct PreviewMetrics {
     }
 }
 
+struct RuntimeStyleOverrides {
+    let source: String
+
+    var editorMetricOverrideSummary: String {
+        let css = injectedHelperCSS
+        let metricOverrideSignals = [
+            ".bn-block-content",
+            "data-content-type=\\\"heading\\\"",
+            "padding-inline",
+            "padding-top:",
+            "padding-bottom:",
+            "font-size:",
+            "line-height:",
+            "--level"
+        ]
+        let hasMetricOverride = metricOverrideSignals.contains { css.contains($0) }
+        return hasMetricOverride ? "overrides editor metrics after load" : "no editor metric overrides"
+    }
+
+    private var injectedHelperCSS: String {
+        guard let start = source.range(of: "styleEl.textContent = `"),
+              let end = source.range(
+                of: "`;\n          document.head.appendChild(styleEl);",
+                range: start.upperBound..<source.endIndex
+              ) else {
+            return ""
+        }
+        return String(source[start.upperBound..<end.lowerBound])
+    }
+}
+
 struct CSSMetrics {
     let source: String
 
     var fontFamily: String {
-        property("html,\nbody,\n#root", "font-family") ?? "not pinned"
+        guard let value = property("html,\nbody,\n#root", "font-family") else { return "not pinned" }
+        return resolveCSSVariables(in: value)
     }
 
     var bodyFontSize: Double? {
@@ -226,6 +297,11 @@ struct CSSMetrics {
 
     var bodyLineHeight: Double? {
         numberProperty(".bn-editor", "line-height")
+    }
+
+    var bodyLineBoxHeight: Double? {
+        guard let fontSize = bodyFontSize, let lineHeight = bodyLineHeight else { return nil }
+        return fontSize * lineHeight
     }
 
     var paddingInlineLeading: Double? {
@@ -257,8 +333,20 @@ struct CSSMetrics {
         pxProperty(#".bn-block-content[data-content-type="heading"]"#, "padding-top")
     }
 
+    var heading1TopPadding: Double? {
+        pxProperty(#".bn-block-content[data-content-type="heading"]:has(> h1),\n.bn-block-content[data-content-type="heading"][data-level="1"]"#, "padding-top")
+            ?? pxProperty(#".bn-block-content[data-content-type="heading"][data-level="1"]"#, "padding-top")
+            ?? headingTopPadding
+    }
+
+    var headingBottomPadding: Double? {
+        pxProperty(#".bn-block-content[data-content-type="heading"]"#, "padding-bottom")
+            ?? blockPaddingVertical
+    }
+
     var heading1FontSize: Double? {
-        pxCustomProperty(#".bn-block-content[data-content-type="heading"][data-level="1"]"#, "--level")
+        pxCustomProperty(#".bn-block-content[data-content-type="heading"]:has(> h1),\n.bn-block-content[data-content-type="heading"][data-level="1"]"#, "--level")
+            ?? pxCustomProperty(#".bn-block-content[data-content-type="heading"][data-level="1"]"#, "--level")
     }
 
     var heading2FontSize: Double? {
@@ -281,6 +369,21 @@ struct CSSMetrics {
         paddingPair(selector: #".bn-block-content[data-content-type="codeBlock"] > pre"#, property: "padding")?.vertical
     }
 
+    var codeFontSize: Double? {
+        pxProperty(#".bn-block-content[data-content-type="codeBlock"]"#, "font-size")
+            ?? pxProperty(#".bn-block-content[data-content-type="codeBlock"] > pre"#, "font-size")
+    }
+
+    var codeLineHeight: Double? {
+        numberProperty(#".bn-block-content[data-content-type="codeBlock"]"#, "line-height")
+            ?? numberProperty(#".bn-block-content[data-content-type="codeBlock"] > pre"#, "line-height")
+    }
+
+    var codeLineBoxHeight: Double? {
+        guard let fontSize = codeFontSize, let lineHeight = codeLineHeight else { return nil }
+        return fontSize * lineHeight
+    }
+
     var codePaddingHorizontal: Double? {
         paddingPair(selector: #".bn-block-content[data-content-type="codeBlock"] > pre"#, property: "padding")?.horizontal
     }
@@ -298,11 +401,44 @@ struct CSSMetrics {
     }
 
     var tableCellPaddingVertical: Double? {
-        nil
+        paddingPair(selector: #".bn-editor [data-content-type="table"] th,\n.bn-editor [data-content-type="table"] td"#, property: "padding")?.vertical
     }
 
     var tableCellPaddingHorizontal: Double? {
-        nil
+        paddingPair(selector: #".bn-editor [data-content-type="table"] th,\n.bn-editor [data-content-type="table"] td"#, property: "padding")?.horizontal
+    }
+
+    var tableColumnModel: String {
+        let tableLayout = property(#".bn-editor [data-content-type="table"] table"#, "table-layout")
+        let width = property(#".bn-editor [data-content-type="table"] table"#, "width")
+        if tableLayout == "fixed" && width == "100%" {
+            return "equal flexible/full-width columns"
+        }
+        return "BlockNote table layout/default column widths"
+    }
+
+    var inlineBackgroundSummary: String {
+        let selector = #"[data-style-type=backgroundColor]:not([data-value="default"])"#
+        let padding = property(selector, "padding")
+        let radius = property(selector, "border-radius")
+        if padding == "0" && radius == "0" {
+            return "backgroundColor rendered, no explicit CSS padding/radius"
+        }
+        return "\(padding ?? "not pinned") with \(radius ?? "not pinned") radius"
+    }
+
+    var linkDecorationSummary: String {
+        let selector = ".bn-default-styles a,\n.bn-inline-content a"
+        let color = property(selector, "color")?.uppercased()
+        let decoration = property(selector, "text-decoration")
+        if color == "#F5A623" && decoration == "underline" {
+            return "amber + underline"
+        }
+        return "BlockNote/theme link style"
+    }
+
+    var mediaMaxHeight: Double? {
+        pxProperty(#"[data-file-block] .bn-visual-media"#, "max-height")
     }
 
     private var paddingInline: (Double, Double)? {
@@ -346,8 +482,24 @@ struct CSSMetrics {
         return nil
     }
 
+    private func resolveCSSVariables(in value: String) -> String {
+        var resolved = value
+        for _ in 0..<5 {
+            guard let match = regex(#"var\((--[A-Za-z0-9-]+)\)"#).firstMatch(in: resolved, range: NSRange(resolved.startIndex..., in: resolved)),
+                  let fullRange = Range(match.range(at: 0), in: resolved),
+                  let nameRange = Range(match.range(at: 1), in: resolved) else {
+                break
+            }
+            let variableName = String(resolved[nameRange])
+            guard let variableValue = property(":root", variableName) else { break }
+            resolved.replaceSubrange(fullRange, with: variableValue)
+        }
+        return resolved
+    }
+
     private func blocks(for selector: String) -> [String] {
-        let escaped = NSRegularExpression.escapedPattern(for: selector)
+        let normalizedSelector = selector.replacingOccurrences(of: #"\n"#, with: "\n")
+        let escaped = NSRegularExpression.escapedPattern(for: normalizedSelector)
         let exactPattern = #"(?s)(?:^|\n)\s*\#(escaped)\s*\{(.*?)\n\}"#
         let exactBlocks = regex(exactPattern)
             .matches(in: source, range: NSRange(source.startIndex..., in: source))
@@ -377,6 +529,9 @@ struct CSSMetrics {
 
 func firstPx(in value: String?) -> Double? {
     guard let value else { return nil }
+    if value.trimmingCharacters(in: .whitespacesAndNewlines) == "0" {
+        return 0
+    }
     let pattern = #"([0-9]+(?:\.[0-9]+)?)px"#
     guard let match = regex(pattern).firstMatch(in: value, range: NSRange(value.startIndex..., in: value)),
           match.numberOfRanges > 1,

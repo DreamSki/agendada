@@ -7,6 +7,7 @@ struct NoteStreamView: View {
     @Binding var searchText: String
     @State private var isSearching = false
     @State private var showSortPopover = false
+    @State private var showMoveMenu = false
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -57,59 +58,96 @@ struct NoteStreamView: View {
 
     private var headerActions: some View {
         HStack(spacing: 12) {
-            sortButton
-            glassIconButton(systemName: "sparkles", action: { copyToPasteboard(store.summaryForFilteredNotes()) }, help: "复制摘要")
-            searchButton
+            HStack(spacing: 4) {
+                CapsuleIconPopoverButton(systemName: "line.3.horizontal.decrease", help: "排序方式", isPresented: $showSortPopover, popoverContent: {
+                    sortPopoverContent(store: store, showSortPopover: $showSortPopover)
+                })
+                CapsuleIconButton(systemName: "sparkles", help: "复制摘要", action: {
+                    copyToPasteboard(store.summaryForFilteredNotes())
+                })
+                CapsuleIconPopoverButton(systemName: "magnifyingglass", help: "搜索", isPresented: $isSearching, popoverContent: {
+                    SearchPopoverContent(searchText: $searchText)
+                })
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
+            .background(Color.white, in: Capsule())
+            .overlay(Capsule().stroke(Color.black.opacity(0.06), lineWidth: 0.5))
+            .shadow(color: .black.opacity(0.08), radius: 6, x: 0, y: 2)
+
             plusButton
         }
     }
 
     private var batchActions: some View {
         HStack(spacing: 12) {
-            if store.selectedOverview == .trash {
-                glassTextButton("恢复", action: { store.batchRestoreNotes(store.batchSelectedNoteIDs) })
-                glassTextButton("彻底删除", role: .destructive, action: { store.batchPermanentlyDeleteNotes(store.batchSelectedNoteIDs) })
-            } else {
-                glassTextButton("废纸篓", role: .destructive, action: { store.batchDeleteNotes(store.batchSelectedNoteIDs) })
-                if !store.projects.isEmpty {
-                    Menu {
-                        ForEach(store.projects) { project in
-                            Button(project.name) {
-                                store.moveNotes(store.batchSelectedNoteIDs, toProject: project.id)
-                            }
-                        }
-                    } label: {
-                        HStack(spacing: 4) {
-                            Text("移动到")
-                                .font(.custom("Avenir Next", size: 14))
-                            Image(systemName: "chevron.down")
-                                .font(.system(size: 9, weight: .medium))
-                        }
-                        .foregroundStyle(Color(red: 0.118, green: 0.118, blue: 0.118))
-                        .padding(.horizontal, 14).padding(.vertical, 8)
+            // 批量操作胶囊
+            HStack(spacing: 4) {
+                CapsuleIconButton(systemName: "checkmark.circle", help: "全选", hoverEffect: .scale, action: {
+                    let allIDs = Set(store.filteredNotes().map(\.id))
+                    if store.batchSelectedNoteIDs.count == allIDs.count && allIDs.count > 0 {
+                        store.deselectAllNotes()
+                    } else {
+                        store.selectAllFilteredNotes()
                     }
-                    .menuStyle(.borderlessButton)
-                    .background(.ultraThinMaterial, in: Capsule())
-                    .shadow(color: .black.opacity(0.06), radius: 4, y: 1)
+                })
+                CapsuleIconButton(systemName: "arrow.turn.up.right", help: "反选", hoverEffect: .rotate, action: {
+                    store.invertBatchSelection()
+                })
+                if store.selectedOverview == .trash {
+                    CapsuleIconButton(systemName: "arrow.counterclockwise", help: "恢复", hoverEffect: .scale, action: {
+                        store.batchRestoreNotes(store.batchSelectedNoteIDs)
+                    })
+                    CapsuleIconButton(systemName: "xmark.bin", help: "彻底删除", role: .destructive, hoverEffect: .scale, action: {
+                        store.batchPermanentlyDeleteNotes(store.batchSelectedNoteIDs)
+                    })
+                } else {
+                    CapsuleIconButton(systemName: "trash", help: "移至废纸篓", role: .destructive, hoverEffect: .trashLid, action: {
+                        store.batchDeleteNotes(store.batchSelectedNoteIDs)
+                    })
+                    if !store.projects.isEmpty {
+                        CapsuleIconButton(systemName: "chevron.right", help: "移动到项目", hoverEffect: .scale, action: {
+                            showMoveMenu = true
+                        })
+                        .popover(isPresented: $showMoveMenu, arrowEdge: .bottom) {
+                            VStack(alignment: .leading, spacing: 0) {
+                                ForEach(store.projects) { project in
+                                    Button {
+                                        store.moveNotes(store.batchSelectedNoteIDs, toProject: project.id)
+                                        showMoveMenu = false
+                                    } label: {
+                                        HStack {
+                                            Text(project.name)
+                                            Spacer()
+                                        }
+                                        .padding(.horizontal, 12).padding(.vertical, 7)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                            .font(.custom("Avenir Next", size: 13))
+                            .padding(.vertical, 4)
+                            .frame(width: 180)
+                        }
+                    }
                 }
             }
-            glassTextButton("取消", action: { store.deselectAllNotes() })
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
+            .background(Color.white, in: Capsule())
+            .overlay(Capsule().stroke(Color.black.opacity(0.06), lineWidth: 0.5))
+            .shadow(color: .black.opacity(0.08), radius: 6, x: 0, y: 2)
+
+            // 取消按钮独立
+            HoverableCircleButton(systemName: "xmark", help: "取消", action: {
+                store.deselectAllNotes()
+            })
         }
     }
 
     private var sortButton: some View {
-        Button { showSortPopover = true } label: {
-            Image(systemName: "line.3.horizontal")
-                .font(.system(size: 16, weight: .medium))
-                .frame(width: 36, height: 36)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(Color(red: 0.118, green: 0.118, blue: 0.118))
-        .background(.ultraThinMaterial, in: Circle())
-        .shadow(color: .black.opacity(0.06), radius: 4, y: 1)
-        .help("排序方式")
-        .popover(isPresented: $showSortPopover, arrowEdge: .bottom) {
+        HoverableCircleButton(systemName: "line.3.horizontal.decrease", help: "排序方式", action: { showSortPopover = true })
+            .popover(isPresented: $showSortPopover, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(NoteSortOrder.allCases, id: \.self) { order in
                     Button {
@@ -139,18 +177,8 @@ struct NoteStreamView: View {
     }
 
     private var searchButton: some View {
-        Button { isSearching = true } label: {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 16, weight: .medium))
-                .frame(width: 36, height: 36)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(isSearching ? AgendaColor.amber : Color(red: 0.118, green: 0.118, blue: 0.118))
-        .background(.ultraThinMaterial, in: Circle())
-        .shadow(color: .black.opacity(0.06), radius: 4, y: 1)
-        .help("搜索")
-        .popover(isPresented: $isSearching, arrowEdge: .bottom) {
+        HoverableCircleButton(systemName: "magnifyingglass", help: "搜索", action: { isSearching = true })
+            .popover(isPresented: $isSearching, arrowEdge: .bottom) {
             VStack(spacing: 0) {
                 HStack(spacing: 8) {
                     Image(systemName: "magnifyingglass")
@@ -184,30 +212,21 @@ struct NoteStreamView: View {
             store.addNote(template: .blank)
         } label: {
             Image(systemName: "plus")
-                .font(.system(size: 18, weight: .bold))
+                .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(AgendaColor.amber)
                 .frame(width: 36, height: 36)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .background(.ultraThinMaterial, in: Circle())
-        .shadow(color: .black.opacity(0.06), radius: 4, y: 1)
+        .background(Color.white, in: Circle())
+        .overlay(Circle().stroke(Color.black.opacity(0.06), lineWidth: 0.5))
+        .shadow(color: .black.opacity(0.08), radius: 6, x: 0, y: 2)
         .help("新建笔记")
         .keyboardShortcut("n", modifiers: [.command])
     }
 
     private func glassIconButton(systemName: String, action: @escaping () -> Void, help: String) -> some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: 16, weight: .medium))
-                .frame(width: 36, height: 36)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(Color(red: 0.118, green: 0.118, blue: 0.118))
-        .background(.ultraThinMaterial, in: Circle())
-        .shadow(color: .black.opacity(0.06), radius: 4, y: 1)
-        .help(help)
+        HoverableCircleButton(systemName: systemName, help: help, action: action)
     }
 
     private func glassTextButton(_ label: String, role: ButtonRole? = nil, action: @escaping () -> Void) -> some View {
@@ -220,6 +239,10 @@ struct NoteStreamView: View {
         .foregroundStyle(role == .destructive ? .red : Color(red: 0.118, green: 0.118, blue: 0.118))
         .background(.ultraThinMaterial, in: Capsule())
         .shadow(color: .black.opacity(0.06), radius: 4, y: 1)
+    }
+
+    private func glassIconCircleButton(systemName: String, help: String, role: ButtonRole? = nil, action: @escaping () -> Void) -> some View {
+        HoverableCircleButton(systemName: systemName, help: help, role: role, action: action)
     }
 
     private var headerGradient: some View {
@@ -859,5 +882,271 @@ private struct StreamNoteDraft: Equatable {
         tagsText = note.tags.joined(separator: ", ")
         peopleText = note.people.joined(separator: ", ")
         status = note.status
+    }
+}
+
+// MARK: - Hoverable Circle Button
+
+private struct HoverableCircleButton: View {
+    let systemName: String
+    let help: String
+    let role: ButtonRole?
+    let fontSize: CGFloat
+    let fontWeight: Font.Weight
+    let action: () -> Void
+    @State private var isHovering = false
+
+    init(systemName: String, help: String = "", role: ButtonRole? = nil, fontSize: CGFloat = 16, fontWeight: Font.Weight = .medium, action: @escaping () -> Void) {
+        self.systemName = systemName
+        self.help = help
+        self.role = role
+        self.fontSize = fontSize
+        self.fontWeight = fontWeight
+        self.action = action
+    }
+
+    var body: some View {
+        Button(role: role, action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: fontSize, weight: fontWeight))
+                .frame(width: 36, height: 36)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(isHovering ? AgendaColor.amber : (role == .destructive ? .red : Color(red: 0.118, green: 0.118, blue: 0.118)))
+        .background(Color.white, in: Circle())
+        .overlay(Circle().stroke(Color.black.opacity(0.06), lineWidth: 0.5))
+        .shadow(color: .black.opacity(0.08), radius: 6, x: 0, y: 2)
+        .help(help)
+        .onHover { isHovering = $0 }
+    }
+}
+
+// MARK: - Menu Folder Icon (with hover)
+
+private struct MenuFolderIcon: View {
+    @State private var isHovering = false
+
+    var body: some View {
+        Image(systemName: "folder")
+            .font(.system(size: 16, weight: .medium))
+            .foregroundStyle(isHovering ? AgendaColor.amber : Color(red: 0.118, green: 0.118, blue: 0.118))
+            .frame(width: 36, height: 36)
+            .background(Color.white, in: Circle())
+            .overlay(Circle().stroke(Color.black.opacity(0.06), lineWidth: 0.5))
+            .shadow(color: .black.opacity(0.08), radius: 6, x: 0, y: 2)
+            .onHover { isHovering = $0 }
+    }
+}
+
+// MARK: - Capsule Icon Button (for grouped buttons)
+
+private struct CapsuleIconButton: View {
+    let systemName: String
+    let help: String
+    let role: ButtonRole?
+    let action: () -> Void
+    let hoverEffect: HoverEffect
+    @State private var isHovering = false
+    @State private var rotation: Double = 0
+    @State private var scale: CGFloat = 1
+
+    init(systemName: String, help: String = "", role: ButtonRole? = nil, hoverEffect: HoverEffect = .none, action: @escaping () -> Void) {
+        self.systemName = systemName
+        self.help = help
+        self.role = role
+        self.hoverEffect = hoverEffect
+        self.action = action
+    }
+
+    var body: some View {
+        Button(role: role, action: action) {
+            ZStack {
+                if hoverEffect == .trashLid {
+                    // 垃圾桶开盖效果 - 悬浮时从 outline 变 fill
+                    Image(systemName: isHovering ? "trash.fill" : "trash")
+                        .font(.system(size: 16, weight: .medium))
+                        .transition(.opacity)
+                } else if hoverEffect == .scale {
+                    Image(systemName: systemName)
+                        .font(.system(size: 16, weight: .medium))
+                        .scaleEffect(scale)
+                } else if hoverEffect == .rotate {
+                    Image(systemName: systemName)
+                        .font(.system(size: 16, weight: .medium))
+                        .rotationEffect(.degrees(rotation))
+                } else {
+                    Image(systemName: systemName)
+                        .font(.system(size: 16, weight: .medium))
+                }
+            }
+            .frame(width: 28, height: 28)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(isHovering ? AgendaColor.amber : (role == .destructive ? .red : Color(red: 0.118, green: 0.118, blue: 0.118)))
+        .help(help)
+        .onHover { hovering in
+            isHovering = hovering
+            switch hoverEffect {
+            case .rotate:
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    rotation = hovering ? 180 : 0
+                }
+            case .scale:
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
+                    scale = hovering ? 1.15 : 1
+                }
+            case .trashLid, .none:
+                break
+            }
+        }
+    }
+
+    enum HoverEffect {
+        case none
+        case rotate
+        case scale
+        case trashLid
+    }
+}
+
+// MARK: - Hoverable Menu Button
+
+private struct HoverableMenuButton<MenuContent: View>: View {
+    let systemName: String
+    let help: String
+    let hoverEffect: CapsuleIconButton.HoverEffect
+    let menuContent: () -> MenuContent
+    @State private var isHovering = false
+    @State private var scale: CGFloat = 1
+
+    init(systemName: String, help: String = "", hoverEffect: CapsuleIconButton.HoverEffect = .none, @ViewBuilder menuContent: @escaping () -> MenuContent) {
+        self.systemName = systemName
+        self.help = help
+        self.hoverEffect = hoverEffect
+        self.menuContent = menuContent
+    }
+
+    var body: some View {
+        Menu {
+            menuContent()
+        } label: {
+            Image(systemName: systemName)
+                .font(.system(size: 16, weight: .semibold))
+                .frame(width: 28, height: 28)
+                .contentShape(Rectangle())
+                .scaleEffect(scale)
+                .foregroundStyle(isHovering ? AgendaColor.amber : Color(red: 0.118, green: 0.118, blue: 0.118))
+                .onHover { hovering in
+                    isHovering = hovering
+                    if hoverEffect == .scale {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
+                            scale = hovering ? 1.15 : 1
+                        }
+                    }
+                }
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .help(help)
+    }
+}
+
+// MARK: - Capsule Icon Button with Popover
+
+private struct CapsuleIconPopoverButton<PopoverContent: View>: View {
+    let systemName: String
+    let help: String
+    @Binding var isPresented: Bool
+    let popoverContent: () -> PopoverContent
+    @State private var isHovering = false
+
+    init(systemName: String, help: String = "", isPresented: Binding<Bool>, popoverContent: @escaping () -> PopoverContent) {
+        self.systemName = systemName
+        self.help = help
+        self._isPresented = isPresented
+        self.popoverContent = popoverContent
+    }
+
+    var body: some View {
+        Button {
+            isPresented = true
+        } label: {
+            Image(systemName: systemName)
+                .font(.system(size: 16, weight: .medium))
+                .frame(width: 28, height: 28)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(isHovering ? AgendaColor.amber : Color(red: 0.118, green: 0.118, blue: 0.118))
+        .help(help)
+        .onHover { isHovering = $0 }
+        .popover(isPresented: $isPresented, arrowEdge: .bottom) {
+            popoverContent()
+        }
+    }
+}
+
+// MARK: - Sort Popover Content
+
+@MainActor
+private func sortPopoverContent(store: ObservableLibraryStore, showSortPopover: Binding<Bool>) -> some View {
+    VStack(alignment: .leading, spacing: 0) {
+        ForEach(NoteSortOrder.allCases, id: \.self) { order in
+            Button {
+                store.sortOrder = order
+                showSortPopover.wrappedValue = false
+            } label: {
+                HStack {
+                    Text(order.title)
+                    Spacer()
+                    if store.sortOrder == order {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(AgendaColor.amber)
+                    }
+                }
+                .padding(.horizontal, 12).padding(.vertical, 7)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+    }
+    .font(.custom("Avenir Next", size: 13))
+    .padding(.vertical, 4)
+    .frame(width: 180)
+}
+
+// MARK: - Search Popover Content
+
+private struct SearchPopoverContent: View {
+    @Binding var searchText: String
+    @Environment(ObservableLibraryStore.self) private var store
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(AgendaColor.textMuted)
+            TextField("搜索标题、正文、标签或人员", text: $searchText)
+                .textFieldStyle(.plain)
+                .font(.custom("Avenir Next", size: 13))
+                .frame(width: 220)
+            if !searchText.isEmpty {
+                Button {
+                    searchText = ""
+                    SharedBlockNoteWebView.shared.clearSearch()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(AgendaColor.textMuted)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 10).padding(.vertical, 8)
+        .frame(width: 300)
     }
 }

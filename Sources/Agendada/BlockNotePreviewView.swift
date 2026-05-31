@@ -116,17 +116,25 @@ private enum PreviewMetrics {
     static let tableBorderColor = Color(red: 0.867, green: 0.867, blue: 0.867)  // #ddd
     static let tableHeaderBackgroundColor = Color.black.opacity(0.04)
 
-    // 精确计算 lineSpacing：
-    // CSS line-height 1.65 表示：单行高度 = fontSize * 1.65
-    // SwiftUI lineSpacing 表示：n行高度 = n*fontSize + (n-1)*spacing
-    // 解得：spacing ≈ fontSize * (lineHeight - 1) = fontSize * 0.65
-    // 对于 14px：14 * 0.65 = 9.1px
-    // 实测微调：8.5px 更接近视觉效果
-    static func lineSpacing(for size: CGFloat) -> CGFloat {
-        // 基于编辑器实测: lineHeight 23.1px = 14 * 1.65
-        // 理论 spacing = size * (1.65 - 1) = size * 0.65
-        // 微调后: 0.608
-        size * 0.608
+    struct TextLineMetrics {
+        let lineSpacing: CGFloat
+        let verticalInset: CGFloat
+    }
+
+    // CSS line-height includes the font's natural line box plus extra leading.
+    // SwiftUI lineSpacing only adds space between lines, so add half-leading
+    // above and below the Text to match single-line blocks too.
+    static func lineMetrics(
+        for size: CGFloat,
+        lineHeight requestedLineHeight: CGFloat? = nil,
+        fontName: String = "Avenir Next"
+    ) -> TextLineMetrics {
+        let targetLineHeight = requestedLineHeight ?? lineHeight
+        let targetLineBox = size * targetLineHeight
+        let font = NSFont(name: fontName, size: size) ?? .systemFont(ofSize: size)
+        let naturalLineBox = NSLayoutManager().defaultLineHeight(for: font)
+        let extraLeading = max(0, targetLineBox - naturalLineBox)
+        return TextLineMetrics(lineSpacing: extraLeading, verticalInset: extraLeading / 2)
     }
 }
 
@@ -392,15 +400,15 @@ private struct PreviewRichText: View {
     var lineHeight: CGFloat?
 
     var body: some View {
-        // 精确计算 lineSpacing：
-        // CSS line-height 1.65：单行 = fontSize * 1.65
-        // SwiftUI：n行 = n*fontSize + (n-1)*spacing
-        // 理论值 spacing = fontSize * 0.65，但实测需要微调
-        // 微调系数 0.608 比理论值 0.65 更接近实际渲染效果
-        let spacing = fontSize * 0.608
+        let metrics = PreviewMetrics.lineMetrics(
+            for: fontSize,
+            lineHeight: lineHeight,
+            fontName: forceMonospace ? "Menlo" : "Avenir Next"
+        )
 
         return composedText
-            .lineSpacing(spacing)
+            .lineSpacing(metrics.lineSpacing)
+            .padding(.vertical, metrics.verticalInset)
             .fixedSize(horizontal: false, vertical: true)
     }
 
@@ -416,8 +424,8 @@ private struct PreviewRichText: View {
     }
 
     private func styledAttributed(_ fragment: PreviewTextFragment) -> AttributedString {
-        let display = fragment.text.isEmpty ? " " : fragment.text
-        var attr = AttributedString(display)
+        let rawText = fragment.text.isEmpty ? " " : fragment.text
+        var attr = AttributedString(rawText)
 
         let isMono = forceMonospace || fragment.isCode
         let fontName: String
@@ -425,7 +433,7 @@ private struct PreviewRichText: View {
             fontName = "Menlo"
         } else {
             if fragment.isBold {
-                fontName = "Avenir Next Demi Bold"
+                fontName = "Avenir Next Bold"
             } else {
                 switch baseWeight {
                 case .bold: fontName = "Avenir Next Bold"
@@ -439,7 +447,7 @@ private struct PreviewRichText: View {
         attr.underlineStyle = (fragment.isUnderline || fragment.linkURL != nil) ? .single : nil
         attr.strikethroughStyle = fragment.isStrikethrough ? .single : nil
         if let bg = fragment.backgroundColor {
-            attr.backgroundColor = bg
+            attr.backgroundColor = bg.opacity(0.55)
         }
         if let linkURL = fragment.linkURL {
             attr.link = linkURL

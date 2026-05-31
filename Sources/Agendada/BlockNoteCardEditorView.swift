@@ -350,7 +350,7 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
           window.__agendadaInjected = true;
 
           var styleEl = document.createElement('style');
-          styleEl.id = 'agendada-heading-styles';
+          styleEl.id = 'agendada-editor-runtime-styles';
           styleEl.textContent = `
             html, body, #root, .editor-shell, .bn-editor { overflow: visible !important; }
             .mantine-RichTextEditor-root,
@@ -358,42 +358,7 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
             .mantine-RichTextEditor-inner {
               padding: 0 !important;
             }
-            .bn-editor {
-              padding: 0px 8px 0px 0px !important;
-            }
             .bn-suggestion-menu { max-height: 350px !important; }
-            .bn-block-content {
-              padding-top: 3px !important;
-              padding-bottom: 3px !important;
-            }
-            .bn-block-content[data-content-type="heading"]:not([data-level]),
-            .bn-block-content[data-content-type="heading"][data-level="1"] {
-              font-size: 17px !important;
-              font-weight: 700 !important;
-              line-height: 1.65 !important;
-              padding-top: 10px !important;
-              padding-bottom: 3px !important;
-              color: #1A1A1A !important;
-              font-family: "Avenir Next", -apple-system, sans-serif !important;
-            }
-            .bn-block-content[data-content-type="heading"][data-level="2"] {
-              font-size: 17px !important;
-              font-weight: 700 !important;
-              line-height: 1.65 !important;
-              padding-top: 3px !important;
-              padding-bottom: 3px !important;
-              color: #1A1A1A !important;
-              font-family: "Avenir Next", -apple-system, sans-serif !important;
-            }
-            .bn-block-content[data-content-type="heading"][data-level="3"] {
-              font-size: 15px !important;
-              font-weight: 700 !important;
-              line-height: 1.65 !important;
-              padding-top: 3px !important;
-              padding-bottom: 3px !important;
-              color: #555555 !important;
-              font-family: "Avenir Next", -apple-system, sans-serif !important;
-            }
           `;
           document.head.appendChild(styleEl);
 
@@ -471,7 +436,7 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
             } catch(e) {}
           };
 
-          console.log("Agendada: heading styles + search injected");
+          console.log("Agendada: runtime editor helpers + search injected");
         })();
         """
         webView.evaluateJavaScript(script)
@@ -730,22 +695,25 @@ private func blockNoteHTML() -> String {
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <style>
-        :root { color-scheme: light; }
+        :root {
+          color-scheme: light;
+          --agendada-editor-font-family: "Avenir Next", Avenir, -apple-system, BlinkMacSystemFont, sans-serif;
+        }
         * { box-sizing: border-box; }
         html, body, #root {
           margin: 0;
           min-height: 100%;
           background: transparent;
-          font-family: "Avenir Next", -apple-system, sans-serif;
+          font-family: var(--agendada-editor-font-family);
           color: #333333;
-          overflow: hidden;
+          overflow: visible;
         }
         body { padding: 0; }
         .editor-shell {
-          min-height: 0;
+          min-height: 180px;
           padding: 0;
           background: transparent;
-          overflow: hidden;
+          overflow: visible;
         }
         .mantine-RichTextEditor-root,
         .mantine-RichTextEditor-content,
@@ -756,19 +724,23 @@ private func blockNoteHTML() -> String {
           background: transparent !important;
         }
         .bn-editor {
-          padding: 0px 8px 0px 0px !important;
+          padding-inline: 0 8px !important;
           font-size: 14px;
           line-height: 1.65;
-          font-family: "Avenir Next", -apple-system, sans-serif;
-          overflow: hidden !important;
+          font-family: var(--agendada-editor-font-family);
+          overflow: visible !important;
+        }
+        .bn-default-styles {
+          font-family: var(--agendada-editor-font-family) !important;
+          font-size: 14px !important;
+          line-height: 1.65 !important;
         }
         .bn-block-content {
-          padding-top: 3px !important;
-          padding-bottom: 3px !important;
+          padding: 6px 0 !important;
         }
         .bn-block-outer, .bn-block, .bn-block-content {
           max-width: 100% !important;
-          overflow: hidden !important;
+          overflow: visible !important;
         }
         .bn-block-content[data-content-type="bulletListItem"]::before,
         .bn-block-content[data-content-type="numberedListItem"]::before {
@@ -798,22 +770,38 @@ private func blockNoteHTML() -> String {
         .bn-editor table {
           width: 100% !important;
           max-width: 100% !important;
-          table-layout: fixed;
+          table-layout: fixed !important;
           border-collapse: collapse;
-          overflow: hidden;
+          overflow: visible;
         }
         .bn-editor td,
         .bn-editor th {
-          padding: 7px 10px !important;
+          padding: 10px !important;
           font-size: 14px !important;
           line-height: 1.65 !important;
           overflow-wrap: anywhere;
         }
         .bn-block-content[data-content-type="heading"] {
-          color: #1A1A1A;
+          color: #1A1A1A !important;
+          padding-top: 5.5px !important;
+          padding-bottom: 5.5px !important;
+          --level: 17px !important;
+          font-weight: 700 !important;
+        }
+        .bn-block-content[data-content-type="heading"]:has(> h1),
+        .bn-block-content[data-content-type="heading"][data-level="1"] {
+          padding-top: 18.3px !important;
+          --level: 17px !important;
+        }
+        .bn-block-content[data-content-type="heading"][data-level="3"] {
+          --level: 15px !important;
+        }
+        .bn-block-outer[data-prev-type="heading"] > .bn-block > .bn-block-content,
+        .bn-block-outer:not([data-prev-type]) > .bn-block > .bn-block-content[data-content-type="heading"] {
+          font-size: var(--level) !important;
         }
         .fallback-editor {
-          min-height: 0;
+          min-height: 180px;
           outline: none;
           font-size: 14px;
           line-height: 1.65;
