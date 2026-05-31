@@ -2,25 +2,24 @@ import React from "react";
 
 // ── Color definitions ──
 // Text colors: vivid foreground values.
-// Highlight colors: saturated for visibility (like fluorescent highlighter pens).
+// Highlight colors: bgSat (saturated) + bgSoft (pastel) for both styles.
 const COLORS = {
-  red:    { hex: "#e03e3e", bg: "#ff8787", label: "红", alias: "r"   },
-  orange: { hex: "#d9730d", bg: "#ffa94d", label: "橙", alias: "o"   },
-  yellow: { hex: "#dfab00", bg: "#ffec99", label: "黄", alias: "y"   },
-  green:  { hex: "#0d7c0d", bg: "#8ce99a", label: "绿", alias: "g"   },
-  blue:   { hex: "#0b6bcb", bg: "#74c0fc", label: "蓝", alias: "b"   },
-  purple: { hex: "#6940a5", bg: "#b197fc", label: "紫", alias: "p"   },
-  pink:   { hex: "#c9406d", bg: "#f783ac", label: "粉", alias: "pi"  },
-  gray:   { hex: "#9b9a97", bg: "#ced4da", label: "灰", alias: "gr"  },
-  brown:  { hex: "#64473a", bg: "#e6b88a", label: "棕", alias: "br"  },
+  red:    { hex: "#e03e3e", bgSat: "#ff8787", bgSoft: "#fccfcf", label: "红", alias: "r"   },
+  orange: { hex: "#d9730d", bgSat: "#ffa94d", bgSoft: "#fde2c8", label: "橙", alias: "o"   },
+  yellow: { hex: "#dfab00", bgSat: "#ffec99", bgSoft: "#fff6cc", label: "黄", alias: "y"   },
+  green:  { hex: "#0d7c0d", bgSat: "#8ce99a", bgSoft: "#d0f0d6", label: "绿", alias: "g"   },
+  blue:   { hex: "#0b6bcb", bgSat: "#74c0fc", bgSoft: "#d0e8fc", label: "蓝", alias: "b"   },
+  purple: { hex: "#6940a5", bgSat: "#b197fc", bgSoft: "#e0d4fc", label: "紫", alias: "p"   },
+  pink:   { hex: "#c9406d", bgSat: "#f783ac", bgSoft: "#fcd0e0", label: "粉", alias: "pi"  },
+  gray:   { hex: "#9b9a97", bgSat: "#ced4da", bgSoft: "#e9ecef", label: "灰", alias: "gr"  },
+  brown:  { hex: "#64473a", bgSat: "#e6b88a", bgSoft: "#f2dcc8", label: "棕", alias: "br"  },
 };
 
 // ── Component ──
 
 function ColorMenu(props) {
-  const { items, selectedIndex, onItemClick, loadingState, styleType } = props;
+  const { items, selectedIndex, onItemClick, loadingState } = props;
   const toolbarRef = React.useRef(null);
-  const isHighlight = styleType === "highlight";
 
   React.useEffect(() => {
     if (selectedIndex === undefined || selectedIndex === null) return;
@@ -40,10 +39,12 @@ function ColorMenu(props) {
       {items.map((item, i) => {
         const meta = COLORS[item.key];
         const isDefault = item.key === "default";
+        const dotColor = item.dotColor
+          || (meta?.hex);
         const circleStyle = isDefault
           ? { background: "none", borderStyle: "dashed" }
-          : meta
-          ? { backgroundColor: isHighlight ? meta.bg : meta.hex }
+          : dotColor
+          ? { backgroundColor: dotColor }
           : {};
 
         return (
@@ -72,13 +73,19 @@ function ColorMenu(props) {
               )}
             </span>
             <span className="color-dot-label">
-              {isDefault ? "去除" : meta ? meta.label : item.title}
+              {isDefault ? "去除" : item.dotLabel || meta?.label || item.title}
             </span>
           </button>
         );
       })}
     </div>
   );
+}
+
+// ── Highlight wrapper (two-row layout signaled by class) ──
+
+function HighlightMenu(props) {
+  return React.createElement(ColorMenu, { ...props });
 }
 
 // ── Item factories ──
@@ -96,9 +103,10 @@ function createColorItems(editor) {
     },
   };
 
-  const colorItems = Object.entries(COLORS).map(([key, { label, alias }]) => ({
+  const colorItems = Object.entries(COLORS).map(([key, { hex, label, alias }]) => ({
     key,
     title: label,
+    dotColor: hex,
     aliases: [alias, key, label],
     onItemClick: () => {
       const active = editor.getActiveStyles?.() || {};
@@ -125,24 +133,39 @@ function createHighlightItems(editor) {
     },
   };
 
-  const colorItems = Object.entries(COLORS).map(([key, { label, alias }]) => ({
-    key,
+  // Row 1: saturated (keyed by hex so BlockNote renders exact color)
+  const satItems = Object.entries(COLORS).map(([, { bgSat, label, alias }]) => ({
+    key: bgSat,
     title: label,
-    aliases: [alias, key, label],
+    dotColor: bgSat,
+    dotLabel: label,
+    aliases: [alias, label, "s"],
     onItemClick: () => {
       const active = editor.getActiveStyles?.() || {};
       if (active.backgroundColor && active.backgroundColor !== "default") {
         editor.removeStyles?.({ backgroundColor: active.backgroundColor });
       }
-      editor.addStyles?.({ backgroundColor: key });
+      editor.addStyles?.({ backgroundColor: bgSat });
     },
   }));
 
-  return [removeItem, ...colorItems];
-}
+  // Row 2: pastel
+  const softItems = Object.entries(COLORS).map(([, { bgSoft, label, alias }]) => ({
+    key: bgSoft,
+    title: "淡" + label,
+    dotColor: bgSoft,
+    dotLabel: "淡" + label,
+    aliases: [alias + "s", "淡" + label, "soft"],
+    onItemClick: () => {
+      const active = editor.getActiveStyles?.() || {};
+      if (active.backgroundColor && active.backgroundColor !== "default") {
+        editor.removeStyles?.({ backgroundColor: active.backgroundColor });
+      }
+      editor.addStyles?.({ backgroundColor: bgSoft });
+    },
+  }));
 
-function HighlightMenu(props) {
-  return React.createElement(ColorMenu, { ...props, styleType: "highlight" });
+  return [removeItem, ...satItems, ...softItems];
 }
 
 export { ColorMenu, HighlightMenu, createColorItems, createHighlightItems };

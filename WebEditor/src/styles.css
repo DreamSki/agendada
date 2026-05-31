@@ -247,7 +247,7 @@ body {
 .color-dot-toolbar {
   display: flex;
   flex-direction: row;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   align-items: center;
   gap: 1px;
   background: #ffffff;
@@ -255,6 +255,7 @@ body {
   border-radius: 10px;
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.10), 0 0 0 1px rgba(0, 0, 0, 0.03);
   padding: 4px 6px;
+  max-width: 400px;
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
@@ -316,11 +317,33 @@ body {
   color: #333;
 }
 
-/* ── Highlighted text ── */
+/* ── Highlighted text (BlockNote inline marks use data-style-type + data-value) ── */
 
-.bn-editor [style*="background-color"] {
+[data-style-type=backgroundColor]:not([data-value="default"]) {
   border-radius: 3px;
   padding: 1px 3px;
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
 }
+
+/* Saturated highlight colors */
+[data-style-type=backgroundColor][data-value="#ff8787"] { background-color: #ff8787 !important; }
+[data-style-type=backgroundColor][data-value="#ffa94d"] { background-color: #ffa94d !important; }
+[data-style-type=backgroundColor][data-value="#ffec99"] { background-color: #ffec99 !important; }
+[data-style-type=backgroundColor][data-value="#8ce99a"] { background-color: #8ce99a !important; }
+[data-style-type=backgroundColor][data-value="#74c0fc"] { background-color: #74c0fc !important; }
+[data-style-type=backgroundColor][data-value="#b197fc"] { background-color: #b197fc !important; }
+[data-style-type=backgroundColor][data-value="#f783ac"] { background-color: #f783ac !important; }
+[data-style-type=backgroundColor][data-value="#ced4da"] { background-color: #ced4da !important; }
+[data-style-type=backgroundColor][data-value="#e6b88a"] { background-color: #e6b88a !important; }
+
+/* Pastel highlight colors */
+[data-style-type=backgroundColor][data-value="#fccfcf"] { background-color: #fccfcf !important; }
+[data-style-type=backgroundColor][data-value="#fde2c8"] { background-color: #fde2c8 !important; }
+[data-style-type=backgroundColor][data-value="#fff6cc"] { background-color: #fff6cc !important; }
+[data-style-type=backgroundColor][data-value="#d0f0d6"] { background-color: #d0f0d6 !important; }
+[data-style-type=backgroundColor][data-value="#d0e8fc"] { background-color: #d0e8fc !important; }
+[data-style-type=backgroundColor][data-value="#e0d4fc"] { background-color: #e0d4fc !important; }
+[data-style-type=backgroundColor][data-value="#fcd0e0"] { background-color: #fcd0e0 !important; }
+[data-style-type=backgroundColor][data-value="#e9ecef"] { background-color: #e9ecef !important; }
+[data-style-type=backgroundColor][data-value="#f2dcc8"] { background-color: #f2dcc8 !important; }

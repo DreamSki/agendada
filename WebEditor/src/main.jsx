@@ -681,7 +681,8 @@ function EditorApp() {
           columns={20}
           getItems={async (query) => {
             const items = createColorItems(editor);
-            return filterSuggestionItems(items, query);
+            const filtered = filterSuggestionItems(items, query);
+            return query ? filtered.filter((i) => i.key !== "default") : filtered;
           }}
           floatingUIOptions={{
             useFloatingOptions: {
@@ -692,10 +693,11 @@ function EditorApp() {
         <GridSuggestionMenuController
           triggerCharacter="«"
           gridSuggestionMenuComponent={HighlightMenu}
-          columns={20}
+          columns={10}
           getItems={async (query) => {
             const items = createHighlightItems(editor);
-            return filterSuggestionItems(items, query);
+            const filtered = filterSuggestionItems(items, query);
+            return query ? filtered.filter((i) => i.key !== "default") : filtered;
           }}
           floatingUIOptions={{
             useFloatingOptions: {
