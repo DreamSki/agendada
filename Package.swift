@@ -25,7 +25,7 @@ let package = Package(
         ),
         .testTarget(
             name: "AgendadaTests",
-            dependencies: ["AgendadaCore"]
+            dependencies: ["Agendada", "AgendadaCore"]
         ),
     ],
     swiftLanguageModes: [.v6]

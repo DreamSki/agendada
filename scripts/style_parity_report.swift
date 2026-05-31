@@ -46,6 +46,7 @@ let checks: [Check] = [
     numeric("text", "body font size", preview.value("bodyFontSize"), css.bodyFontSize, tolerance: 0.1, note: ""),
     numeric("text", "body line-height ratio", preview.value("lineHeight"), css.bodyLineHeight, tolerance: 0.01, note: ""),
     numeric("text", "body rendered line box", preview.lineBoxHeight(fontSizeName: "bodyFontSize", lineHeight: preview.value("lineHeight"), fontName: "Avenir Next"), css.bodyLineBoxHeight, tolerance: 0.5, note: "Uses AppKit font metrics for the SwiftUI side; catches lineSpacing conversions that look right on paper but render differently."),
+    gap("text", "line wrapping engine", "SwiftUI Text / TextKit", "WKWebView / WebKit", note: "Font metrics can match while per-line breaks still differ. Exact wrapping requires rendering preview and editor with the same engine."),
     fontFamily("text", "font family", preview.fontFamilies, css.fontFamily),
     numeric("paragraph", "block vertical padding", preview.value("blockVPadding"), css.blockPaddingVertical, tolerance: 0.5, note: "SwiftUI applies this on both top and bottom, with an extra first-block top compensation."),
     numeric("heading", "H1 font size", preview.value("heading1Size"), css.heading1FontSize, tolerance: 0.5, note: ""),
@@ -139,6 +140,17 @@ func text(_ area: String, _ metric: String, _ preview: String, _ editor: String,
         preview: preview,
         editor: editor,
         status: preview == editor ? "MATCH" : "DIFF",
+        note: note
+    )
+}
+
+func gap(_ area: String, _ metric: String, _ preview: String, _ editor: String, note: String) -> Check {
+    Check(
+        area: area,
+        metric: metric,
+        preview: preview,
+        editor: editor,
+        status: "GAP",
         note: note
     )
 }

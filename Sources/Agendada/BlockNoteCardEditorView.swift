@@ -316,7 +316,7 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
     }
 
     private func preparedEditorBundle() -> PreparedEditorBundle? {
-        guard let resourceURL = Bundle.module.resourceURL else {
+        guard let resourceURL = blockNoteResourceBundleURL() else {
             return nil
         }
 
@@ -341,6 +341,31 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
             print("Agendada failed to prepare writable BlockNote editor bundle: \(error)")
             return PreparedEditorBundle(editorURL: bundledIndexURL, readAccessURL: bundledEditorURL)
         }
+    }
+
+    private func blockNoteResourceBundleURL() -> URL? {
+        let fileManager = FileManager.default
+        let bundleName = "Agendada_Agendada.bundle"
+        var candidates: [URL] = []
+
+        candidates.append(Bundle.main.bundleURL.appending(path: bundleName, directoryHint: .isDirectory))
+
+        if let resourceURL = Bundle.main.resourceURL {
+            candidates.append(resourceURL.appending(path: bundleName, directoryHint: .isDirectory))
+        }
+
+        if let executableURL = Bundle.main.executableURL {
+            candidates.append(executableURL.deletingLastPathComponent().appending(path: bundleName, directoryHint: .isDirectory))
+        }
+
+        for candidate in candidates {
+            let indexURL = candidate.appending(path: "BlockNoteEditor/index.html")
+            if fileManager.fileExists(atPath: indexURL.path) {
+                return candidate
+            }
+        }
+
+        return nil
     }
 
     private func injectMeasurementFunction() {
@@ -583,30 +608,64 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
     private func handleFinderPaste() -> Bool {
         guard isReady, webView.window?.isKeyWindow == true else { return false }
         let pasteboard = NSPasteboard.general
-        guard let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],
-              !urls.isEmpty else { return false }
-        let exts = Set(["png", "jpg", "jpeg", "gif", "webp", "heic", "tiff", "bmp"])
-        let imgURLs = urls.filter { exts.contains($0.pathExtension.lowercased()) }
-        guard !imgURLs.isEmpty else { return false }
 
-        for src in imgURLs {
+        // First try: file URLs (images pasted from Finder)
+        if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],
+           !urls.isEmpty {
+            let exts = Set(["png", "jpg", "jpeg", "gif", "webp", "heic", "tiff", "bmp"])
+            let imgURLs = urls.filter { exts.contains($0.pathExtension.lowercased()) }
+            if !imgURLs.isEmpty {
+                for src in imgURLs {
+                    let assetID = UUID().uuidString
+                    let fn = sanitizedFileName(src.lastPathComponent)
+                    let dst = assetsDirectory().appending(path: "\(assetID)-\(fn)")
+                    do {
+                        try FileManager.default.createDirectory(at: assetsDirectory(), withIntermediateDirectories: true)
+                        try FileManager.default.copyItem(at: src, to: dst)
+                        insertImageBlock(dst: dst, fn: fn)
+                    } catch {
+                        print("Agendada paste import failed: \(error)")
+                    }
+                }
+                return true
+            }
+        }
+
+        // Second try: raw image data (images copied from websites — clipboard has TIFF/PNG
+        // but no file URL)
+        if let imageData = pasteboard.data(forType: .tiff) ?? pasteboard.data(forType: .png),
+           let image = NSImage(data: imageData) {
+            // Convert to PNG for consistent storage — TIFF is the clipboard interchange
+            // format on macOS; PNG is more portable and preserves transparency.
+            guard let tiffRep = image.tiffRepresentation,
+                  let bitmap = NSBitmapImageRep(data: tiffRep),
+                  let pngData = bitmap.representation(using: .png, properties: [:]) else {
+                return false
+            }
             let assetID = UUID().uuidString
-            let fn = sanitizedFileName(src.lastPathComponent)
+            let fn = "pasted-image-\(assetID.prefix(8)).png"
             let dst = assetsDirectory().appending(path: "\(assetID)-\(fn)")
             do {
                 try FileManager.default.createDirectory(at: assetsDirectory(), withIntermediateDirectories: true)
-                try FileManager.default.copyItem(at: src, to: dst)
-                let urlStr = dst.standardizedFileURL.absoluteString
-                let safe = urlStr.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "\\'")
-                let script = """
-                (function(){var e=window.__agendada&&window.__agendada.editor;if(!e)return;var p=e.getTextCursorPosition(),r=p?p.block:e.document[e.document.length-1];var isEmpty=r&&(!r.content||(Array.isArray(r.content)?r.content.length===0:!String(r.content).trim()));if(isEmpty&&r.type!=='image'){e.updateBlock(r,{type:'image',props:{url:'\(safe)',name:'\(fn)',caption:'',showPreview:true}})}else{e.insertBlocks([{type:'image',props:{url:'\(safe)',name:'\(fn)',caption:'',showPreview:true}}],r,'after')}e.focus();})();
-                """
-                webView.evaluateJavaScript(script)
+                try pngData.write(to: dst, options: [.atomic])
+                insertImageBlock(dst: dst, fn: fn)
+                return true
             } catch {
-                print("Agendada paste import failed: \(error)")
+                print("Agendada paste image import failed: \(error)")
+                return false
             }
         }
-        return true
+
+        return false
+    }
+
+    private func insertImageBlock(dst: URL, fn: String) {
+        let urlStr = dst.standardizedFileURL.absoluteString
+        let safe = urlStr.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "\\'")
+        let script = """
+        (function(){var e=window.__agendada&&window.__agendada.editor;if(!e)return;var p=e.getTextCursorPosition(),r=p?p.block:e.document[e.document.length-1];var isEmpty=r&&(!r.content||(Array.isArray(r.content)?r.content.length===0:!String(r.content).trim()));if(isEmpty&&r.type!=='image'){e.updateBlock(r,{type:'image',props:{url:'\(safe)',name:'\(fn)',caption:'',showPreview:true}})}else{e.insertBlocks([{type:'image',props:{url:'\(safe)',name:'\(fn)',caption:'',showPreview:true}}],r,'after')}e.focus();})();
+        """
+        webView.evaluateJavaScript(script)
     }
 
     private func jsString(_ value: String) -> String {

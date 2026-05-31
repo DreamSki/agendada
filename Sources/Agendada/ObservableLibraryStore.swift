@@ -11,6 +11,8 @@ final class ObservableLibraryStore {
     private let repository: FileLibraryRepository
     @ObservationIgnored
     private var persistTask: Task<Void, Never>?
+    @ObservationIgnored
+    private let persistenceEnabled: Bool
 
     var searchText: String {
         get {
@@ -36,18 +38,23 @@ final class ObservableLibraryStore {
         }
     }
 
-    init(seed: LibraryStore, repository: FileLibraryRepository = FileLibraryRepository()) {
+    init(seed: LibraryStore, repository: FileLibraryRepository = FileLibraryRepository(), persistenceEnabled: Bool = true) {
         self.store = seed
         self.repository = repository
+        self.persistenceEnabled = persistenceEnabled
     }
 
     static func load(repository: FileLibraryRepository = FileLibraryRepository()) -> ObservableLibraryStore {
         do {
             if let snapshot = try repository.load() {
+                repository.collectGarbage(in: snapshot)
                 return ObservableLibraryStore(seed: LibraryStore(snapshot: snapshot), repository: repository)
             }
         } catch {
-            assertionFailure("Failed to load Agendada library: \(error)")
+            print("Failed to load Agendada library: \(error)")
+            if repository.fileExists {
+                return ObservableLibraryStore(seed: .sample(), repository: repository, persistenceEnabled: false)
+            }
         }
 
         let observableStore = ObservableLibraryStore(seed: .sample(), repository: repository)
@@ -462,6 +469,7 @@ final class ObservableLibraryStore {
     }
 
     private func persistSoon() {
+        guard persistenceEnabled else { return }
         persistTask?.cancel()
         persistTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 300_000_000)
@@ -472,12 +480,14 @@ final class ObservableLibraryStore {
     }
 
     private func persistNow() {
+        guard persistenceEnabled else { return }
         persistTask?.cancel()
         persistTask = nil
         persist()
     }
 
     private func persist() {
+        guard persistenceEnabled else { return }
         do {
             try repository.save(store.snapshot())
         } catch {

@@ -26,6 +26,16 @@ mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 cp "$PRODUCT_PATH" "$MACOS_DIR/$APP_NAME"
 chmod +x "$MACOS_DIR/$APP_NAME"
 
+PRODUCT_DIR="$(dirname "$PRODUCT_PATH")"
+shopt -s nullglob
+for bundle in "$PRODUCT_DIR"/*.bundle; do
+    # SwiftPM's generated Bundle.module accessor for executable targets looks
+    # next to Bundle.main.bundleURL, so the resource bundle must live directly
+    # inside the .app package root rather than only in Contents/Resources.
+    cp -R "$bundle" "$APP_DIR/"
+done
+shopt -u nullglob
+
 cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

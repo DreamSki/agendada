@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+@testable import Agendada
 @testable import AgendadaCore
 
 @Test func todayOverviewOnlyShowsTodayNotes() async throws {
@@ -203,6 +204,50 @@ import Testing
     #expect(decoded.smartOverviews.isEmpty)
     #expect(decoded.selectedSmartOverviewID == nil)
     #expect(decoded.selectedOverview == .all)
+}
+
+@MainActor
+@Test func existingUnreadableLibraryIsNotOverwrittenWithSampleData() async throws {
+    let temporaryDirectory = FileManager.default.temporaryDirectory
+        .appending(path: "AgendadaTests-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
+
+    let libraryURL = temporaryDirectory.appending(path: "Library.json")
+    let originalData = Data("this is not valid library json".utf8)
+    try originalData.write(to: libraryURL)
+
+    let repository = FileLibraryRepository(fileURL: libraryURL)
+    let observableStore = ObservableLibraryStore.load(repository: repository)
+
+    observableStore.addNote()
+
+    let storedData = try Data(contentsOf: libraryURL)
+    #expect(storedData == originalData)
+}
+
+@Test func savingLibraryCreatesPreviousBackupBeforeReplacingExistingFile() async throws {
+    let temporaryDirectory = FileManager.default.temporaryDirectory
+        .appending(path: "AgendadaTests-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
+
+    let libraryURL = temporaryDirectory.appending(path: "Library.json")
+    let repository = FileLibraryRepository(fileURL: libraryURL)
+    let firstSnapshot = LibraryStore.sample().snapshot()
+    try repository.save(firstSnapshot)
+
+    let secondStore = LibraryStore(snapshot: firstSnapshot)
+    secondStore.searchText = "changed"
+    try repository.save(secondStore.snapshot())
+
+    let backupURL = temporaryDirectory.appending(path: "Library.previous.json")
+    let backupData = try Data(contentsOf: backupURL)
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+    let backupSnapshot = try decoder.decode(LibrarySnapshot.self, from: backupData)
+
+    #expect(backupSnapshot.searchText == firstSnapshot.searchText)
 }
 
 @Test func smartOverviewFiltersBySavedQuery() async throws {
