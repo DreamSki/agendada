@@ -524,14 +524,23 @@ private struct StreamNoteRow: View {
         .onChange(of: draft.peopleText) { scheduleSaveDraft() }
         .onChange(of: draft.status) { scheduleSaveDraft() }
         .onChange(of: store.selectedNoteID) { oldValue, newValue in
+            print("[HEIGHT-DEBUG] selectedNoteID changed note=\(note.id.uuidString.prefix(6)) old=\(oldValue?.uuidString.prefix(6) ?? "nil") new=\(newValue?.uuidString.prefix(6) ?? "nil")")
             if oldValue == note.id && newValue != note.id {
                 flushDraft()
+                // Reset editor height when deselected to prevent it from affecting other notes
+                print("[HEIGHT-DEBUG] Deselecting note=\(note.id.uuidString.prefix(6)) BEFORE reset editorHeight=\(editorHeight)")
+                editorHeight = 0
+                editorIsVisible = false
+                print("[HEIGHT-DEBUG] Deselecting note=\(note.id.uuidString.prefix(6)) AFTER reset editorHeight=\(editorHeight)")
             } else if newValue == note.id {
                 resetDraft()
                 prepareEditorOverlayForSelection()
             }
         }
-        .onChange(of: note.id) { resetDraft() }
+        .onChange(of: note.id) {
+            print("[HEIGHT-DEBUG] note.id changed note=\(note.id.uuidString.prefix(6))")
+            resetDraft()
+        }
         .onDisappear { flushDraft() }
     }
 
@@ -539,7 +548,11 @@ private struct StreamNoteRow: View {
 
     private var bodyContent: some View {
         let popoverSlack: CGFloat = 0
-        let cardHeight = max(capturedPreviewHeight, editorHeight + popoverSlack)
+        // Always use preview height to avoid height jumping. Editor height is only used internally.
+        let cardHeight = capturedPreviewHeight
+
+        // Debug: Log height calculation
+        let _ = print("[HEIGHT-DEBUG] note=\(note.id.uuidString.prefix(6)) isSelected=\(isSelected) capturedPreviewHeight=\(capturedPreviewHeight) editorHeight=\(editorHeight) editorIsVisible=\(editorIsVisible) cardHeight=\(cardHeight)")
 
         return ZStack(alignment: .topLeading) {
             // Preview — always present, measures its natural height for card sizing.
@@ -556,6 +569,7 @@ private struct StreamNoteRow: View {
                     }
                 )
                 .onPreferenceChange(PreviewHeightKey.self) { h in
+                    print("[HEIGHT-DEBUG] onPreferenceChange note=\(note.id.uuidString.prefix(6)) oldHeight=\(capturedPreviewHeight) newHeight=\(h)")
                     if h > 0 { capturedPreviewHeight = h }
                 }
 
@@ -801,9 +815,12 @@ private struct StreamNoteRow: View {
     }
 
     private func prepareEditorOverlayForSelection() {
+        print("[HEIGHT-DEBUG] prepareEditorOverlayForSelection note=\(note.id.uuidString.prefix(6)) BEFORE capturedPreviewHeight=\(capturedPreviewHeight) editorHeight=\(editorHeight)")
         editorHasUserChanges = false
         editorIsVisible = false
         initialBlockJSON = draft.blockJSON
+        // Do NOT reset heights - let them be updated naturally
+        print("[HEIGHT-DEBUG] prepareEditorOverlayForSelection note=\(note.id.uuidString.prefix(6)) AFTER capturedPreviewHeight=\(capturedPreviewHeight) editorHeight=\(editorHeight)")
     }
 
     private func applyEditorContent(_ content: BlockNoteEditorContent) {
