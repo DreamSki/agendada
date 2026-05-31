@@ -25,6 +25,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     private var window: NSWindow?
     private var measurementWindow: NSWindow?
     private let store = ObservableLibraryStore.load()
+    private let calendarStore = CalendarStore()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupMainMenu()
@@ -226,6 +227,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let contentView = ContentView()
             .environment(store)
+            .environment(calendarStore)
             .frame(minWidth: 1060, minHeight: 680)
 
         let window = NSWindow(

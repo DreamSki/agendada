@@ -187,6 +187,15 @@ final class ObservableLibraryStore {
         persistNow()
     }
 
+    /// Create a note and return its ID
+    @discardableResult
+    func addNoteReturningID(template: NoteTemplate = .blank) -> Note.ID {
+        let note = store.addNote(template: template)
+        publishChange()
+        persistNow()
+        return note.id
+    }
+
     func duplicateNote(_ noteID: Note.ID) {
         _ = store.duplicateNote(noteID)
         publishChange()
