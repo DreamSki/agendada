@@ -42,7 +42,7 @@ struct TimelineDateRow: View {
             // Date label — click for date actions
             Button(action: { showPopover = true }) {
                 Text(dateLabel)
-                    .font(.custom("Avenir Next Medium", size: 13))
+                    .font(.custom("Avenir Next", size: 13))
                     .foregroundStyle(isToday ? AgendaColor.amber : Color(red: 0.35, green: 0.35, blue: 0.35))
             }
             .buttonStyle(.plain)
@@ -96,7 +96,7 @@ struct TimelineDateRow: View {
     private var notePopover: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text("排期笔记")
-                .font(.custom("Avenir Next Medium", size: 12))
+                .font(.custom("Avenir Next", size: 12))
                 .foregroundStyle(AgendaColor.textMuted)
                 .padding(.horizontal, 12)
                 .padding(.top, 8)

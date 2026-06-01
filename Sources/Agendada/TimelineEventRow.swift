@@ -56,7 +56,7 @@ struct TimelineEventRow: View {
                 // "now" indicator for active events
                 if !event.isAllDay && isCurrentlyActive {
                     Text("现在")
-                        .font(.custom("Avenir Next Medium", size: 11))
+                        .font(.custom("Avenir Next", size: 11))
                         .foregroundStyle(AgendaColor.amber)
                 }
             }
@@ -85,7 +85,7 @@ struct TimelineEventRow: View {
         VStack(alignment: .leading, spacing: 0) {
             // Event title
             Text(event.title)
-                .font(.custom("Avenir Next Medium", size: 13))
+                .font(.custom("Avenir Next", size: 13))
                 .foregroundStyle(.primary)
                 .padding(.horizontal, 12)
                 .padding(.top, 8)

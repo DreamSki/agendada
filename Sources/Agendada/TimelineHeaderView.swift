@@ -104,7 +104,7 @@ struct TimelineHeaderView: View {
 
     private func sectionLabel(_ title: String) -> some View {
         Text(title)
-            .font(.custom("Avenir Next Medium", size: 11))
+            .font(.custom("Avenir Next", size: 11))
             .foregroundStyle(AgendaColor.textMuted)
             .padding(.horizontal, 12)
             .padding(.top, 6)

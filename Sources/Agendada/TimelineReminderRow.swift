@@ -87,7 +87,7 @@ struct TimelineReminderRow: View {
         VStack(alignment: .leading, spacing: 0) {
             // Title
             Text(reminder.title)
-                .font(.custom("Avenir Next Medium", size: 13))
+                .font(.custom("Avenir Next", size: 13))
                 .foregroundStyle(.primary)
                 .padding(.horizontal, 12)
                 .padding(.top, 8)

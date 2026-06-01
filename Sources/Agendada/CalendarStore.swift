@@ -77,14 +77,28 @@ final class CalendarStore {
     }
 
     func toggleSource(_ sourceID: String) {
-        // Toggle individual source: if selected, deselect; if not selected, select
-        if enabledSourceIDs.contains(sourceID) {
-            enabledSourceIDs.remove(sourceID)
+        if showAllSources {
+            // Currently showing all: clicking a source means "exclude this one"
+            showAllSources = false
+            enabledSourceIDs = Set(calendarSources.map { $0.id }.filter { $0 != sourceID })
         } else {
-            enabledSourceIDs.insert(sourceID)
+            // In filter mode: toggle this source
+            if enabledSourceIDs.contains(sourceID) {
+                enabledSourceIDs.remove(sourceID)
+                // If all sources are now selected, switch back to show all mode
+                if enabledSourceIDs.count == calendarSources.count {
+                    showAllSources = true
+                    enabledSourceIDs.removeAll()
+                }
+            } else {
+                enabledSourceIDs.insert(sourceID)
+                // If all sources are now selected, switch back to show all mode
+                if enabledSourceIDs.count == calendarSources.count {
+                    showAllSources = true
+                    enabledSourceIDs.removeAll()
+                }
+            }
         }
-        // Auto-switch to/from show all mode
-        showAllSources = enabledSourceIDs.isEmpty || enabledSourceIDs.count == calendarSources.count
         Task { await refresh() }
     }
 
@@ -93,8 +107,8 @@ final class CalendarStore {
     }
 
     func enableAllSources() {
-        // Toggle: if all selected, deselect all; if not all selected, select all
-        if showAllSources || enabledSourceIDs.count == calendarSources.count {
+        // Toggle: if showing all, deselect all; otherwise select all
+        if showAllSources {
             showAllSources = false
             enabledSourceIDs.removeAll()
         } else {
@@ -200,9 +214,26 @@ final class CalendarStore {
             dayMap[key]?.reminders.sort { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
         }
 
-        // Build sorted array — merge with existing data
-        let newSchedules = dayMap.values.sorted { $0.date < $1.date }
+        // Build sorted array — merge with existing data, preserving notes
+        var newSchedules = dayMap.values.sorted { $0.date < $1.date }
         let newDates = Set(newSchedules.map { $0.date })
+
+        // Preserve notes from existing schedules for dates in the new range
+        let existingNotesMap: [Date: [ScheduledNoteInfo]] = Dictionary(
+            uniqueKeysWithValues: daySchedules
+                .filter { newDates.contains($0.date) }
+                .map { ($0.date, $0.notes) }
+        )
+
+        // Merge notes into new schedules
+        for i in newSchedules.indices {
+            let date = newSchedules[i].date
+            if let existingNotes = existingNotesMap[date] {
+                newSchedules[i].notes = existingNotes
+            }
+        }
+
+        // Keep old dates outside the new range
         let keptOld = daySchedules.filter { !newDates.contains($0.date) }
         daySchedules = (keptOld + newSchedules).sorted { $0.date < $1.date }
     }

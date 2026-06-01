@@ -176,7 +176,7 @@ struct RelatedPanelContentView: View {
     private var permissionCard: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text("Agenda + 日历 + 提醒事项")
-                .font(.custom("Avenir Next Demi Bold", size: 13))
+                .font(.custom("Avenir Next", size: 13))
                 .foregroundStyle(.primary)
                 .padding(.bottom, 8)
 
@@ -199,7 +199,7 @@ struct RelatedPanelContentView: View {
                     }
                 }
                 .buttonStyle(.plain)
-                .font(.custom("Avenir Next Medium", size: 12))
+                .font(.custom("Avenir Next", size: 12))
                 .foregroundStyle(AgendaColor.amber)
             }
         }
@@ -214,7 +214,7 @@ struct RelatedPanelContentView: View {
     private var deniedView: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("日历访问被拒绝")
-                .font(.custom("Avenir Next Medium", size: 13))
+                .font(.custom("Avenir Next", size: 13))
                 .foregroundStyle(.primary)
 
             Text("您可以在系统设置中重新开启 Agendada 对日历和提醒事项的访问权限。")
@@ -228,7 +228,7 @@ struct RelatedPanelContentView: View {
                 }
             }
             .buttonStyle(.plain)
-            .font(.custom("Avenir Next Medium", size: 12))
+            .font(.custom("Avenir Next", size: 12))
             .foregroundStyle(AgendaColor.amber)
         }
         .padding(14)
@@ -272,7 +272,7 @@ struct RelatedPanelContentView: View {
 
                                     Text(note.title)
                                         .lineLimit(1)
-                                        .font(.custom("Avenir Next Medium", size: 13))
+                                        .font(.custom("Avenir Next", size: 13))
                                         .foregroundStyle(note.status == .open ? Color(red: 0.20, green: 0.20, blue: 0.20) : .secondary)
 
                                     Spacer(minLength: 0)
@@ -327,7 +327,7 @@ struct RelatedPanelContentView: View {
                                         VStack(alignment: .leading, spacing: 1) {
                                             Text(relatedNote.title)
                                                 .lineLimit(1)
-                                                .font(.custom("Avenir Next Medium", size: 13))
+                                                .font(.custom("Avenir Next", size: 13))
                                                 .foregroundStyle(Color(red: 0.25, green: 0.25, blue: 0.25))
 
                                             Text(relatedNote.reasons.joined(separator: " / "))
