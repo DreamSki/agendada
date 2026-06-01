@@ -1,4 +1,5 @@
 import AgendadaCore
+import AppKit
 import SwiftUI
 
 struct TimelineEventRow: View {
@@ -8,6 +9,8 @@ struct TimelineEventRow: View {
 
     @State private var showPopover = false
     @State private var isHovered = false
+    @State private var menuPresenter = AgendadaFloatingMenuPresenter()
+    @State private var menuDismissedAt = Date.distantPast
 
     private var calendarColor: Color {
         Color(
@@ -62,7 +65,7 @@ struct TimelineEventRow: View {
     }
 
     var body: some View {
-        Button(action: { showPopover = true }) {
+        Button(action: { toggleMenu() }) {
             HStack(spacing: 8) {
                 // Spine dot — calendar color
                 Circle()
@@ -123,12 +126,110 @@ struct TimelineEventRow: View {
         }
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
+            showPopover = false
+        }
+        .onChange(of: showPopover) { _, isPresented in
+            if !isPresented { menuDismissedAt = Date() }
+        }
         .popover(isPresented: $showPopover, arrowEdge: .trailing) {
-            eventPopover
+            AgendadaFloatingMenuView(sections: eventMenuSections(), presenter: menuPresenter, width: 330)
         }
     }
 
     // MARK: - Popover
+
+    private func toggleMenu() {
+        if showPopover {
+            showPopover = false
+            return
+        }
+        guard Date().timeIntervalSince(menuDismissedAt) > 0.18 else { return }
+
+        menuPresenter.configure(
+            dismiss: { showPopover = false },
+            showSubmenu: { _ in }
+        )
+        showPopover = true
+    }
+
+    private func eventMenuSections() -> [AgendadaFloatingMenuSection] {
+        let associatedNote = findAssociatedNote()
+        var firstItems: [AgendadaFloatingMenuItem] = []
+
+        if let note = associatedNote {
+            firstItems.append(
+                AgendadaFloatingMenuItem(
+                    iconSystemName: "arrow.forward.circle",
+                    title: "前往已关联的笔记",
+                    subtitle: "跳转至与该日程关联的笔记「\(note.title)」"
+                ) { _ in
+                    store.selectNote(note.id)
+                }
+            )
+        }
+
+        firstItems.append(
+            AgendadaFloatingMenuItem(
+                iconSystemName: "doc.badge.plus",
+                title: "新建与日程关联的新笔记",
+                subtitle: "在项目中新建笔记，并将笔记关联到此日程"
+            ) { _ in
+                createNoteWithEvent()
+            }
+        )
+
+        if let note = selectedNote {
+            firstItems.append(
+                AgendadaFloatingMenuItem(
+                    iconSystemName: "link.circle",
+                    title: "关联到所选笔记",
+                    subtitle: "关联所选笔记「\(note.title)」到此日程"
+                ) { _ in
+                    associateNoteToEvent(note)
+                }
+            )
+        }
+
+        var eventItems: [AgendadaFloatingMenuItem] = [
+            AgendadaFloatingMenuItem(
+                iconSystemName: "calendar.badge.clock",
+                title: "快捷重新安排",
+                subtitle: "快捷更改日程「\(event.title)」的开始时间"
+            ) { _ in },
+            AgendadaFloatingMenuItem(
+                iconSystemName: "pencil",
+                title: "编辑",
+                subtitle: "修改该日程的持续时间、标题、日期或其他属性"
+            ) { _ in
+                onOpenInCalendar?()
+            }
+        ]
+
+        if associatedNote != nil {
+            eventItems.append(
+                AgendadaFloatingMenuItem(
+                    iconSystemName: "link.badge.minus",
+                    title: "取消关联笔记",
+                    subtitle: "移除该日程与笔记的关联"
+                ) { _ in }
+            )
+        }
+
+        return [
+            AgendadaFloatingMenuSection(items: firstItems),
+            AgendadaFloatingMenuSection(items: eventItems),
+            AgendadaFloatingMenuSection(items: [
+                AgendadaFloatingMenuItem(
+                    iconSystemName: "calendar",
+                    title: "在「日历」中显示",
+                    subtitle: "在「日历」App 中打开该日程"
+                ) { _ in
+                    onOpenInCalendar?()
+                }
+            ])
+        ]
+    }
 
     private var eventPopover: some View {
         VStack(alignment: .leading, spacing: 4) {

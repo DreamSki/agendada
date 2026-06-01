@@ -1,4 +1,5 @@
 import AgendadaCore
+import AppKit
 import SwiftUI
 
 struct TimelineDateRow: View {
@@ -13,6 +14,10 @@ struct TimelineDateRow: View {
     @State private var showPopover = false
     @State private var showNotePopover = false
     @State private var isHovered = false
+    @State private var dateMenuPresenter = AgendadaFloatingMenuPresenter()
+    @State private var noteMenuPresenter = AgendadaFloatingMenuPresenter()
+    @State private var dateMenuDismissedAt = Date.distantPast
+    @State private var noteMenuDismissedAt = Date.distantPast
 
     private static let zhFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -50,18 +55,18 @@ struct TimelineDateRow: View {
                 .fill(isToday ? AgendaColor.amber : AgendaColor.panelHint.opacity(0.3))
                 .frame(width: isToday ? 7 : 5, height: isToday ? 7 : 5)
 
-            Button(action: { showPopover = true }) {
+            Button(action: { toggleDateMenu() }) {
                 Text(dateLabel)
                     .font(isToday ? AgendaFont.panelBodyMedium : AgendaFont.panelBody)
                     .foregroundStyle(isToday ? AgendaColor.amber : AgendaColor.panelSub)
             }
             .buttonStyle(.plain)
             .popover(isPresented: $showPopover, arrowEdge: .trailing) {
-                datePopover
+                AgendadaFloatingMenuView(sections: dateMenuSections(), presenter: dateMenuPresenter, width: 330)
             }
 
             if !notes.isEmpty {
-                Button(action: { showNotePopover = true }) {
+                Button(action: { toggleNoteMenu() }) {
                     HStack(spacing: 3) {
                         Image(systemName: "doc.text")
                             .font(.system(size: 10, weight: .regular))
@@ -72,7 +77,7 @@ struct TimelineDateRow: View {
                 }
                 .buttonStyle(.plain)
                 .popover(isPresented: $showNotePopover, arrowEdge: .trailing) {
-                    notePopover
+                    AgendadaFloatingMenuView(sections: noteMenuSections(), presenter: noteMenuPresenter, width: 220)
                 }
             }
 
@@ -87,6 +92,16 @@ struct TimelineDateRow: View {
                 .animation(.easeOut(duration: 0.2), value: isHovered)
         )
         .onHover { isHovered = $0 }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
+            showPopover = false
+            showNotePopover = false
+        }
+        .onChange(of: showPopover) { _, isPresented in
+            if !isPresented { dateMenuDismissedAt = Date() }
+        }
+        .onChange(of: showNotePopover) { _, isPresented in
+            if !isPresented { noteMenuDismissedAt = Date() }
+        }
         // Today: left amber bar at spine
         .overlay(alignment: .leading) {
             if isToday {
@@ -99,6 +114,33 @@ struct TimelineDateRow: View {
     }
 
     // MARK: - Note Popover
+
+    private func toggleNoteMenu() {
+        if showNotePopover {
+            showNotePopover = false
+            return
+        }
+        guard Date().timeIntervalSince(noteMenuDismissedAt) > 0.18 else { return }
+
+        noteMenuPresenter.configure(
+            dismiss: { showNotePopover = false },
+            showSubmenu: { _ in }
+        )
+        showNotePopover = true
+    }
+
+    private func noteMenuSections() -> [AgendadaFloatingMenuSection] {
+        [
+            AgendadaFloatingMenuSection(items: notes.map { note in
+                AgendadaFloatingMenuItem(
+                    iconSystemName: "doc.text",
+                    title: note.title
+                ) { _ in
+                    onSelectNote?(note.id)
+                }
+            })
+        ]
+    }
 
     private var notePopover: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -139,6 +181,69 @@ struct TimelineDateRow: View {
     }
 
     // MARK: - Date Popover
+
+    private func toggleDateMenu() {
+        if showPopover {
+            showPopover = false
+            return
+        }
+        guard Date().timeIntervalSince(dateMenuDismissedAt) > 0.18 else { return }
+
+        dateMenuPresenter.configure(
+            dismiss: { showPopover = false },
+            showSubmenu: { _ in }
+        )
+        showPopover = true
+    }
+
+    private func dateMenuSections() -> [AgendadaFloatingMenuSection] {
+        var sections: [AgendadaFloatingMenuSection] = []
+
+        if !notes.isEmpty {
+            sections.append(AgendadaFloatingMenuSection(items: [
+                AgendadaFloatingMenuItem(
+                    iconSystemName: "arrow.forward.circle",
+                    title: "前往被指定的笔记",
+                    subtitle: "跳转到指定于这天的笔记"
+                ) { _ in
+                    if let firstNote = notes.first {
+                        onSelectNote?(firstNote.id)
+                    }
+                }
+            ]))
+        }
+
+        var createItems: [AgendadaFloatingMenuItem] = []
+        if let onNew = onNewNote {
+            createItems.append(
+                AgendadaFloatingMenuItem(
+                    iconSystemName: "doc.badge.plus",
+                    title: "在这一天新建笔记",
+                    subtitle: "新建一条笔记，指定日期 \(fullDateString)"
+                ) { _ in
+                    onNew()
+                }
+            )
+        }
+
+        if let onNew = onNewEvent {
+            createItems.append(
+                AgendadaFloatingMenuItem(
+                    iconSystemName: "calendar.badge.plus",
+                    title: "新建日程",
+                    subtitle: "在「日历」App 中添加 \(fullDateString) 的日程"
+                ) { _ in
+                    onNew()
+                }
+            )
+        }
+
+        if !createItems.isEmpty {
+            sections.append(AgendadaFloatingMenuSection(items: createItems))
+        }
+
+        return sections
+    }
 
     private var datePopover: some View {
         VStack(alignment: .leading, spacing: 4) {

@@ -70,7 +70,7 @@ struct SidebarView: View {
             AgendaSidebarSectionLabel("概览")
                 .padding(.bottom, 6)
 
-            sidebarButton("简达", systemImage: "agenda.focus.dot", selection: .overview(.focused), tint: AgendaColor.amber)
+            sidebarButton("简达", systemImage: "smallcircle.fill.circle", selection: .overview(.brief), tint: AgendaColor.amber)
             sidebarButton(todayTitle, systemImage: "calendar", selection: .overview(.today), tint: Color(red: 0.29, green: 0.56, blue: 0.89))
             sidebarButton("待办事项", systemImage: "checkmark.circle", selection: .overview(.tasks), tint: Color(red: 0.96, green: 0.32, blue: 0.37))
             sidebarTrashButton

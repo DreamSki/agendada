@@ -300,12 +300,14 @@ public final class LibraryStore {
     @discardableResult
     public func addNote(title: String? = nil, date: Date? = Date(), template: NoteTemplate = .blank) -> Note {
         let targetProjectID = selectedProjectID ?? projects.first?.id ?? addProject(name: "默认项目").id
+        let normalizedTitle = normalizedName(title ?? template.defaultNoteTitle, fallback: template.defaultNoteTitle)
         let note = Note(
             projectID: targetProjectID,
-            title: normalizedName(title ?? template.defaultNoteTitle, fallback: template.defaultNoteTitle),
+            title: normalizedTitle,
             body: template.body,
             scheduledDate: date,
-            tags: template.defaultTags
+            tags: template.defaultTags,
+            isBrief: true  // 新创建的笔记默认是简达
         )
         notes.insert(note, at: 0)
         selectedProjectID = targetProjectID
@@ -333,7 +335,8 @@ public final class LibraryStore {
             isStarred: note.isStarred,
             isCollapsed: note.isCollapsed,
             noteColor: note.noteColor,
-            pinState: note.pinState
+            pinState: note.pinState,
+            isBrief: note.isBrief
         )
         notes.insert(copy, at: 0)
         selectedProjectID = copy.projectID
@@ -592,6 +595,12 @@ public final class LibraryStore {
         notes[index].editedAt = Date()
     }
 
+    public func setBrief(_ isBrief: Bool, noteID: Note.ID) {
+        guard let index = notes.firstIndex(where: { $0.id == noteID }) else { return }
+        notes[index].isBrief = isBrief
+        notes[index].editedAt = Date()
+    }
+
     public func scheduleToday(noteID: Note.ID, now: Date = Date()) {
         guard let index = notes.firstIndex(where: { $0.id == noteID }) else { return }
         notes[index].scheduledDate = Calendar.current.startOfDay(for: now)
@@ -708,6 +717,8 @@ public final class LibraryStore {
                     return note.isFocused
                 case .starred:
                     return note.isStarred
+                case .brief:
+                    return note.isBrief  // 简达概览显示标记为简达的笔记
                 case .all:
                     return true
                 case .trash:

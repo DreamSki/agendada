@@ -403,6 +403,12 @@ final class ObservableLibraryStore {
         persistSoon()
     }
 
+    func setBrief(_ isBrief: Bool, noteID: Note.ID) {
+        store.setBrief(isBrief, noteID: noteID)
+        publishChange()
+        persistSoon()
+    }
+
     func scheduleToday(noteID: Note.ID) {
         store.scheduleToday(noteID: noteID)
         publishChange()

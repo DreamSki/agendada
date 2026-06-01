@@ -1,5 +1,28 @@
-import AppKit
 import SwiftUI
+
+private struct FloatingMenuHeightPreferenceKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
+private extension View {
+    func readFloatingMenuHeight(_ onChange: @escaping (CGFloat) -> Void) -> some View {
+        background(
+            GeometryReader { proxy in
+                Color.clear.preference(
+                    key: FloatingMenuHeightPreferenceKey.self,
+                    value: proxy.size.height
+                )
+            }
+        )
+        .onPreferenceChange(FloatingMenuHeightPreferenceKey.self) { height in
+            onChange(height)
+        }
+    }
+}
 
 struct AgendadaFloatingMenuSection: Identifiable {
     let id = UUID()
@@ -12,12 +35,20 @@ struct AgendadaFloatingMenuItem: Identifiable {
         case destructive
     }
 
+    enum IconStyle {
+        case systemImage(String)
+        case colorCircle(Color?)
+        case text(String)
+        case empty
+    }
+
     let id = UUID()
-    var iconSystemName: String
+    var iconStyle: IconStyle
     var title: String
     var subtitle: String?
     var role: Role = .normal
     var isEnabled = true
+    var isHeader = false
     var showsSubmenuIndicator = false
     var dismissesAfterAction = true
     var action: @MainActor (AgendadaFloatingMenuPresenter) -> Void
@@ -28,15 +59,82 @@ struct AgendadaFloatingMenuItem: Identifiable {
         subtitle: String? = nil,
         role: Role = .normal,
         isEnabled: Bool = true,
+        isHeader: Bool = false,
         showsSubmenuIndicator: Bool = false,
         dismissesAfterAction: Bool = true,
         action: @escaping @MainActor (AgendadaFloatingMenuPresenter) -> Void
     ) {
-        self.iconSystemName = iconSystemName
+        self.iconStyle = .systemImage(iconSystemName)
         self.title = title
         self.subtitle = subtitle
         self.role = role
         self.isEnabled = isEnabled
+        self.isHeader = isHeader
+        self.showsSubmenuIndicator = showsSubmenuIndicator
+        self.dismissesAfterAction = dismissesAfterAction
+        self.action = action
+    }
+
+    init(
+        iconColor: Color?,
+        title: String,
+        subtitle: String? = nil,
+        role: Role = .normal,
+        isEnabled: Bool = true,
+        isHeader: Bool = false,
+        showsSubmenuIndicator: Bool = false,
+        dismissesAfterAction: Bool = true,
+        action: @escaping @MainActor (AgendadaFloatingMenuPresenter) -> Void
+    ) {
+        self.iconStyle = .colorCircle(iconColor)
+        self.title = title
+        self.subtitle = subtitle
+        self.role = role
+        self.isEnabled = isEnabled
+        self.isHeader = isHeader
+        self.showsSubmenuIndicator = showsSubmenuIndicator
+        self.dismissesAfterAction = dismissesAfterAction
+        self.action = action
+    }
+
+    init(
+        iconText: String,
+        title: String,
+        subtitle: String? = nil,
+        role: Role = .normal,
+        isEnabled: Bool = true,
+        isHeader: Bool = false,
+        showsSubmenuIndicator: Bool = false,
+        dismissesAfterAction: Bool = true,
+        action: @escaping @MainActor (AgendadaFloatingMenuPresenter) -> Void
+    ) {
+        self.iconStyle = .text(iconText)
+        self.title = title
+        self.subtitle = subtitle
+        self.role = role
+        self.isEnabled = isEnabled
+        self.isHeader = isHeader
+        self.showsSubmenuIndicator = showsSubmenuIndicator
+        self.dismissesAfterAction = dismissesAfterAction
+        self.action = action
+    }
+
+    init(
+        title: String,
+        subtitle: String? = nil,
+        role: Role = .normal,
+        isEnabled: Bool = true,
+        isHeader: Bool = false,
+        showsSubmenuIndicator: Bool = false,
+        dismissesAfterAction: Bool = true,
+        action: @escaping @MainActor (AgendadaFloatingMenuPresenter) -> Void
+    ) {
+        self.iconStyle = .empty
+        self.title = title
+        self.subtitle = subtitle
+        self.role = role
+        self.isEnabled = isEnabled
+        self.isHeader = isHeader
         self.showsSubmenuIndicator = showsSubmenuIndicator
         self.dismissesAfterAction = dismissesAfterAction
         self.action = action
@@ -44,42 +142,122 @@ struct AgendadaFloatingMenuItem: Identifiable {
 }
 
 @MainActor
-final class AgendadaFloatingMenuPresenter {
+final class AgendadaFloatingMenuPresenter: ObservableObject {
     private var dismissHandler: (() -> Void)?
     private var showSubmenuHandler: (([AgendadaFloatingMenuSection]) -> Void)?
+    private var popToRootHandler: (() -> Void)?
+    private var titleStack: [String?] = []
+
+    // Menu stack for navigation
+    @Published private(set) var menuStack: [[AgendadaFloatingMenuSection]] = []
+    @Published private(set) var currentSections: [AgendadaFloatingMenuSection] = []
+    @Published private(set) var currentBackTitle: String?
+
+    var isInSubmenu: Bool {
+        !menuStack.isEmpty
+    }
 
     func configure(
         dismiss: @escaping () -> Void,
-        showSubmenu: @escaping ([AgendadaFloatingMenuSection]) -> Void
+        showSubmenu: @escaping ([AgendadaFloatingMenuSection]) -> Void,
+        popToRoot: @escaping () -> Void = {}
     ) {
         dismissHandler = dismiss
         showSubmenuHandler = showSubmenu
+        popToRootHandler = popToRoot
     }
 
-    func showSubmenu(sections: [AgendadaFloatingMenuSection]) {
+    func reset() {
+        menuStack.removeAll()
+        titleStack.removeAll()
+        currentSections = []
+        currentBackTitle = nil
+    }
+
+    func setRootSections(_ sections: [AgendadaFloatingMenuSection]) {
+        menuStack.removeAll()
+        titleStack.removeAll()
+        currentSections = sections
+        currentBackTitle = nil
+    }
+
+    func showSubmenu(sections: [AgendadaFloatingMenuSection], title: String? = nil) {
+        // Push current sections to stack before showing submenu
+        if !currentSections.isEmpty {
+            menuStack.append(currentSections)
+            titleStack.append(currentBackTitle)
+        }
+        currentSections = sections
+        currentBackTitle = title
         showSubmenuHandler?(sections)
     }
 
+    func popToRoot() {
+        guard let rootSections = menuStack.first else { return }
+        menuStack.removeAll()
+        titleStack.removeAll()
+        currentSections = rootSections
+        currentBackTitle = nil
+        popToRootHandler?()
+    }
+
+    func goBack() {
+        guard !menuStack.isEmpty else {
+            dismiss()
+            return
+        }
+        currentSections = menuStack.removeLast()
+        currentBackTitle = titleStack.isEmpty ? nil : titleStack.removeLast()
+        showSubmenuHandler?(currentSections)
+    }
+
     func dismiss() {
+        // Reset menu state when dismissing to ensure clean state on next open
+        menuStack.removeAll()
+        titleStack.removeAll()
+        currentSections = []
+        currentBackTitle = nil
         dismissHandler?()
     }
 }
 
 struct AgendadaFloatingMenuView: View {
     let sections: [AgendadaFloatingMenuSection]
-    let presenter: AgendadaFloatingMenuPresenter
+    @ObservedObject var presenter: AgendadaFloatingMenuPresenter
+    let width: CGFloat
+    var showBackButton: Bool = true
+    var backTitle: String?
+    @State private var rootContentHeight: CGFloat = 0
+    @State private var currentContentHeight: CGFloat = 0
 
     private let cornerRadius: CGFloat = 16
 
+    init(
+        sections: [AgendadaFloatingMenuSection],
+        presenter: AgendadaFloatingMenuPresenter,
+        width: CGFloat = 214,
+        showBackButton: Bool = true,
+        backTitle: String? = nil
+    ) {
+        self.sections = sections
+        self.presenter = presenter
+        self.width = width
+        self.showBackButton = showBackButton
+        self.backTitle = backTitle
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            ForEach(Array(sections.enumerated()), id: \.element.id) { index, section in
-                if index > 0 {
-                    Rectangle()
-                        .fill(Color.black.opacity(0.04))
-                        .frame(height: 1)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 4)
+            // Back button (shown in submenus)
+            if showBackButton && presenter.isInSubmenu {
+                backButton
+                divider
+            }
+
+            // Menu items
+            ForEach(Array(visibleSections.enumerated()), id: \.element.id) { index, section in
+                if index > 0 || (showBackButton && presenter.isInSubmenu) {
+                    divider
                 }
 
                 ForEach(section.items) { item in
@@ -88,49 +266,60 @@ struct AgendadaFloatingMenuView: View {
             }
         }
         .padding(.vertical, 5)
-        .frame(width: 214)
-        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-        .background {
-            ZStack {
-                AgendadaClearPopoverHost()
-
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(Color.white.opacity(0.18))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                            .stroke(Color.black.opacity(0.10), lineWidth: 0.6)
-                    }
-                    .shadow(color: .black.opacity(0.12), radius: 18, x: 0, y: 10)
-                    .shadow(color: .black.opacity(0.05), radius: 3, x: 0, y: 1)
+        .readFloatingMenuHeight { height in
+            currentContentHeight = height
+            if !presenter.isInSubmenu {
+                rootContentHeight = height
             }
         }
-        .fixedSize()
-    }
-}
-
-private struct AgendadaClearPopoverHost: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView {
-        let view = NSView()
-        view.wantsLayer = true
-        view.layer?.backgroundColor = NSColor.clear.cgColor
-        DispatchQueue.main.async {
-            clearPopoverWindow(from: view)
-        }
-        return view
-    }
-
-    func updateNSView(_ view: NSView, context: Context) {
-        view.layer?.backgroundColor = NSColor.clear.cgColor
-        DispatchQueue.main.async {
-            clearPopoverWindow(from: view)
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(width: width)
+        .frame(height: reservedHeight == 0 ? nil : reservedHeight, alignment: .top)
+        .agendadaGlassPopover(cornerRadius: cornerRadius)
+        .onAppear {
+            presenter.setRootSections(sections)
         }
     }
 
-    private func clearPopoverWindow(from view: NSView) {
-        guard let window = view.window else { return }
-        window.backgroundColor = .clear
-        window.isOpaque = false
-        window.hasShadow = false
+    private var visibleSections: [AgendadaFloatingMenuSection] {
+        presenter.currentSections.isEmpty ? sections : presenter.currentSections
+    }
+
+    private var reservedHeight: CGFloat {
+        max(rootContentHeight, currentContentHeight)
+    }
+
+    private var backButton: some View {
+        Button {
+            presenter.goBack()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(AgendaColor.textMuted)
+                Text(backTitle ?? presenter.currentBackTitle ?? "返回")
+                    .font(.custom("Avenir Next", size: 13))
+                    .foregroundStyle(Color(red: 0.08, green: 0.08, blue: 0.09))
+            }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(Color.white.opacity(0.08))
+            )
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 2)
+    }
+
+    private var divider: some View {
+        Rectangle()
+            .fill(Color.black.opacity(0.04))
+            .frame(height: 1)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
     }
 }
 
@@ -140,6 +329,7 @@ private struct AgendadaFloatingMenuRow: View {
     @State private var isHovering = false
 
     private var foregroundColor: Color {
+        if item.isHeader { return Color(red: 0.08, green: 0.08, blue: 0.09) }
         if !item.isEnabled { return AgendaColor.textMuted }
         if item.role == .destructive { return .red }
         return Color(red: 0.08, green: 0.08, blue: 0.09)
@@ -147,24 +337,31 @@ private struct AgendadaFloatingMenuRow: View {
 
     var body: some View {
         Button {
-            guard item.isEnabled else { return }
+            guard item.isEnabled, !item.isHeader else { return }
             item.action(presenter)
             if item.dismissesAfterAction {
                 presenter.dismiss()
             }
         } label: {
             HStack(alignment: .center, spacing: 8) {
-                Image(systemName: item.iconSystemName)
-                    .font(.system(size: 13, weight: .semibold))
-                    .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(item.role == .destructive ? .red : AgendaColor.amber)
+                iconView
                     .frame(width: 18, height: 18)
                     .opacity(item.isEnabled ? 1 : 0.55)
 
-                Text(item.title)
-                    .font(.custom("Avenir Next", size: 13))
-                    .foregroundStyle(foregroundColor)
-                    .lineLimit(1)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(item.title)
+                        .font(.custom(item.isHeader ? "Avenir Next Demi Bold" : "Avenir Next", size: 13))
+                        .foregroundStyle(foregroundColor)
+                        .lineLimit(1)
+
+                    if let subtitle = item.subtitle {
+                        Text(subtitle)
+                            .font(.custom("Avenir Next", size: 11))
+                            .foregroundStyle(AgendaColor.textMuted)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
 
                 if item.showsSubmenuIndicator {
                     Spacer(minLength: 4)
@@ -174,11 +371,11 @@ private struct AgendadaFloatingMenuRow: View {
                 }
             }
             .padding(.horizontal, 9)
-            .padding(.vertical, 5)
+            .padding(.vertical, item.subtitle == nil ? 5 : 7)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(isHovering && item.isEnabled ? Color.white.opacity(0.18) : .clear)
+                    .fill(isHovering && item.isEnabled && !item.isHeader ? Color.white.opacity(0.18) : .clear)
             )
             .contentShape(Rectangle())
         }
@@ -186,15 +383,34 @@ private struct AgendadaFloatingMenuRow: View {
         .disabled(!item.isEnabled)
         .onHover { isHovering = $0 }
     }
-}
 
-private struct AgendadaFloatingMenuArrow: Shape {
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        path.move(to: CGPoint(x: rect.maxX, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.minX, y: rect.midY))
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
-        path.closeSubpath()
-        return path
+    @ViewBuilder
+    private var iconView: some View {
+        switch item.iconStyle {
+        case .systemImage(let name):
+            Image(systemName: name)
+                .font(.system(size: 13, weight: .semibold))
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(item.role == .destructive ? .red : AgendaColor.amber)
+        case .colorCircle(let color):
+            if let color = color {
+                Circle()
+                    .fill(color)
+                    .frame(width: 14, height: 14)
+                    .overlay(Circle().stroke(Color.white.opacity(0.3), lineWidth: 0.5))
+            } else {
+                Image(systemName: "xmark.circle")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(AgendaColor.textMuted)
+            }
+        case .text(let text):
+            Text(text)
+                .font(.custom("Avenir Next Demi Bold", size: text.count > 2 ? 8 : 10))
+                .foregroundStyle(AgendaColor.amber)
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+        case .empty:
+            Color.clear
+        }
     }
 }

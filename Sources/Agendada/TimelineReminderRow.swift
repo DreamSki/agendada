@@ -1,4 +1,5 @@
 import AgendadaCore
+import AppKit
 import SwiftUI
 
 struct TimelineReminderRow: View {
@@ -8,6 +9,8 @@ struct TimelineReminderRow: View {
 
     @State private var showPopover = false
     @State private var isHovered = false
+    @State private var menuPresenter = AgendadaFloatingMenuPresenter()
+    @State private var menuDismissedAt = Date.distantPast
 
     init(reminder: CalendarReminder) {
         self.reminder = reminder
@@ -62,7 +65,7 @@ struct TimelineReminderRow: View {
                 .strikethrough(reminder.isCompleted, color: AgendaColor.panelHint)
                 .lineLimit(1)
                 .contentShape(Rectangle())
-                .onTapGesture { showPopover = true }
+                .onTapGesture { toggleMenu() }
 
             Spacer()
         }
@@ -83,8 +86,14 @@ struct TimelineReminderRow: View {
         }
         .onHover { isHovered = $0 }
         .animation(.easeOut(duration: 0.2), value: isHovered)
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
+            showPopover = false
+        }
+        .onChange(of: showPopover) { _, isPresented in
+            if !isPresented { menuDismissedAt = Date() }
+        }
         .popover(isPresented: $showPopover, arrowEdge: .trailing) {
-            reminderPopover
+            AgendadaFloatingMenuView(sections: reminderMenuSections(), presenter: menuPresenter, width: 330)
         }
     }
 
@@ -95,6 +104,71 @@ struct TimelineReminderRow: View {
     }
 
     // MARK: - Popover
+
+    private func toggleMenu() {
+        if showPopover {
+            showPopover = false
+            return
+        }
+        guard Date().timeIntervalSince(menuDismissedAt) > 0.18 else { return }
+
+        menuPresenter.configure(
+            dismiss: { showPopover = false },
+            showSubmenu: { _ in }
+        )
+        showPopover = true
+    }
+
+    private func reminderMenuSections() -> [AgendadaFloatingMenuSection] {
+        var firstItems = [
+            AgendadaFloatingMenuItem(
+                iconSystemName: "doc.badge.plus",
+                title: "新建带有提醒事项的笔记",
+                subtitle: "在项目中新建包含此提醒事项的笔记"
+            ) { _ in
+                _ = store.addNoteReturningID()
+            }
+        ]
+
+        if let note = selectedNote {
+            firstItems.append(
+                AgendadaFloatingMenuItem(
+                    iconSystemName: "plus.circle",
+                    title: "添加至所选笔记",
+                    subtitle: "将该提醒事项添加至所选笔记「\(note.title)」"
+                ) { _ in }
+            )
+        }
+
+        return [
+            AgendadaFloatingMenuSection(items: firstItems),
+            AgendadaFloatingMenuSection(items: [
+                AgendadaFloatingMenuItem(
+                    iconSystemName: reminder.isCompleted ? "arrow.uturn.backward" : "checkmark.circle",
+                    title: reminder.isCompleted ? "标记为未完成" : "标记为已完成",
+                    subtitle: reminder.isCompleted ? "重新显示此提醒事项" : "已完成的提醒事项将不再出现于时间轴上"
+                ) { _ in
+                    toggleCompletion()
+                },
+                AgendadaFloatingMenuItem(
+                    iconSystemName: "pencil",
+                    title: "编辑",
+                    subtitle: "修改该提醒事项的标题、截止日期或其他属性"
+                ) { _ in
+                    calendarStore.openReminderInReminders(reminder.id)
+                }
+            ]),
+            AgendadaFloatingMenuSection(items: [
+                AgendadaFloatingMenuItem(
+                    iconSystemName: "list.bullet.rectangle",
+                    title: "在「提醒事项」中显示",
+                    subtitle: "打开「提醒事项」App 并跳转到「\(reminder.title)」"
+                ) { _ in
+                    calendarStore.openReminderInReminders(reminder.id)
+                }
+            ])
+        ]
+    }
 
     private var reminderPopover: some View {
         VStack(alignment: .leading, spacing: 4) {

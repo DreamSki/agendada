@@ -1,4 +1,5 @@
 import AgendadaCore
+import AppKit
 import SwiftUI
 
 // MARK: - Scroll Position Tracking
@@ -28,6 +29,8 @@ struct RelatedPanelContentView: View {
     @State private var initialScrollDone = false
     @State private var savedFocusedDate: Date?
     @State private var showFilterPopover = false
+    @State private var filterMenuPresenter = AgendadaFloatingMenuPresenter()
+    @State private var filterMenuDismissedAt = Date.distantPast
 
     private var focusedMonth: String {
         CalendarStore.formatMonth(focusedMonthDate)
@@ -275,7 +278,7 @@ struct RelatedPanelContentView: View {
                 .foregroundStyle(AgendaColor.panelHeading)
 
             Button {
-                showFilterPopover = true
+                toggleFilterMenu()
             } label: {
                 Image(systemName: "line.3.horizontal.decrease.circle")
                     .font(.system(size: 14, weight: .regular))
@@ -283,7 +286,15 @@ struct RelatedPanelContentView: View {
             }
             .buttonStyle(.plain)
             .popover(isPresented: $showFilterPopover, arrowEdge: .bottom) {
-                filterPopover
+                AgendadaFloatingMenuView(sections: filterMenuSections(), presenter: filterMenuPresenter, width: 220)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
+                showFilterPopover = false
+            }
+            .onChange(of: showFilterPopover) { _, isPresented in
+                if !isPresented {
+                    filterMenuDismissedAt = Date()
+                }
             }
 
             Spacer()
@@ -575,6 +586,62 @@ struct RelatedPanelContentView: View {
     }
 
     // MARK: - Filter Popover
+
+    private func toggleFilterMenu() {
+        if showFilterPopover {
+            showFilterPopover = false
+            return
+        }
+        guard Date().timeIntervalSince(filterMenuDismissedAt) > 0.18 else { return }
+
+        filterMenuPresenter.configure(
+            dismiss: { showFilterPopover = false },
+            showSubmenu: { _ in }
+        )
+        showFilterPopover = true
+    }
+
+    private func filterMenuSections() -> [AgendadaFloatingMenuSection] {
+        let allSection = AgendadaFloatingMenuSection(items: [
+            AgendadaFloatingMenuItem(
+                iconSystemName: calendarStore.isAllSourcesEnabled ? "checkmark.square" : "square",
+                title: "全部显示",
+                dismissesAfterAction: false
+            ) { _ in
+                calendarStore.toggleAllSources()
+            }
+        ])
+
+        let eventSources = calendarStore.calendarSources.filter { $0.type == .event }
+        let reminderSources = calendarStore.calendarSources.filter { $0.type == .reminder }
+        var sections = [allSection]
+
+        if !eventSources.isEmpty {
+            sections.append(AgendadaFloatingMenuSection(items: eventSources.map { source in
+                sourceMenuItem(source, fallbackIcon: "calendar")
+            }))
+        }
+
+        if !reminderSources.isEmpty {
+            sections.append(AgendadaFloatingMenuSection(items: reminderSources.map { source in
+                sourceMenuItem(source, fallbackIcon: "list.bullet.rectangle")
+            }))
+        }
+
+        return sections
+    }
+
+    private func sourceMenuItem(_ source: CalendarSource, fallbackIcon: String) -> AgendadaFloatingMenuItem {
+        let isEnabled = calendarStore.showAllSources || calendarStore.enabledSourceIDs.contains(source.id)
+        return AgendadaFloatingMenuItem(
+            iconSystemName: isEnabled ? "checkmark.square" : fallbackIcon,
+            title: source.title,
+            subtitle: source.accountTitle,
+            dismissesAfterAction: false
+        ) { _ in
+            calendarStore.toggleSource(source.id)
+        }
+    }
 
     private var filterPopover: some View {
         VStack(alignment: .leading, spacing: 0) {

@@ -62,6 +62,7 @@ public struct Note: Identifiable, Hashable, Codable {
     public var isCollapsed: Bool
     public var noteColor: NoteColor?
     public var pinState: PinState
+    public var isBrief: Bool
     public var createdAt: Date
     public var editedAt: Date
 
@@ -82,6 +83,7 @@ public struct Note: Identifiable, Hashable, Codable {
         isCollapsed: Bool = false,
         noteColor: NoteColor? = nil,
         pinState: PinState = .none,
+        isBrief: Bool = false,
         createdAt: Date = Date(),
         editedAt: Date = Date()
     ) {
@@ -101,6 +103,7 @@ public struct Note: Identifiable, Hashable, Codable {
         self.isCollapsed = isCollapsed
         self.noteColor = noteColor
         self.pinState = pinState
+        self.isBrief = isBrief
         self.createdAt = createdAt
         self.editedAt = editedAt
     }
@@ -146,6 +149,7 @@ public struct Note: Identifiable, Hashable, Codable {
         case isCollapsed
         case noteColor
         case pinState
+        case isBrief
         case createdAt
         case editedAt
     }
@@ -170,6 +174,7 @@ public struct Note: Identifiable, Hashable, Codable {
         isCollapsed = try container.decodeIfPresent(Bool.self, forKey: .isCollapsed) ?? false
         noteColor = try container.decodeIfPresent(NoteColor.self, forKey: .noteColor)
         pinState = try container.decodeIfPresent(PinState.self, forKey: .pinState) ?? .none
+        isBrief = try container.decodeIfPresent(Bool.self, forKey: .isBrief) ?? false
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
         editedAt = try container.decodeIfPresent(Date.self, forKey: .editedAt) ?? createdAt
     }
@@ -263,7 +268,7 @@ public enum NoteStatus: String, CaseIterable, Codable, Hashable {
 }
 
 public enum Overview: String, CaseIterable, Codable, Identifiable {
-    case today, tasks, upcoming, focused, starred, all, trash
+    case today, tasks, upcoming, focused, starred, brief, all, trash
     public var id: String { rawValue }
     public var title: String {
         switch self {
@@ -272,6 +277,7 @@ public enum Overview: String, CaseIterable, Codable, Identifiable {
         case .upcoming: "即将到来"
         case .focused: "当前关注"
         case .starred: "已标星"
+        case .brief: "简达"
         case .all: "全部笔记"
         case .trash: "废纸篓"
         }

@@ -60,9 +60,13 @@ struct NoteStreamView: View {
     private var headerActions: some View {
         HStack(spacing: 12) {
             HStack(spacing: 4) {
-                CapsuleIconPopoverButton(systemName: "line.3.horizontal.decrease", help: "排序方式", isPresented: $showSortPopover, popoverContent: {
-                    sortPopoverContent(store: store, showSortPopover: $showSortPopover)
-                })
+                CapsuleIconFloatingMenuButton(
+                    systemName: "line.3.horizontal.decrease",
+                    help: "排序方式",
+                    isPresented: $showSortPopover,
+                    width: 190,
+                    sections: { sortFloatingMenuSections(store: store) }
+                )
                 CapsuleIconButton(systemName: "sparkles", help: "复制摘要", action: {
                     copyToPasteboard(store.summaryForFilteredNotes())
                 })
@@ -107,28 +111,15 @@ struct NoteStreamView: View {
                         store.batchDeleteNotes(store.batchSelectedNoteIDs)
                     })
                     if !store.projects.isEmpty {
-                        CapsuleIconButton(systemName: "chevron.right", help: "移动到项目", hoverEffect: .scale, action: {
-                            showMoveMenu = true
+                    CapsuleIconButton(systemName: "chevron.right", help: "移动到项目", hoverEffect: .scale, action: {
+                            showMoveMenu.toggle()
                         })
                         .popover(isPresented: $showMoveMenu, arrowEdge: .bottom) {
-                            VStack(alignment: .leading, spacing: 0) {
-                                ForEach(store.projects) { project in
-                                    Button {
-                                        store.moveNotes(store.batchSelectedNoteIDs, toProject: project.id)
-                                        showMoveMenu = false
-                                    } label: {
-                                        HStack {
-                                            Text(project.name)
-                                            Spacer()
-                                        }
-                                        .padding(.horizontal, 12).padding(.vertical, 7)
-                                    }
-                                    .buttonStyle(.plain)
-                                }
-                            }
-                            .font(.custom("Avenir Next", size: 13))
-                            .padding(.vertical, 4)
-                            .frame(width: 180)
+                            AgendadaFloatingMenuView(
+                                sections: batchMoveFloatingMenuSections(store: store, showMoveMenu: $showMoveMenu),
+                                presenter: AgendadaFloatingMenuPresenter(),
+                                width: 190
+                            )
                         }
                     }
                 }
@@ -174,6 +165,7 @@ struct NoteStreamView: View {
             .font(.custom("Avenir Next", size: 13))
             .padding(.vertical, 4)
             .frame(width: 180)
+            .agendadaGlassPopover()
         }
     }
 
@@ -204,7 +196,7 @@ struct NoteStreamView: View {
                 .padding(.horizontal, 10).padding(.vertical, 8)
             }
             .frame(width: 300)
-            .background(.regularMaterial)
+            .agendadaGlassPopover()
         }
     }
 
@@ -414,11 +406,16 @@ private struct StreamNoteRow: View {
     @State private var initialBlockJSON: Data?
     @State private var skipNextCardTap = false
     @State private var showDatePicker = false
+    @State private var datePickerDismissedAt = Date.distantPast
     @State private var showBulletMenu = false
     @State private var bulletMenuSections: [AgendadaFloatingMenuSection] = []
     @State private var bulletMenuPresenter = AgendadaFloatingMenuPresenter()
     @State private var bulletMenuDismissedAt = Date.distantPast
     @State private var showSettingsPopover = false
+    @State private var settingsMenuOpenPending = false
+    @State private var settingsMenuDismissedAt = Date.distantPast
+    @State private var settingsMenuSections: [AgendadaFloatingMenuSection] = []
+    @State private var settingsMenuPresenter = AgendadaFloatingMenuPresenter()
 
     init(note: Note) {
         self.note = note
@@ -430,54 +427,70 @@ private struct StreamNoteRow: View {
     private var isSelected: Bool { store.selectedNoteID == note.id }
     private let bulletCol: CGFloat = 24
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .top, spacing: 10) {
-                bulletIcon.frame(width: bulletCol, alignment: .leading).padding(.top, 1)
-                HStack(alignment: .firstTextBaseline) {
-                    AgendadaCardTitle(
-                        title: note.title,
-                        draftTitle: $draft.title,
-                        isSelected: isSelected,
-                        isDimmed: isNoteDimmed
-                    )
-                    Spacer(minLength: 8)
-                    if !dateLabel.isEmpty {
-                        Button { showDatePicker = true } label: {
-                            Text(dateLabel)
-                                .font(.custom(dateFontName, size: 13))
-                                .foregroundStyle(dateColor)
-                        }
-                        .buttonStyle(.plain)
-                        .popover(isPresented: $showDatePicker, attachmentAnchor: .point(.bottom), arrowEdge: .bottom) {
-                            DateAgendaPanelView(noteID: note.id) {
-                                if let updated = store.note(withID: note.id) {
-                                    draft = StreamNoteDraft(note: updated)
-                                    initialDraft = draft
-                                }
-                                showDatePicker = false
-                            }
-                        }
-                    } else if isSelected {
-                        Button { showDatePicker = true } label: {
-                            Image(systemName: "calendar")
-                                .font(.system(size: 13))
-                                .foregroundStyle(AgendaColor.textMuted)
-                        }
-                        .buttonStyle(.plain)
-                        .popover(isPresented: $showDatePicker, attachmentAnchor: .point(.bottom), arrowEdge: .bottom) {
-                            DateAgendaPanelView(noteID: note.id) {
-                                if let updated = store.note(withID: note.id) {
-                                    draft = StreamNoteDraft(note: updated)
-                                    initialDraft = draft
-                                }
-                                showDatePicker = false
-                            }
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
+    private var datePickerPanel: some View {
+        DateAgendaPanelView(noteID: note.id) {
+            if let updated = store.note(withID: note.id) {
+                draft = StreamNoteDraft(note: updated)
+                initialDraft = draft
             }
+            showDatePicker = false
+        }
+        .agendadaGlassPopover(cornerRadius: 18)
+    }
+
+    private var settingsPopoverContent: some View {
+        AgendadaFloatingMenuView(
+            sections: settingsMenuSections.isEmpty ? settingsFloatingMenuSections() : settingsMenuSections,
+            presenter: settingsMenuPresenter,
+            width: 214
+        )
+    }
+
+    private var headerRow: some View {
+        HStack(alignment: .top, spacing: 10) {
+            bulletIcon.frame(width: bulletCol, alignment: .leading).padding(.top, 1)
+            HStack(alignment: .firstTextBaseline) {
+                AgendadaCardTitle(
+                    title: note.title,
+                    draftTitle: $draft.title,
+                    isSelected: isSelected,
+                    isDimmed: isNoteDimmed
+                )
+                Spacer(minLength: 8)
+                dateControl
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var dateControl: some View {
+        if !dateLabel.isEmpty {
+            Button { toggleDatePicker() } label: {
+                Text(dateLabel)
+                    .font(.custom(dateFontName, size: 13))
+                    .foregroundStyle(dateColor)
+            }
+            .buttonStyle(.plain)
+            .popover(isPresented: $showDatePicker, attachmentAnchor: .point(.bottom), arrowEdge: .bottom) {
+                datePickerPanel
+            }
+        } else if isSelected {
+            Button { toggleDatePicker() } label: {
+                Image(systemName: "calendar")
+                    .font(.system(size: 13))
+                    .foregroundStyle(AgendaColor.textMuted)
+            }
+            .buttonStyle(.plain)
+            .popover(isPresented: $showDatePicker, attachmentAnchor: .point(.bottom), arrowEdge: .bottom) {
+                datePickerPanel
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private var cardBase: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            headerRow
             bodyContent.padding(.top, 6)
             }
         .padding(.horizontal, 20).padding(.vertical, 16).frame(maxWidth: .infinity)
@@ -510,17 +523,28 @@ private struct StreamNoteRow: View {
         .shadow(color: isSelected ? .black.opacity(0.04) : .clear, radius: 4, x: 0, y: 2)
         .padding(.horizontal, 20).contentShape(Rectangle())
         .contextMenu { contextMenuContent }
+    }
+
+    var body: some View {
+        cardBase
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
+            showDatePicker = false
+            settingsMenuOpenPending = false
+            showSettingsPopover = false
+        }
+        .onChange(of: showDatePicker) { _, isPresented in
+            if !isPresented {
+                datePickerDismissedAt = Date()
+            }
+        }
+        .onChange(of: showSettingsPopover) { _, isPresented in
+            if !isPresented {
+                settingsMenuDismissedAt = Date()
+            }
+        }
         .onHover { isHovering = $0 }
         .onTapGesture {
-            if skipNextCardTap {
-                skipNextCardTap = false
-                return
-            }
-            if store.isInBatchMode {
-                store.toggleBatchSelection(noteID: note.id)
-            } else if store.selectedOverview != .trash {
-                selectNoteAfterSavingActiveEditor()
-            }
+            handleCardTap()
         }
         .onChange(of: draft.title) { scheduleSaveDraft() }
         .onChange(of: draft.hasScheduledDate) { scheduleSaveDraft() }
@@ -597,6 +621,8 @@ private struct StreamNoteRow: View {
         let color = noteColorValue(note.noteColor)
         let inBatch = store.isInBatchMode
         let isBatchSelected = store.batchSelectedNoteIDs.contains(note.id)
+        let isCompleted = note.status == .completed
+        let isBrief = note.isBrief
 
         return ZStack {
             if inBatch {
@@ -605,16 +631,37 @@ private struct StreamNoteRow: View {
                     .foregroundStyle(isBatchSelected ? AgendaColor.amber : AgendaColor.textMuted)
                     .transition(.scale.combined(with: .opacity))
             } else {
+                // Outer hover ring
                 if isHovering || isSelected {
                     Circle()
                         .stroke(color, lineWidth: 1)
                         .frame(width: 20, height: 20)
                         .transition(.scale.combined(with: .opacity))
                 }
-                if note.bodyPlainText.isEmpty {
-                    Circle().fill(color).frame(width: 10, height: 10)
+
+                // Main bullet icon based on status
+                if isBrief {
+                    // Brief (简达) = solid circle
+                    if isCompleted {
+                        // Brief + Completed = solid circle with white checkmark
+                        ZStack {
+                            Circle().fill(color).frame(width: 14, height: 14)
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(.white)
+                        }
+                    } else {
+                        Circle().fill(color).frame(width: 14, height: 14)
+                    }
                 } else {
+                    // Normal note = stroke circle
                     Circle().stroke(color, lineWidth: 1).frame(width: 14, height: 14)
+                    if isCompleted {
+                        // Completed = checkmark in circle
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 8, weight: .semibold))
+                            .foregroundStyle(color)
+                    }
                 }
             }
         }
@@ -629,8 +676,11 @@ private struct StreamNoteRow: View {
             }
         }
         .popover(isPresented: $showBulletMenu, attachmentAnchor: .point(.trailing), arrowEdge: .trailing) {
-            AgendadaFloatingMenuView(sections: bulletMenuSections, presenter: bulletMenuPresenter)
-                .presentationBackground(.clear)
+            AgendadaFloatingMenuView(
+                sections: bulletMenuSections,
+                presenter: bulletMenuPresenter,
+                width: 214
+            )
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
             showBulletMenu = false
@@ -645,6 +695,28 @@ private struct StreamNoteRow: View {
         .animation(.easeOut(duration: 0.15), value: isHovering)
     }
 
+    private func toggleDatePicker() {
+        if showDatePicker {
+            showDatePicker = false
+            return
+        }
+        guard Date().timeIntervalSince(datePickerDismissedAt) > 0.18 else { return }
+
+        showDatePicker = true
+    }
+
+    private func handleCardTap() {
+        if skipNextCardTap {
+            skipNextCardTap = false
+            return
+        }
+        if store.isInBatchMode {
+            store.toggleBatchSelection(noteID: note.id)
+        } else if store.selectedOverview != .trash {
+            selectNoteAfterSavingActiveEditor()
+        }
+    }
+
     private func toggleBulletMenu() {
         if showBulletMenu {
             showBulletMenu = false
@@ -652,22 +724,414 @@ private struct StreamNoteRow: View {
         }
         guard Date().timeIntervalSince(bulletMenuDismissedAt) > 0.18 else { return }
 
+        // Reset presenter state to ensure clean start
+        bulletMenuPresenter.reset()
+
         bulletMenuPresenter.configure(
             dismiss: { showBulletMenu = false },
-            showSubmenu: { sections in bulletMenuSections = sections }
+            showSubmenu: { _ in },
+            popToRoot: {}
         )
         bulletMenuSections = bulletFloatingMenuSections()
         showBulletMenu = true
     }
 
-    private func bulletFloatingMenuSections() -> [AgendadaFloatingMenuSection] {
+    private func toggleSettingsMenu() {
+        if showSettingsPopover || settingsMenuOpenPending {
+            settingsMenuOpenPending = false
+            showSettingsPopover = false
+            return
+        }
+        guard Date().timeIntervalSince(settingsMenuDismissedAt) > 0.18 else { return }
+
+        // Reset presenter state to ensure clean start
+        settingsMenuPresenter.reset()
+
+        settingsMenuOpenPending = true
+        settingsMenuPresenter.configure(
+            dismiss: {
+                settingsMenuOpenPending = false
+                showSettingsPopover = false
+            },
+            showSubmenu: { _ in },
+            popToRoot: {}
+        )
+        settingsMenuSections = settingsFloatingMenuSections()
+        DispatchQueue.main.async {
+            guard settingsMenuOpenPending else { return }
+            settingsMenuOpenPending = false
+            showSettingsPopover = true
+        }
+    }
+
+    private func settingsFloatingMenuSections() -> [AgendadaFloatingMenuSection] {
         [
             AgendadaFloatingMenuSection(items: [
                 AgendadaFloatingMenuItem(
-                    iconSystemName: note.isFocused ? "circle" : "smallcircle.filled.circle",
-                    title: note.isFocused ? "取消“简达”" : "标记为“简达”"
+                    iconSystemName: "circle",
+                    title: "标记",
+                    showsSubmenuIndicator: true,
+                    dismissesAfterAction: false
+                ) { presenter in
+                    presenter.showSubmenu(sections: markFloatingMenuSections(), title: "标记")
+                }
+            ]),
+            AgendadaFloatingMenuSection(items: [
+                AgendadaFloatingMenuItem(
+                    iconSystemName: "doc.on.clipboard",
+                    title: "拷贝为...",
+                    showsSubmenuIndicator: true,
+                    dismissesAfterAction: false
+                ) { presenter in
+                    presenter.showSubmenu(sections: copyAsFloatingMenuSections(), title: "拷贝为:")
+                },
+                AgendadaFloatingMenuItem(
+                    iconSystemName: "folder.badge.arrow.right",
+                    title: "移动到...",
+                    showsSubmenuIndicator: true,
+                    dismissesAfterAction: false
+                ) { presenter in
+                    presenter.showSubmenu(sections: moveProjectFloatingMenuSections(), title: "移动笔记到:")
+                },
+                AgendadaFloatingMenuItem(
+                    iconSystemName: "plus.square.on.square",
+                    title: "复制"
                 ) { _ in
-                    store.setFocused(!note.isFocused, noteID: note.id)
+                    store.duplicateNote(note.id)
+                },
+                AgendadaFloatingMenuItem(
+                    iconSystemName: "arrow.branch",
+                    title: "开始新笔记"
+                ) { _ in
+                    let noteID = store.addNoteReturningID()
+                    store.selectNote(noteID)
+                }
+            ]),
+            AgendadaFloatingMenuSection(items: [
+                AgendadaFloatingMenuItem(
+                    iconSystemName: "square.and.arrow.up",
+                    title: "分享...",
+                    showsSubmenuIndicator: true,
+                    dismissesAfterAction: false
+                ) { presenter in
+                    presenter.showSubmenu(sections: shareAsFloatingMenuSections(), title: "分享为:")
+                },
+                AgendadaFloatingMenuItem(
+                    iconSystemName: "printer",
+                    title: "打印..."
+                ) { _ in
+                    printNote()
+                },
+                AgendadaFloatingMenuItem(
+                    iconSystemName: "rectangle.dashed",
+                    title: "存储为模板..."
+                ) { _ in
+                    // Template management has a dedicated UI planned; keep the entry visible for layout parity.
+                }
+            ]),
+            AgendadaFloatingMenuSection(items: [
+                AgendadaFloatingMenuItem(
+                    iconSystemName: "info.circle",
+                    title: "显示信息...",
+                    subtitle: editedAtInfoSubtitle,
+                    showsSubmenuIndicator: true,
+                    dismissesAfterAction: false
+                ) { presenter in
+                    presenter.showSubmenu(sections: noteInfoFloatingMenuSections(), title: "显示信息...")
+                }
+            ]),
+            AgendadaFloatingMenuSection(items: [
+                AgendadaFloatingMenuItem(
+                    iconSystemName: "trash",
+                    title: "移到废纸篓",
+                    role: .destructive
+                ) { _ in
+                    store.deleteNote(note.id)
+                }
+            ])
+        ]
+    }
+
+    private func copyAsFloatingMenuSections() -> [AgendadaFloatingMenuSection] {
+        [
+            AgendadaFloatingMenuSection(items: [
+                AgendadaFloatingMenuItem(
+                    iconText: "RTF",
+                    title: "笔记文本"
+                ) { _ in
+                    copyToPasteboard(fullNoteText)
+                },
+                AgendadaFloatingMenuItem(
+                    iconText: "M↓",
+                    title: "Markdown"
+                ) { _ in
+                    copyToPasteboard(markdownNoteText)
+                },
+                AgendadaFloatingMenuItem(
+                    iconText: "<>",
+                    title: "HTML"
+                ) { _ in
+                    copyToPasteboard(htmlNoteText)
+                },
+                AgendadaFloatingMenuItem(
+                    iconText: "txt",
+                    title: "纯文本"
+                ) { _ in
+                    copyToPasteboard(fullNoteText)
+                },
+                AgendadaFloatingMenuItem(
+                    iconSystemName: "doc.text",
+                    title: "摘要"
+                ) { _ in
+                    copyToPasteboard(store.summary(for: note.id) ?? note.bodyPlainText)
+                }
+            ]),
+            AgendadaFloatingMenuSection(items: [
+                AgendadaFloatingMenuItem(
+                    iconSystemName: "link",
+                    title: "Agenda 链接"
+                ) { _ in
+                    copyToPasteboard(agendaNoteLink)
+                }
+            ])
+        ]
+    }
+
+    private func shareAsFloatingMenuSections() -> [AgendadaFloatingMenuSection] {
+        [
+            AgendadaFloatingMenuSection(items: [
+                AgendadaFloatingMenuItem(
+                    iconSystemName: "dot.radiowaves.left.and.right",
+                    title: "隔空投送"
+                ) { _ in
+                    shareNote()
+                },
+                AgendadaFloatingMenuItem(
+                    iconSystemName: "envelope.fill",
+                    title: "通过邮件发送"
+                ) { _ in
+                    shareNote()
+                },
+                AgendadaFloatingMenuItem(
+                    iconSystemName: "message.fill",
+                    title: "通过“信息”App 发送"
+                ) { _ in
+                    shareNote()
+                },
+                AgendadaFloatingMenuItem(
+                    iconSystemName: "note.text",
+                    title: "添加到“备忘录”"
+                ) { _ in
+                    shareNote()
+                },
+                AgendadaFloatingMenuItem(
+                    iconSystemName: "folder",
+                    title: "另存为"
+                ) { _ in
+                    shareNote()
+                }
+            ]),
+            AgendadaFloatingMenuSection(items: [
+                AgendadaFloatingMenuItem(
+                    iconSystemName: "iphone",
+                    title: "Simulator"
+                ) { _ in
+                    shareNote()
+                },
+                AgendadaFloatingMenuItem(
+                    iconText: "微",
+                    title: "发送到微信"
+                ) { _ in
+                    shareNote()
+                },
+                AgendadaFloatingMenuItem(
+                    iconText: "手",
+                    title: "手记"
+                ) { _ in
+                    shareNote()
+                },
+                AgendadaFloatingMenuItem(
+                    iconText: "无",
+                    title: "无边记"
+                ) { _ in
+                    shareNote()
+                }
+            ])
+        ]
+    }
+
+    private func noteInfoFloatingMenuSections() -> [AgendadaFloatingMenuSection] {
+        [
+            AgendadaFloatingMenuSection(items: [
+                AgendadaFloatingMenuItem(
+                    title: "统计:",
+                    subtitle: noteStatisticsText,
+                    isHeader: true,
+                    dismissesAfterAction: false
+                ) { _ in },
+                AgendadaFloatingMenuItem(
+                    title: "阅读时间:",
+                    subtitle: noteReadingTimeText,
+                    isHeader: true,
+                    dismissesAfterAction: false
+                ) { _ in }
+            ]),
+            AgendadaFloatingMenuSection(items: [
+                AgendadaFloatingMenuItem(
+                    title: "创建于:",
+                    subtitle: noteCreatedAtText,
+                    isHeader: true,
+                    dismissesAfterAction: false
+                ) { _ in }
+            ])
+        ]
+    }
+
+    private var editedAtInfoSubtitle: String {
+        let calendar = Calendar.current
+        let timeFormatter = DateFormatter()
+        timeFormatter.locale = Locale(identifier: "zh_CN")
+        timeFormatter.dateFormat = "HH:mm"
+        let timeText = timeFormatter.string(from: note.editedAt)
+
+        if calendar.isDateInToday(note.editedAt) {
+            return "最近编辑时间： 今天 \(timeText)"
+        }
+        if calendar.isDateInYesterday(note.editedAt) {
+            return "最近编辑时间： 昨天 \(timeText)"
+        }
+
+        let dateFormatter = DateFormatter()
+        dateFormatter.locale = Locale(identifier: "zh_CN")
+        dateFormatter.dateFormat = "M月d日"
+        return "最近编辑时间： \(dateFormatter.string(from: note.editedAt)) \(timeText)"
+    }
+
+    private var fullNoteText: String {
+        [note.title, note.bodyPlainText]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n\n")
+    }
+
+    private var markdownNoteText: String {
+        let body = note.bodyPlainText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return body.isEmpty ? "# \(note.title)" : "# \(note.title)\n\n\(body)"
+    }
+
+    private var htmlNoteText: String {
+        let title = escapedHTML(note.title)
+        let body = note.body.trimmingCharacters(in: .whitespacesAndNewlines)
+        if body.isEmpty {
+            return "<h1>\(title)</h1><p>\(escapedHTML(note.bodyPlainText))</p>"
+        }
+        return "<h1>\(title)</h1>\n\(body)"
+    }
+
+    private var agendaNoteLink: String {
+        "agendada://note/\(note.id.uuidString)"
+    }
+
+    private var noteStatisticsText: String {
+        let text = note.bodyPlainText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let characterCount = text.count
+        let withoutSpaces = text.filter { !$0.isWhitespace }.count
+        let paragraphs = text
+            .components(separatedBy: .newlines)
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .count
+        return "\(withoutSpaces)个字、\(characterCount)个字符 (\(withoutSpaces) without spaces)、\(max(paragraphs, text.isEmpty ? 0 : 1))个段落"
+    }
+
+    private var noteReadingTimeText: String {
+        let characters = note.bodyPlainText.filter { !$0.isWhitespace }.count
+        let minutes = Int(ceil(Double(characters) / 500.0))
+        return minutes <= 1 ? "不足一分钟" : "约 \(minutes) 分钟"
+    }
+
+    private var noteCreatedAtText: String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "yyyy年M月d日 HH:mm:ss"
+        return formatter.string(from: note.createdAt)
+    }
+
+    private func escapedHTML(_ text: String) -> String {
+        text
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+            .replacingOccurrences(of: "'", with: "&#39;")
+    }
+
+    private func statusFloatingMenuSections() -> [AgendadaFloatingMenuSection] {
+        [
+            AgendadaFloatingMenuSection(items: NoteStatus.allCases.map { status in
+                AgendadaFloatingMenuItem(
+                    iconSystemName: draft.status == status ? "checkmark.circle.fill" : "circle",
+                    title: status.title
+                ) { _ in
+                    draft.status = status
+                    store.setStatus(status, noteID: note.id)
+                }
+            })
+        ]
+    }
+
+    private func pinFloatingMenuSections() -> [AgendadaFloatingMenuSection] {
+        [
+            AgendadaFloatingMenuSection(items: [
+                AgendadaFloatingMenuItem(
+                    iconSystemName: note.pinState == .pinnedTop ? "pin.slash" : "pin",
+                    title: note.pinState == .pinnedTop ? "取消置顶" : "置顶"
+                ) { _ in
+                    store.setPinState(note.pinState == .pinnedTop ? .none : .pinnedTop, noteID: note.id)
+                },
+                AgendadaFloatingMenuItem(
+                    iconSystemName: note.pinState == .pinnedBottom ? "arrow.up.to.line" : "arrow.down.to.line",
+                    title: note.pinState == .pinnedBottom ? "取消置底" : "置底"
+                ) { _ in
+                    store.setPinState(note.pinState == .pinnedBottom ? .none : .pinnedBottom, noteID: note.id)
+                }
+            ])
+        ]
+    }
+
+    private func dateFloatingMenuSections() -> [AgendadaFloatingMenuSection] {
+        var items = [
+            AgendadaFloatingMenuItem(
+                iconSystemName: "calendar.badge.clock",
+                title: "指定到今天"
+            ) { _ in
+                store.scheduleToday(noteID: note.id)
+                resetDraft()
+            }
+        ]
+
+        if note.scheduledDate != nil {
+            items.append(
+                AgendadaFloatingMenuItem(
+                    iconSystemName: "calendar.badge.minus",
+                    title: "移除日期"
+                ) { _ in
+                    store.clearScheduledDate(noteID: note.id)
+                    resetDraft()
+                }
+            )
+        }
+
+        return [AgendadaFloatingMenuSection(items: items)]
+    }
+
+    private func markFloatingMenuSections() -> [AgendadaFloatingMenuSection] {
+        [
+            AgendadaFloatingMenuSection(items: [
+                AgendadaFloatingMenuItem(
+                    iconSystemName: note.isBrief ? "circle" : "smallcircle.fill.circle",
+                    title: note.isBrief ? "取消“简达”" : "标记为“简达”"
+                ) { _ in
+                    store.setBrief(!note.isBrief, noteID: note.id)
                 },
                 AgendadaFloatingMenuItem(
                     iconSystemName: note.status == .completed ? "arrow.uturn.left" : "checkmark",
@@ -708,7 +1172,12 @@ private struct StreamNoteRow: View {
                     title: "锁定笔记...",
                     isEnabled: false
                 ) { _ in }
-            ]),
+            ])
+        ]
+    }
+
+    private func bulletFloatingMenuSections() -> [AgendadaFloatingMenuSection] {
+        markFloatingMenuSections() + [
             AgendadaFloatingMenuSection(items: [
                 AgendadaFloatingMenuItem(
                     iconSystemName: "gearshape",
@@ -732,13 +1201,13 @@ private struct StreamNoteRow: View {
 
     private func colorFloatingMenuSections() -> [AgendadaFloatingMenuSection] {
         let colorItems = [AgendadaFloatingMenuItem(
-            iconSystemName: "xmark.circle",
+            iconColor: nil,
             title: "无颜色"
         ) { _ in
             store.setNoteColor(nil, noteID: note.id)
         }] + NoteColor.allCases.map { color in
             AgendadaFloatingMenuItem(
-                iconSystemName: "square.fill",
+                iconColor: noteColorValue(color),
                 title: color.title
             ) { _ in
                 store.setNoteColor(color, noteID: note.id)
@@ -766,7 +1235,7 @@ private struct StreamNoteRow: View {
                     showsSubmenuIndicator: true,
                     dismissesAfterAction: false
                 ) { presenter in
-                    presenter.showSubmenu(sections: moveProjectFloatingMenuSections())
+                    presenter.showSubmenu(sections: moveProjectFloatingMenuSections(), title: "移动笔记到:")
                 }
             )
         }
@@ -774,9 +1243,11 @@ private struct StreamNoteRow: View {
         firstSection.append(contentsOf: [
             AgendadaFloatingMenuItem(
                 iconSystemName: "square.and.arrow.up",
-                title: "分享..."
-            ) { _ in
-                shareNote()
+                title: "分享...",
+                showsSubmenuIndicator: true,
+                dismissesAfterAction: false
+            ) { presenter in
+                presenter.showSubmenu(sections: shareAsFloatingMenuSections(), title: "分享为:")
             },
             AgendadaFloatingMenuItem(
                 iconSystemName: "printer",
@@ -801,16 +1272,93 @@ private struct StreamNoteRow: View {
     }
 
     private func moveProjectFloatingMenuSections() -> [AgendadaFloatingMenuSection] {
-        [
-            AgendadaFloatingMenuSection(items: store.projects.map { project in
+        var sections: [AgendadaFloatingMenuSection] = [
+            AgendadaFloatingMenuSection(items: [
                 AgendadaFloatingMenuItem(
-                    iconSystemName: "folder",
-                    title: project.name
-                ) { _ in
-                    store.moveNotes([note.id], toProject: project.id)
-                }
-            })
+                    iconSystemName: "arrow.up",
+                    title: "上一条笔记前",
+                    isEnabled: false
+                ) { _ in },
+                AgendadaFloatingMenuItem(
+                    iconSystemName: "arrow.down",
+                    title: "下一条笔记后",
+                    isEnabled: false
+                ) { _ in }
+            ]),
+            AgendadaFloatingMenuSection(items: [
+                AgendadaFloatingMenuItem(
+                    iconSystemName: "arrow.up.to.line",
+                    title: "第一条笔记前",
+                    isEnabled: false
+                ) { _ in },
+                AgendadaFloatingMenuItem(
+                    iconSystemName: "arrow.down.to.line",
+                    title: "最后一条笔记后",
+                    isEnabled: false
+                ) { _ in }
+            ])
         ]
+
+        var projectItems: [AgendadaFloatingMenuItem] = [
+            AgendadaFloatingMenuItem(
+                title: "其他项目:",
+                isHeader: true,
+                dismissesAfterAction: false
+            ) { _ in }
+        ]
+
+        for category in store.categories {
+            let projects = store.projects(in: category.id).filter { !$0.isArchived }
+            guard !projects.isEmpty else { continue }
+            projectItems.append(
+                AgendadaFloatingMenuItem(
+                    title: category.name,
+                    isEnabled: false,
+                    dismissesAfterAction: false
+                ) { _ in }
+            )
+            projectItems.append(contentsOf: projects.map(projectMoveMenuItem))
+        }
+
+        let uncategorizedProjects = store.projects
+            .filter { $0.categoryID == nil && !$0.isArchived }
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        if !uncategorizedProjects.isEmpty {
+            projectItems.append(
+                AgendadaFloatingMenuItem(
+                    title: "其他项目",
+                    isEnabled: false,
+                    dismissesAfterAction: false
+                ) { _ in }
+            )
+            projectItems.append(contentsOf: uncategorizedProjects.map(projectMoveMenuItem))
+        }
+
+        if projectItems.count > 1 {
+            sections.append(AgendadaFloatingMenuSection(items: projectItems))
+        }
+
+        sections.append(
+            AgendadaFloatingMenuSection(items: [
+                AgendadaFloatingMenuItem(
+                    iconSystemName: "folder.badge.plus",
+                    title: "新建项目..."
+                ) { _ in
+                    store.addProject(name: "新项目", categoryID: nil)
+                }
+            ])
+        )
+
+        return sections
+    }
+
+    private func projectMoveMenuItem(_ project: Project) -> AgendadaFloatingMenuItem {
+        AgendadaFloatingMenuItem(
+            iconColor: projectColorValue(project.color),
+            title: project.name
+        ) { _ in
+            store.moveNotes([note.id], toProject: project.id)
+        }
     }
 
     private func noteColorValue(_ c: NoteColor?) -> Color {
@@ -825,6 +1373,21 @@ private struct StreamNoteRow: View {
         case .pink: Color(red: 0.93, green: 0.36, blue: 0.62)
         case .purple: Color(red: 0.62, green: 0.35, blue: 0.85)
         case .gray: Color(red: 0.55, green: 0.55, blue: 0.60)
+        }
+    }
+
+    private func projectColorValue(_ color: ProjectColor) -> Color {
+        switch color {
+        case .blue:
+            return Color(red: 0.26, green: 0.74, blue: 0.75)
+        case .green:
+            return Color(red: 0.32, green: 0.72, blue: 0.45)
+        case .orange:
+            return AgendaColor.amber
+        case .pink:
+            return Color(red: 0.93, green: 0.36, blue: 0.62)
+        case .gray:
+            return Color(red: 0.55, green: 0.55, blue: 0.60)
         }
     }
 
@@ -875,80 +1438,18 @@ private struct StreamNoteRow: View {
                 Image(systemName: "doc.on.doc").font(.system(size: 16, weight: .medium))
             }.buttonStyle(.plain).help("复制笔记")
             Button {
-                showSettingsPopover = true
+                skipNextCardTap = true
+                toggleSettingsMenu()
             } label: {
                 Image(systemName: "gearshape")
                     .font(.system(size: 16, weight: .medium))
                     .foregroundStyle(AgendaColor.amber)
+                    .frame(width: 24, height: 24)
             }
             .buttonStyle(.plain)
-            .frame(width: 24, height: 24)
-            .popover(isPresented: $showSettingsPopover, arrowEdge: .bottom) {
-                VStack(alignment: .leading, spacing: 0) {
-                    Picker("状态", selection: $draft.status) {
-                        ForEach(NoteStatus.allCases, id: \.self) { s in Text(s.title).tag(s) }
-                    }
-                    .pickerStyle(.menu)
-                    .padding(.horizontal, 12).padding(.vertical, 8)
-                    Divider()
-                    Button(action: {
-                        store.setStarred(!note.isStarred, noteID: note.id)
-                        showSettingsPopover = false
-                    }) {
-                        HStack { Text(note.isStarred ? "取消标星" : "标星"); Spacer() }
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.horizontal, 12).padding(.vertical, 6)
-                    Menu("颜色标记") {
-                        Button("无") { store.setNoteColor(nil, noteID: note.id); showSettingsPopover = false }
-                        ForEach(NoteColor.allCases, id: \.self) { c in
-                            Button(c.title) { store.setNoteColor(c, noteID: note.id); showSettingsPopover = false }
-                        }
-                    }
-                    .padding(.horizontal, 12).padding(.vertical, 6)
-                    Menu("置顶/置底") {
-                        Button(note.pinState == .pinnedTop ? "取消置顶" : "置顶") {
-                            store.setPinState(note.pinState == .pinnedTop ? .none : .pinnedTop, noteID: note.id)
-                            showSettingsPopover = false
-                        }
-                        Button(note.pinState == .pinnedBottom ? "取消置底" : "置底") {
-                            store.setPinState(note.pinState == .pinnedBottom ? .none : .pinnedBottom, noteID: note.id)
-                            showSettingsPopover = false
-                        }
-                    }
-                    .padding(.horizontal, 12).padding(.vertical, 6)
-                    Menu("日期") {
-                        Button("指定到今天") { store.scheduleToday(noteID: note.id); resetDraft(); showSettingsPopover = false }
-                        if note.scheduledDate != nil {
-                            Button("移除日期") {
-                                store.updateNote(noteID: note.id, title: note.title, body: note.body, scheduledDate: nil, tags: note.tags, people: note.people, status: note.status)
-                                resetDraft()
-                                showSettingsPopover = false
-                            }
-                        }
-                    }
-                    .padding(.horizontal, 12).padding(.vertical, 6)
-                    Button(action: {
-                        if let s = store.summary(for: note.id) { copyToPasteboard(s) }
-                        showSettingsPopover = false
-                    }) {
-                        HStack { Text("复制摘要"); Spacer() }
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.horizontal, 12).padding(.vertical, 6)
-                    Divider()
-                    Button(role: .destructive, action: {
-                        store.deleteNote(note.id)
-                        showSettingsPopover = false
-                    }) {
-                        HStack { Text("删除笔记"); Spacer() }
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.horizontal, 12).padding(.vertical, 6)
-                }
-                .font(.custom("Avenir Next", size: 13))
-                .frame(width: 200)
-                .padding(.vertical, 4)
+            .help("更多操作")
+            .popover(isPresented: $showSettingsPopover, attachmentAnchor: .point(.top), arrowEdge: .bottom) {
+                settingsPopoverContent
             }
         }.foregroundStyle(AgendaColor.amber)
     }
@@ -1270,6 +1771,56 @@ private struct HoverableMenuButton<MenuContent: View>: View {
 
 // MARK: - Capsule Icon Button with Popover
 
+private struct CapsuleIconFloatingMenuButton: View {
+    let systemName: String
+    let help: String
+    @Binding var isPresented: Bool
+    let width: CGFloat
+    let sections: () -> [AgendadaFloatingMenuSection]
+    @State private var presenter = AgendadaFloatingMenuPresenter()
+    @State private var isHovering = false
+
+    init(
+        systemName: String,
+        help: String = "",
+        isPresented: Binding<Bool>,
+        width: CGFloat = 214,
+        sections: @escaping () -> [AgendadaFloatingMenuSection]
+    ) {
+        self.systemName = systemName
+        self.help = help
+        self._isPresented = isPresented
+        self.width = width
+        self.sections = sections
+    }
+
+    var body: some View {
+        Button {
+            if isPresented {
+                isPresented = false
+            } else {
+                presenter.configure(dismiss: { isPresented = false }, showSubmenu: { _ in })
+                isPresented = true
+            }
+        } label: {
+            Image(systemName: systemName)
+                .font(.system(size: 16, weight: .medium))
+                .frame(width: 28, height: 28)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(isHovering ? AgendaColor.amber : Color(red: 0.118, green: 0.118, blue: 0.118))
+        .help(help)
+        .onHover { isHovering = $0 }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
+            isPresented = false
+        }
+        .popover(isPresented: $isPresented, arrowEdge: .bottom) {
+            AgendadaFloatingMenuView(sections: sections(), presenter: presenter, width: width)
+        }
+    }
+}
+
 private struct CapsuleIconPopoverButton<PopoverContent: View>: View {
     let systemName: String
     let help: String
@@ -1299,11 +1850,44 @@ private struct CapsuleIconPopoverButton<PopoverContent: View>: View {
         .onHover { isHovering = $0 }
         .popover(isPresented: $isPresented, arrowEdge: .bottom) {
             popoverContent()
+                .agendadaGlassPopover()
         }
     }
 }
 
 // MARK: - Sort Popover Content
+
+@MainActor
+private func sortFloatingMenuSections(store: ObservableLibraryStore) -> [AgendadaFloatingMenuSection] {
+    [
+        AgendadaFloatingMenuSection(items: NoteSortOrder.allCases.map { order in
+            AgendadaFloatingMenuItem(
+                iconSystemName: store.sortOrder == order ? "checkmark" : "circle",
+                title: order.title
+            ) { _ in
+                store.sortOrder = order
+            }
+        })
+    ]
+}
+
+@MainActor
+private func batchMoveFloatingMenuSections(
+    store: ObservableLibraryStore,
+    showMoveMenu: Binding<Bool>
+) -> [AgendadaFloatingMenuSection] {
+    [
+        AgendadaFloatingMenuSection(items: store.projects.map { project in
+            AgendadaFloatingMenuItem(
+                iconSystemName: "folder",
+                title: project.name
+            ) { _ in
+                store.moveNotes(store.batchSelectedNoteIDs, toProject: project.id)
+                showMoveMenu.wrappedValue = false
+            }
+        })
+    ]
+}
 
 @MainActor
 private func sortPopoverContent(store: ObservableLibraryStore, showSortPopover: Binding<Bool>) -> some View {
