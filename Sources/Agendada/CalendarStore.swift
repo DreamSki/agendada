@@ -19,7 +19,8 @@ final class CalendarStore {
 
     // Source filtering
     var calendarSources: [CalendarSource] = []
-    var enabledSourceIDs: Set<String> = []  // empty = show all
+    var showAllSources: Bool = true
+    var enabledSourceIDs: Set<String> = []
 
     // MARK: - Private State
 
@@ -76,22 +77,31 @@ final class CalendarStore {
     }
 
     func toggleSource(_ sourceID: String) {
-        if enabledSourceIDs.contains(sourceID) {
-            enabledSourceIDs.remove(sourceID)
+        if showAllSources {
+            // First click in "show all" mode: switch to filter mode with only this source
+            showAllSources = false
+            enabledSourceIDs = [sourceID]
         } else {
-            enabledSourceIDs.insert(sourceID)
+            // In filter mode: toggle this source
+            if enabledSourceIDs.contains(sourceID) {
+                enabledSourceIDs.remove(sourceID)
+                // If no sources left, switch back to show all
+                if enabledSourceIDs.isEmpty {
+                    showAllSources = true
+                }
+            } else {
+                enabledSourceIDs.insert(sourceID)
+            }
         }
-        // Reload with new filter
-        Task {
-            await refresh()
-        }
+        Task { await refresh() }
     }
 
     var isAllSourcesEnabled: Bool {
-        enabledSourceIDs.isEmpty
+        showAllSources
     }
 
     func enableAllSources() {
+        showAllSources = true
         enabledSourceIDs.removeAll()
         Task { await refresh() }
     }
@@ -141,8 +151,8 @@ final class CalendarStore {
         loadedEndDate = endDay
 
         // Determine which calendars to fetch based on filter
-        let eventCalendarIDs = enabledSourceIDs.isEmpty ? nil : enabledSourceIDs
-        let reminderCalendarIDs = enabledSourceIDs.isEmpty ? nil : enabledSourceIDs
+        let eventCalendarIDs = showAllSources ? nil : enabledSourceIDs
+        let reminderCalendarIDs = showAllSources ? nil : enabledSourceIDs
 
         // Fetch events
         var events: [CalendarEvent] = []
@@ -157,7 +167,7 @@ final class CalendarStore {
         // Fetch reminders
         var reminders: [CalendarReminder] = []
         if reminderPermission == .granted {
-            reminders = await repository.fetchReminders(from: startDay, to: endDay)
+            reminders = await repository.fetchReminders(from: startDay, to: endDay, calendarIDs: reminderCalendarIDs)
         }
 
         // Group by day
@@ -246,6 +256,7 @@ final class CalendarStore {
                         completionDate: old.isCompleted ? nil : Date(),
                         calendarColor: old.calendarColor,
                         calendarTitle: old.calendarTitle,
+                        accountTitle: old.accountTitle,
                         priority: old.priority
                     )
                 }

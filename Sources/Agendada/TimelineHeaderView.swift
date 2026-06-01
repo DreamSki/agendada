@@ -22,7 +22,7 @@ struct TimelineHeaderView: View {
             Button(action: { showFilter = true }) {
                 Image(systemName: "line.3.horizontal.decrease.circle")
                     .font(.system(size: 13, weight: .regular))
-                    .foregroundStyle(calendarStore.enabledSourceIDs.isEmpty ? .secondary : AgendaColor.amber)
+                    .foregroundStyle(calendarStore.showAllSources ? .secondary : AgendaColor.amber)
             }
             .buttonStyle(.plain)
             .help("筛选日历来源")
@@ -112,7 +112,7 @@ struct TimelineHeaderView: View {
     }
 
     private func sourceToggle(_ source: CalendarSource) -> some View {
-        let isEnabled = calendarStore.enabledSourceIDs.isEmpty || calendarStore.enabledSourceIDs.contains(source.id)
+        let isEnabled = calendarStore.showAllSources || calendarStore.enabledSourceIDs.contains(source.id)
         return Button {
             calendarStore.toggleSource(source.id)
         } label: {
@@ -132,10 +132,17 @@ struct TimelineHeaderView: View {
                     ))
                     .frame(width: 8, height: 8)
 
-                Text(source.title)
-                    .font(.custom("Avenir Next", size: 13))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(source.title)
+                        .font(.custom("Avenir Next", size: 13))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+
+                    Text(source.accountTitle)
+                        .font(.custom("Avenir Next", size: 11))
+                        .foregroundStyle(AgendaColor.textMuted)
+                        .lineLimit(1)
+                }
 
                 Spacer()
             }

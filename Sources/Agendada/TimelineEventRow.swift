@@ -46,10 +46,24 @@ struct TimelineEventRow: View {
                     .frame(width: 3, height: 18)
 
                 // Event title — deep readable text
-                Text(event.title)
-                    .font(.custom("Avenir Next", size: 13))
-                    .foregroundStyle(Color(red: 0.20, green: 0.20, blue: 0.20))
-                    .lineLimit(1)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(event.title)
+                        .font(.custom("Avenir Next", size: 13))
+                        .foregroundStyle(Color(red: 0.20, green: 0.20, blue: 0.20))
+                        .lineLimit(1)
+
+                    HStack(spacing: 4) {
+                        Text(event.calendarTitle)
+                            .font(.custom("Avenir Next", size: 10))
+                            .foregroundStyle(calendarColor.opacity(0.7))
+                        Text("·")
+                            .font(.custom("Avenir Next", size: 9))
+                            .foregroundStyle(AgendaColor.textMuted)
+                        Text(event.accountTitle)
+                            .font(.custom("Avenir Next", size: 10))
+                            .foregroundStyle(AgendaColor.textMuted)
+                    }
+                }
 
                 Spacer()
 

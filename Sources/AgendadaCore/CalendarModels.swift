@@ -34,6 +34,7 @@ public struct CalendarEvent: Identifiable, Hashable, Sendable {
     public let isAllDay: Bool
     public let calendarColor: CalendarColorInfo
     public let calendarTitle: String
+    public let accountTitle: String
 
     public init(
         id: String,
@@ -42,7 +43,8 @@ public struct CalendarEvent: Identifiable, Hashable, Sendable {
         endDate: Date,
         isAllDay: Bool,
         calendarColor: CalendarColorInfo,
-        calendarTitle: String
+        calendarTitle: String,
+        accountTitle: String
     ) {
         self.id = id
         self.title = title
@@ -51,6 +53,7 @@ public struct CalendarEvent: Identifiable, Hashable, Sendable {
         self.isAllDay = isAllDay
         self.calendarColor = calendarColor
         self.calendarTitle = calendarTitle
+        self.accountTitle = accountTitle
     }
 }
 
@@ -64,6 +67,7 @@ public struct CalendarReminder: Identifiable, Hashable, Sendable {
     public let completionDate: Date?
     public let calendarColor: CalendarColorInfo
     public let calendarTitle: String
+    public let accountTitle: String
     public let priority: Int
 
     public init(
@@ -74,6 +78,7 @@ public struct CalendarReminder: Identifiable, Hashable, Sendable {
         completionDate: Date?,
         calendarColor: CalendarColorInfo,
         calendarTitle: String,
+        accountTitle: String,
         priority: Int
     ) {
         self.id = id
@@ -83,6 +88,7 @@ public struct CalendarReminder: Identifiable, Hashable, Sendable {
         self.completionDate = completionDate
         self.calendarColor = calendarColor
         self.calendarTitle = calendarTitle
+        self.accountTitle = accountTitle
         self.priority = priority
     }
 }
@@ -91,7 +97,8 @@ public struct CalendarReminder: Identifiable, Hashable, Sendable {
 
 public struct CalendarSource: Identifiable, Hashable, Sendable {
     public let id: String           // EKCalendar.calendarIdentifier
-    public let title: String
+    public let title: String        // Calendar/list name (e.g., "个人", "工作")
+    public let accountTitle: String // Account name (e.g., "Exchange", "iCloud", "Google")
     public let color: CalendarColorInfo
     public let type: SourceType
 
@@ -100,9 +107,10 @@ public struct CalendarSource: Identifiable, Hashable, Sendable {
         case reminder   // Reminders list
     }
 
-    public init(id: String, title: String, color: CalendarColorInfo, type: SourceType) {
+    public init(id: String, title: String, accountTitle: String, color: CalendarColorInfo, type: SourceType) {
         self.id = id
         self.title = title
+        self.accountTitle = accountTitle
         self.color = color
         self.type = type
     }

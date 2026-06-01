@@ -50,12 +50,26 @@ struct TimelineReminderRow: View {
             .buttonStyle(.plain)
             .help(localCompleted ? "标记为未完成" : "标记为已完成")
 
-            // Title — readable dark text
-            Text(reminder.title)
-                .font(.custom("Avenir Next", size: 13))
-                .foregroundStyle(localCompleted ? Color(red: 0.70, green: 0.70, blue: 0.70) : Color(red: 0.20, green: 0.20, blue: 0.20))
-                .strikethrough(localCompleted, color: Color(red: 0.70, green: 0.70, blue: 0.70))
-                .lineLimit(1)
+            // Title and source info
+            VStack(alignment: .leading, spacing: 1) {
+                Text(reminder.title)
+                    .font(.custom("Avenir Next", size: 13))
+                    .foregroundStyle(localCompleted ? Color(red: 0.70, green: 0.70, blue: 0.70) : Color(red: 0.20, green: 0.20, blue: 0.20))
+                    .strikethrough(localCompleted, color: Color(red: 0.70, green: 0.70, blue: 0.70))
+                    .lineLimit(1)
+
+                HStack(spacing: 4) {
+                    Text(reminder.calendarTitle)
+                        .font(.custom("Avenir Next", size: 10))
+                        .foregroundStyle(calendarColor.opacity(0.7))
+                    Text("·")
+                        .font(.custom("Avenir Next", size: 9))
+                        .foregroundStyle(AgendaColor.textMuted)
+                    Text(reminder.accountTitle)
+                        .font(.custom("Avenir Next", size: 10))
+                        .foregroundStyle(AgendaColor.textMuted)
+                }
+            }
 
             Spacer()
         }

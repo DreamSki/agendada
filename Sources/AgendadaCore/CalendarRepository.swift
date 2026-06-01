@@ -64,15 +64,22 @@ public final class CalendarRepository: @unchecked Sendable {
                 endDate: ek.endDate,
                 isAllDay: ek.isAllDay,
                 calendarColor: Self.colorInfo(from: ek.calendar),
-                calendarTitle: ek.calendar?.title ?? ""
+                calendarTitle: ek.calendar?.title ?? "",
+                accountTitle: ek.calendar?.source?.title ?? "未知账户"
             )
         }
     }
 
     // MARK: - Fetch Reminders
 
-    public func fetchReminders(from startDate: Date, to endDate: Date) async -> [CalendarReminder] {
-        let predicate = eventStore.predicateForReminders(in: nil)
+    public func fetchReminders(from startDate: Date, to endDate: Date, calendarIDs: Set<String>? = nil) async -> [CalendarReminder] {
+        // Convert calendar IDs to EKCalendar objects for filtering
+        let calendars = calendarIDs.map { ids -> [EKCalendar]? in
+            let all = eventStore.calendars(for: .reminder)
+            let filtered = all.filter { ids.contains($0.calendarIdentifier) }
+            return filtered.isEmpty ? nil : filtered
+        } ?? nil
+        let predicate = eventStore.predicateForReminders(in: calendars)
 
         // EKReminder fetch is callback-based — map to our Sendable type immediately
         let reminderData: [CalendarReminder] = await withCheckedContinuation { continuation in
@@ -89,6 +96,7 @@ public final class CalendarRepository: @unchecked Sendable {
                         completionDate: ek.completionDate,
                         calendarColor: Self.colorInfo(from: ek.calendar),
                         calendarTitle: ek.calendar?.title ?? "",
+                        accountTitle: ek.calendar?.source?.title ?? "未知账户",
                         priority: ek.priority
                     )
                 }
@@ -133,6 +141,7 @@ public final class CalendarRepository: @unchecked Sendable {
             CalendarSource(
                 id: cal.calendarIdentifier,
                 title: cal.title,
+                accountTitle: cal.source?.title ?? "未知账户",
                 color: Self.colorInfo(from: cal),
                 type: .event
             )
@@ -144,6 +153,7 @@ public final class CalendarRepository: @unchecked Sendable {
             CalendarSource(
                 id: cal.calendarIdentifier,
                 title: cal.title,
+                accountTitle: cal.source?.title ?? "未知账户",
                 color: Self.colorInfo(from: cal),
                 type: .reminder
             )

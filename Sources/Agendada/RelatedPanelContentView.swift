@@ -50,6 +50,9 @@ struct RelatedPanelContentView: View {
         .onChange(of: calendarStore.daySchedules.count) { _, _ in
             calendarStore.mergeScheduledNotes(store.filteredNotes())
         }
+        .onChange(of: scheduledNotesHash) { _, _ in
+            calendarStore.mergeScheduledNotes(store.filteredNotes())
+        }
         .navigationTitle("")
         .background(AgendaColor.panelBg)
         .overlay(alignment: .leading) {
@@ -130,6 +133,19 @@ struct RelatedPanelContentView: View {
                 permissionCard
             }
         }
+    }
+
+    // MARK: - Notes Change Detection
+
+    /// Computed hash that changes whenever any note's scheduled date changes.
+    /// Triggers `.onChange` to re-merge scheduled notes into the timeline.
+    private var scheduledNotesHash: Int {
+        var hasher = Hasher()
+        for note in store.filteredNotes() {
+            hasher.combine(note.id)
+            hasher.combine(note.scheduledDate)
+        }
+        return hasher.finalize()
     }
 
     // MARK: - Scroll Helpers
