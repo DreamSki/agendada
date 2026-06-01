@@ -132,10 +132,17 @@ struct TimelineHeaderView: View {
                     ))
                     .frame(width: 8, height: 8)
 
-                Text(source.title)
-                    .font(.custom("Avenir Next", size: 13))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(source.title)
+                        .font(.custom("Avenir Next", size: 13))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+
+                    Text(source.accountTitle)
+                        .font(.custom("Avenir Next", size: 11))
+                        .foregroundStyle(AgendaColor.textMuted)
+                        .lineLimit(1)
+                }
 
                 Spacer()
             }
