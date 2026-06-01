@@ -4,7 +4,13 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="Agendada"
 CONFIGURATION="${AGENDADA_CONFIGURATION:-release}"
-PRODUCT_PATH="$ROOT_DIR/.build/$CONFIGURATION/$APP_NAME"
+ARCH="${AGENDADA_ARCH:-}"
+if [[ -n "$ARCH" ]]; then
+    TRIPLE_DIR="$ARCH-apple-macosx"
+    PRODUCT_PATH="$ROOT_DIR/.build/$TRIPLE_DIR/$CONFIGURATION/$APP_NAME"
+else
+    PRODUCT_PATH="$ROOT_DIR/.build/$CONFIGURATION/$APP_NAME"
+fi
 APP_DIR="$ROOT_DIR/dist/$APP_NAME.app"
 CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
@@ -12,13 +18,21 @@ RESOURCES_DIR="$CONTENTS_DIR/Resources"
 
 cd "$ROOT_DIR"
 if [[ "${AGENDADA_SKIP_BUILD:-0}" != "1" ]]; then
-    swift build -c "$CONFIGURATION"
+    if [[ -n "$ARCH" ]]; then
+        swift build -c "$CONFIGURATION" --arch "$ARCH"
+    else
+        swift build -c "$CONFIGURATION"
+    fi
 fi
 
 if [[ ! -x "$PRODUCT_PATH" ]]; then
     echo "Missing built executable: $PRODUCT_PATH" >&2
     echo "Run swift build first, or run this script without AGENDADA_SKIP_BUILD=1." >&2
     exit 1
+fi
+
+if command -v codesign >/dev/null 2>&1; then
+    codesign --force --sign - "$PRODUCT_PATH" >/dev/null
 fi
 
 rm -rf "$APP_DIR"
@@ -63,6 +77,14 @@ cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
     <string>public.app-category.productivity</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
+    <key>NSCalendarsFullAccessUsageDescription</key>
+    <string>Agendada 需要读取和显示你的日历事件，以便在时间线中关联日程。</string>
+    <key>NSCalendarsUsageDescription</key>
+    <string>Agendada 需要读取和显示你的日历事件，以便在时间线中关联日程。</string>
+    <key>NSRemindersFullAccessUsageDescription</key>
+    <string>Agendada 需要读取和管理你的提醒事项，以便在时间线中显示并勾选提醒。</string>
+    <key>NSRemindersUsageDescription</key>
+    <string>Agendada 需要读取和管理你的提醒事项，以便在时间线中显示并勾选提醒。</string>
     <key>NSHighResolutionCapable</key>
     <true/>
 </dict>

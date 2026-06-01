@@ -20,12 +20,12 @@ struct ContextMenuItem: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(title)
                         .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(Color(red: 0.12, green: 0.12, blue: 0.12))
+                        .foregroundStyle(AgendaColor.panelHeading)
                         .lineLimit(1)
 
                     Text(subtitle)
                         .font(.system(size: 12))
-                        .foregroundStyle(Color(red: 0.55, green: 0.55, blue: 0.55))
+                        .foregroundStyle(AgendaColor.panelSub)
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
                 }

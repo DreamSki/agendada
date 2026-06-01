@@ -53,6 +53,7 @@ struct NoteStreamView: View {
                 }
             }
             .padding(.horizontal, 32).padding(.top, 30)
+            .animation(.linear(duration: 0.1), value: store.isInBatchMode)
         }
     }
 
@@ -290,7 +291,7 @@ struct NoteStreamView: View {
     private var noteStreamContent: some View {
         let notes = store.filteredNotes()
         return ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
+            LazyVStack(alignment: .leading, spacing: 0) {
                 ForEach(notes) { note in
                     StreamNoteRow(note: note)
                         .id(note.id).padding(.bottom, AgendaSpacing.cardGap)
@@ -413,6 +414,10 @@ private struct StreamNoteRow: View {
     @State private var initialBlockJSON: Data?
     @State private var skipNextCardTap = false
     @State private var showDatePicker = false
+    @State private var showBulletMenu = false
+    @State private var bulletMenuSections: [AgendadaFloatingMenuSection] = []
+    @State private var bulletMenuPresenter = AgendadaFloatingMenuPresenter()
+    @State private var bulletMenuDismissedAt = Date.distantPast
     @State private var showSettingsPopover = false
 
     init(note: Note) {
@@ -524,21 +529,17 @@ private struct StreamNoteRow: View {
         .onChange(of: draft.peopleText) { scheduleSaveDraft() }
         .onChange(of: draft.status) { scheduleSaveDraft() }
         .onChange(of: store.selectedNoteID) { oldValue, newValue in
-            print("[HEIGHT-DEBUG] selectedNoteID changed note=\(note.id.uuidString.prefix(6)) old=\(oldValue?.uuidString.prefix(6) ?? "nil") new=\(newValue?.uuidString.prefix(6) ?? "nil")")
             if oldValue == note.id && newValue != note.id {
                 flushDraft()
                 // Reset editor height when deselected to prevent it from affecting other notes
-                print("[HEIGHT-DEBUG] Deselecting note=\(note.id.uuidString.prefix(6)) BEFORE reset editorHeight=\(editorHeight)")
                 editorHeight = 0
                 editorIsVisible = false
-                print("[HEIGHT-DEBUG] Deselecting note=\(note.id.uuidString.prefix(6)) AFTER reset editorHeight=\(editorHeight)")
             } else if newValue == note.id {
                 resetDraft()
                 prepareEditorOverlayForSelection()
             }
         }
         .onChange(of: note.id) {
-            print("[HEIGHT-DEBUG] note.id changed note=\(note.id.uuidString.prefix(6))")
             resetDraft()
         }
         .onDisappear { flushDraft() }
@@ -547,12 +548,8 @@ private struct StreamNoteRow: View {
     // MARK: - Body
 
     private var bodyContent: some View {
-        let popoverSlack: CGFloat = 0
         // Always use preview height to avoid height jumping. Editor height is only used internally.
         let cardHeight = capturedPreviewHeight
-
-        // Debug: Log height calculation
-        let _ = print("[HEIGHT-DEBUG] note=\(note.id.uuidString.prefix(6)) isSelected=\(isSelected) capturedPreviewHeight=\(capturedPreviewHeight) editorHeight=\(editorHeight) editorIsVisible=\(editorIsVisible) cardHeight=\(cardHeight)")
 
         return ZStack(alignment: .topLeading) {
             // Preview — always present, measures its natural height for card sizing.
@@ -569,7 +566,6 @@ private struct StreamNoteRow: View {
                     }
                 )
                 .onPreferenceChange(PreviewHeightKey.self) { h in
-                    print("[HEIGHT-DEBUG] onPreferenceChange note=\(note.id.uuidString.prefix(6)) oldHeight=\(capturedPreviewHeight) newHeight=\(h)")
                     if h > 0 { capturedPreviewHeight = h }
                 }
 
@@ -607,11 +603,13 @@ private struct StreamNoteRow: View {
                 Image(systemName: isBatchSelected ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 18, weight: .medium))
                     .foregroundStyle(isBatchSelected ? AgendaColor.amber : AgendaColor.textMuted)
+                    .transition(.scale.combined(with: .opacity))
             } else {
                 if isHovering || isSelected {
                     Circle()
                         .stroke(color, lineWidth: 1)
                         .frame(width: 20, height: 20)
+                        .transition(.scale.combined(with: .opacity))
                 }
                 if note.bodyPlainText.isEmpty {
                     Circle().fill(color).frame(width: 10, height: 10)
@@ -621,12 +619,198 @@ private struct StreamNoteRow: View {
             }
         }
         .frame(width: bulletCol, height: 24)
-        .animation(.spring(response: 0.35, dampingFraction: 0.6), value: isHovering || isSelected)
         .contentShape(Rectangle())
         .onTapGesture {
-            store.toggleBatchSelection(noteID: note.id)
             skipNextCardTap = true
+            if inBatch {
+                store.toggleBatchSelection(noteID: note.id)
+            } else {
+                toggleBulletMenu()
+            }
         }
+        .popover(isPresented: $showBulletMenu, attachmentAnchor: .point(.trailing), arrowEdge: .trailing) {
+            AgendadaFloatingMenuView(sections: bulletMenuSections, presenter: bulletMenuPresenter)
+                .presentationBackground(.clear)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
+            showBulletMenu = false
+        }
+        .onChange(of: showBulletMenu) { _, isPresented in
+            if !isPresented {
+                bulletMenuDismissedAt = Date()
+            }
+        }
+        .animation(.easeOut(duration: 0.15), value: inBatch)
+        .animation(.easeOut(duration: 0.15), value: isBatchSelected)
+        .animation(.easeOut(duration: 0.15), value: isHovering)
+    }
+
+    private func toggleBulletMenu() {
+        if showBulletMenu {
+            showBulletMenu = false
+            return
+        }
+        guard Date().timeIntervalSince(bulletMenuDismissedAt) > 0.18 else { return }
+
+        bulletMenuPresenter.configure(
+            dismiss: { showBulletMenu = false },
+            showSubmenu: { sections in bulletMenuSections = sections }
+        )
+        bulletMenuSections = bulletFloatingMenuSections()
+        showBulletMenu = true
+    }
+
+    private func bulletFloatingMenuSections() -> [AgendadaFloatingMenuSection] {
+        [
+            AgendadaFloatingMenuSection(items: [
+                AgendadaFloatingMenuItem(
+                    iconSystemName: note.isFocused ? "circle" : "smallcircle.filled.circle",
+                    title: note.isFocused ? "取消“简达”" : "标记为“简达”"
+                ) { _ in
+                    store.setFocused(!note.isFocused, noteID: note.id)
+                },
+                AgendadaFloatingMenuItem(
+                    iconSystemName: note.status == .completed ? "arrow.uturn.left" : "checkmark",
+                    title: note.status == .completed ? "标记为未完成" : "标记为已完成"
+                ) { _ in
+                    store.setStatus(note.status == .completed ? .open : .completed, noteID: note.id)
+                },
+                AgendadaFloatingMenuItem(
+                    iconSystemName: "square.fill",
+                    title: "使用颜色标记",
+                    showsSubmenuIndicator: true,
+                    dismissesAfterAction: false
+                ) { presenter in
+                    presenter.showSubmenu(sections: colorFloatingMenuSections())
+                }
+            ]),
+            AgendadaFloatingMenuSection(items: [
+                AgendadaFloatingMenuItem(
+                    iconSystemName: note.pinState == .pinnedTop ? "pin.slash" : "pin",
+                    title: note.pinState == .pinnedTop ? "取消置顶" : "置顶"
+                ) { _ in
+                    store.setPinState(note.pinState == .pinnedTop ? .none : .pinnedTop, noteID: note.id)
+                },
+                AgendadaFloatingMenuItem(
+                    iconSystemName: note.pinState == .pinnedBottom ? "arrow.up.to.line" : "arrow.down.to.line",
+                    title: note.pinState == .pinnedBottom ? "取消置底" : "置底"
+                ) { _ in
+                    store.setPinState(note.pinState == .pinnedBottom ? .none : .pinnedBottom, noteID: note.id)
+                },
+                AgendadaFloatingMenuItem(
+                    iconSystemName: note.isCollapsed ? "arrow.up.left.and.arrow.down.right" : "arrow.down.right.and.arrow.up.left",
+                    title: note.isCollapsed ? "展开笔记" : "折叠笔记"
+                ) { _ in
+                    store.setCollapsed(!note.isCollapsed, noteID: note.id)
+                },
+                AgendadaFloatingMenuItem(
+                    iconSystemName: "lock.fill",
+                    title: "锁定笔记...",
+                    isEnabled: false
+                ) { _ in }
+            ]),
+            AgendadaFloatingMenuSection(items: [
+                AgendadaFloatingMenuItem(
+                    iconSystemName: "gearshape",
+                    title: "其他操作",
+                    showsSubmenuIndicator: true,
+                    dismissesAfterAction: false
+                ) { presenter in
+                    presenter.showSubmenu(sections: moreActionsFloatingMenuSections())
+                }
+            ]),
+            AgendadaFloatingMenuSection(items: [
+                AgendadaFloatingMenuItem(
+                    iconSystemName: "checklist",
+                    title: "批量选择..."
+                ) { _ in
+                    store.toggleBatchSelection(noteID: note.id)
+                }
+            ])
+        ]
+    }
+
+    private func colorFloatingMenuSections() -> [AgendadaFloatingMenuSection] {
+        let colorItems = [AgendadaFloatingMenuItem(
+            iconSystemName: "xmark.circle",
+            title: "无颜色"
+        ) { _ in
+            store.setNoteColor(nil, noteID: note.id)
+        }] + NoteColor.allCases.map { color in
+            AgendadaFloatingMenuItem(
+                iconSystemName: "square.fill",
+                title: color.title
+            ) { _ in
+                store.setNoteColor(color, noteID: note.id)
+            }
+        }
+
+        return [AgendadaFloatingMenuSection(items: colorItems)]
+    }
+
+    private func moreActionsFloatingMenuSections() -> [AgendadaFloatingMenuSection] {
+        var firstSection: [AgendadaFloatingMenuItem] = [
+            AgendadaFloatingMenuItem(
+                iconSystemName: "doc.on.doc",
+                title: "拷贝笔记"
+            ) { _ in
+                store.duplicateNote(note.id)
+            }
+        ]
+
+        if !store.projects.isEmpty {
+            firstSection.append(
+                AgendadaFloatingMenuItem(
+                    iconSystemName: "folder",
+                    title: "移动到项目",
+                    showsSubmenuIndicator: true,
+                    dismissesAfterAction: false
+                ) { presenter in
+                    presenter.showSubmenu(sections: moveProjectFloatingMenuSections())
+                }
+            )
+        }
+
+        firstSection.append(contentsOf: [
+            AgendadaFloatingMenuItem(
+                iconSystemName: "square.and.arrow.up",
+                title: "分享..."
+            ) { _ in
+                shareNote()
+            },
+            AgendadaFloatingMenuItem(
+                iconSystemName: "printer",
+                title: "打印..."
+            ) { _ in
+                printNote()
+            }
+        ])
+
+        return [
+            AgendadaFloatingMenuSection(items: firstSection),
+            AgendadaFloatingMenuSection(items: [
+                AgendadaFloatingMenuItem(
+                    iconSystemName: "trash",
+                    title: "移到废纸篓",
+                    role: .destructive
+                ) { _ in
+                    store.deleteNote(note.id)
+                }
+            ])
+        ]
+    }
+
+    private func moveProjectFloatingMenuSections() -> [AgendadaFloatingMenuSection] {
+        [
+            AgendadaFloatingMenuSection(items: store.projects.map { project in
+                AgendadaFloatingMenuItem(
+                    iconSystemName: "folder",
+                    title: project.name
+                ) { _ in
+                    store.moveNotes([note.id], toProject: project.id)
+                }
+            })
+        ]
     }
 
     private func noteColorValue(_ c: NoteColor?) -> Color {
@@ -769,6 +953,24 @@ private struct StreamNoteRow: View {
         }.foregroundStyle(AgendaColor.amber)
     }
 
+    private func shareNote() {
+        let content = "\(note.title)\n\n\(note.bodyPlainText)"
+        let picker = NSSharingServicePicker(items: [content])
+        if let contentView = NSApp.keyWindow?.contentView {
+            picker.show(relativeTo: .zero, of: contentView, preferredEdge: .minY)
+        }
+    }
+
+    private func printNote() {
+        let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: 400, height: 600))
+        textView.string = "\(note.title)\n\n\(note.bodyPlainText)"
+        let printInfo = NSPrintInfo.shared
+        printInfo.topMargin = 36; printInfo.bottomMargin = 36
+        printInfo.leftMargin = 36; printInfo.rightMargin = 36
+        let printOp = NSPrintOperation(view: textView, printInfo: printInfo)
+        printOp.runModal(for: NSApp.keyWindow ?? NSWindow(), delegate: nil, didRun: nil, contextInfo: nil)
+    }
+
     @ViewBuilder
     private var contextMenuContent: some View {
         Button(note.isStarred ? "取消标星" : "标星") { store.setStarred(!note.isStarred, noteID: note.id) }
@@ -815,12 +1017,10 @@ private struct StreamNoteRow: View {
     }
 
     private func prepareEditorOverlayForSelection() {
-        print("[HEIGHT-DEBUG] prepareEditorOverlayForSelection note=\(note.id.uuidString.prefix(6)) BEFORE capturedPreviewHeight=\(capturedPreviewHeight) editorHeight=\(editorHeight)")
         editorHasUserChanges = false
         editorIsVisible = false
         initialBlockJSON = draft.blockJSON
         // Do NOT reset heights - let them be updated naturally
-        print("[HEIGHT-DEBUG] prepareEditorOverlayForSelection note=\(note.id.uuidString.prefix(6)) AFTER capturedPreviewHeight=\(capturedPreviewHeight) editorHeight=\(editorHeight)")
     }
 
     private func applyEditorContent(_ content: BlockNoteEditorContent) {
@@ -836,8 +1036,7 @@ private struct StreamNoteRow: View {
     }
 
     private func selectNoteAfterSavingActiveEditor() {
-        print("[TAP-DEBUG] selectNote called note=\(note.id.uuidString.prefix(6)) currentSelected=\(store.selectedNoteID?.uuidString.prefix(6) ?? "nil")")
-        guard store.selectedNoteID != note.id else { print("[TAP-DEBUG]   -> already selected, skip"); return }
+        guard store.selectedNoteID != note.id else { return }
 
         let hadChanges = SharedBlockNoteWebView.shared.hasContentChanges
         SharedBlockNoteWebView.shared.saveCurrentContentNow { content in
@@ -857,7 +1056,6 @@ private struct StreamNoteRow: View {
             }
 
             withAnimation(.easeInOut(duration: 0.12)) {
-                print("[TAP-DEBUG]   -> selecting note \(note.id.uuidString.prefix(6))")
                 prepareEditorOverlayForSelection()
                 store.selectNote(note.id)
             }
@@ -1167,3 +1365,5 @@ private struct SearchPopoverContent: View {
         .frame(width: 300)
     }
 }
+
+// MARK: - Bullet Menu State

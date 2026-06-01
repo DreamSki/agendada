@@ -4,7 +4,7 @@ import SwiftUI
 struct ContentView: View {
     @Environment(ObservableLibraryStore.self) private var store
     @State private var sidebarWidth: CGFloat = 240
-    @State private var detailWidth: CGFloat = 260
+    @State private var detailWidth: CGFloat = 340
 
     var body: some View {
         @Bindable var store = store

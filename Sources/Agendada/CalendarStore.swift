@@ -27,6 +27,7 @@ final class CalendarStore {
     @ObservationIgnored private var loadedStartDate: Date?
     @ObservationIgnored private var loadedEndDate: Date?
     @ObservationIgnored private var initialLoadDone = false
+    @ObservationIgnored private var isExtending = false
 
     // MARK: - Init
 
@@ -106,7 +107,10 @@ final class CalendarStore {
         showAllSources
     }
 
-    func enableAllSources() {
+    /// Toggle the "show all sources" state.
+    /// If currently showing all, deselect all sources.
+    /// If currently filtered, enable all sources.
+    func toggleAllSources() {
         // Toggle: if showing all, deselect all; otherwise select all
         if showAllSources {
             showAllSources = false
@@ -146,27 +150,27 @@ final class CalendarStore {
     func loadInitialData() async {
         let cal = Calendar.current
         let today = cal.startOfDay(for: Date())
-        let start = cal.date(byAdding: .day, value: -60, to: today)!
-        let end = cal.date(byAdding: .day, value: 180, to: today)!
+        let start = cal.date(byAdding: .day, value: -365, to: today)!
+        let end = cal.date(byAdding: .day, value: 365, to: today)!
 
         await loadSchedule(from: start, to: end)
         initialLoadDone = true
     }
 
     func loadSchedule(from startDate: Date, to endDate: Date) async {
+        let schedules = await fetchSchedules(from: startDate, to: endDate)
+        mergeSchedules(schedules, updateRange: true)
+    }
+
+    /// Fetch events and reminders for a date range, returning day schedules.
+    private func fetchSchedules(from startDate: Date, to endDate: Date) async -> [DaySchedule] {
         let cal = Calendar.current
         let startDay = cal.startOfDay(for: startDate)
         let endDay = cal.startOfDay(for: endDate)
 
-        // Track loaded range
-        loadedStartDate = startDay
-        loadedEndDate = endDay
-
-        // Determine which calendars to fetch based on filter
         let eventCalendarIDs = showAllSources ? nil : enabledSourceIDs
         let reminderCalendarIDs = showAllSources ? nil : enabledSourceIDs
 
-        // Fetch events
         var events: [CalendarEvent] = []
         if eventPermission == .granted {
             events = (try? repository.fetchEvents(
@@ -176,13 +180,11 @@ final class CalendarStore {
             )) ?? []
         }
 
-        // Fetch reminders
         var reminders: [CalendarReminder] = []
         if reminderPermission == .granted {
             reminders = await repository.fetchReminders(from: startDay, to: endDay, calendarIDs: reminderCalendarIDs)
         }
 
-        // Group by day
         var dayMap: [Date: DaySchedule] = [:]
         var currentDay = startDay
         while currentDay <= endDay {
@@ -190,17 +192,21 @@ final class CalendarStore {
             currentDay = cal.date(byAdding: .day, value: 1, to: currentDay)!
         }
 
-        // Assign events to days
         for event in events {
-            let eventDay = cal.startOfDay(for: event.startDate)
+            let eventStartDay = cal.startOfDay(for: event.startDate)
+            let eventEndDay = cal.startOfDay(for: event.endDate)
+
             if event.isAllDay {
-                dayMap[eventDay]?.allDayEvents.append(event)
+                var day = eventStartDay
+                while day <= eventEndDay && day <= endDay {
+                    dayMap[day]?.allDayEvents.append(event)
+                    day = cal.date(byAdding: .day, value: 1, to: day)!
+                }
             } else {
-                dayMap[eventDay]?.timedEvents.append(event)
+                dayMap[eventStartDay]?.timedEvents.append(event)
             }
         }
 
-        // Assign reminders to days by due date
         for reminder in reminders {
             if let due = reminder.dueDate {
                 let dueDay = cal.startOfDay(for: due)
@@ -208,55 +214,78 @@ final class CalendarStore {
             }
         }
 
-        // Sort within each day
         for key in dayMap.keys {
             dayMap[key]?.timedEvents.sort { $0.startDate < $1.startDate }
             dayMap[key]?.reminders.sort { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
         }
 
-        // Build sorted array — merge with existing data, preserving notes
-        var newSchedules = dayMap.values.sorted { $0.date < $1.date }
-        let newDates = Set(newSchedules.map { $0.date })
+        return dayMap.values.sorted { $0.date < $1.date }
+    }
 
-        // Preserve notes from existing schedules for dates in the new range
+    /// Merge fetched schedules into `daySchedules`, preserving notes from existing entries.
+    private func mergeSchedules(_ newSchedules: [DaySchedule], updateRange: Bool) {
+        var merged = newSchedules
+        let newDates = Set(merged.map { $0.date })
+
         let existingNotesMap: [Date: [ScheduledNoteInfo]] = Dictionary(
             uniqueKeysWithValues: daySchedules
                 .filter { newDates.contains($0.date) }
                 .map { ($0.date, $0.notes) }
         )
-
-        // Merge notes into new schedules
-        for i in newSchedules.indices {
-            let date = newSchedules[i].date
-            if let existingNotes = existingNotesMap[date] {
-                newSchedules[i].notes = existingNotes
+        for i in merged.indices {
+            if let existingNotes = existingNotesMap[merged[i].date] {
+                merged[i].notes = existingNotes
             }
         }
 
-        // Keep old dates outside the new range
         let keptOld = daySchedules.filter { !newDates.contains($0.date) }
-        daySchedules = (keptOld + newSchedules).sorted { $0.date < $1.date }
+        daySchedules = (keptOld + merged).sorted { $0.date < $1.date }
+
+        if updateRange {
+            if let first = newSchedules.first?.date {
+                if loadedStartDate == nil || first < loadedStartDate! {
+                    loadedStartDate = first
+                }
+            }
+            if let last = newSchedules.last?.date {
+                if loadedEndDate == nil || last > loadedEndDate! {
+                    loadedEndDate = last
+                }
+            }
+        }
     }
 
     /// Extend the loaded range when user scrolls near the edge.
+    /// Only fetches the NEW chunk — avoids EventKit's 4-year predicate limit.
     func extendRangeIfNeeded(visibleStart: Date, visibleEnd: Date) async {
-        guard let loadedStart = loadedStartDate, let loadedEnd = loadedEndDate else { return }
+        guard !isExtending,
+              let loadedStart = loadedStartDate,
+              let loadedEnd = loadedEndDate else { return }
 
         let cal = Calendar.current
         let day = cal.startOfDay(for: visibleStart)
 
         let daysFromStart = cal.dateComponents([.day], from: loadedStart, to: day).day ?? 0
-        if daysFromStart <= 10 {
-            let newStart = cal.date(byAdding: .day, value: -60, to: loadedStart)!
+        if daysFromStart <= 30 {
+            isExtending = true
+            let newStart = cal.date(byAdding: .day, value: -365, to: loadedStart)!
+            let chunkEnd = cal.date(byAdding: .day, value: -1, to: loadedStart)!
             loadedStartDate = newStart
-            await loadSchedule(from: newStart, to: loadedEnd)
+            let schedules = await fetchSchedules(from: newStart, to: chunkEnd)
+            mergeSchedules(schedules, updateRange: false)
+            isExtending = false
+            return
         }
 
         let daysFromEnd = cal.dateComponents([.day], from: day, to: loadedEnd).day ?? 0
-        if daysFromEnd <= 10 {
-            let newEnd = cal.date(byAdding: .day, value: 60, to: loadedEnd)!
+        if daysFromEnd <= 30 {
+            isExtending = true
+            let newEnd = cal.date(byAdding: .day, value: 365, to: loadedEnd)!
+            let chunkStart = cal.date(byAdding: .day, value: 1, to: loadedEnd)!
             loadedEndDate = newEnd
-            await loadSchedule(from: loadedStart, to: newEnd)
+            let schedules = await fetchSchedules(from: chunkStart, to: newEnd)
+            mergeSchedules(schedules, updateRange: false)
+            isExtending = false
         }
     }
 
@@ -265,7 +294,17 @@ final class CalendarStore {
             await loadInitialData()
             return
         }
-        await loadSchedule(from: start, to: end)
+        // Refresh in yearly chunks to stay within EventKit's range limit
+        let cal = Calendar.current
+        var chunkStart = start
+        var allSchedules: [DaySchedule] = []
+        while chunkStart < end {
+            let chunkEnd = min(cal.date(byAdding: .year, value: 3, to: chunkStart)!, end)
+            let chunk = await fetchSchedules(from: chunkStart, to: chunkEnd)
+            allSchedules.append(contentsOf: chunk)
+            chunkStart = cal.date(byAdding: .day, value: 1, to: chunkEnd)!
+        }
+        mergeSchedules(allSchedules, updateRange: false)
     }
 
     // MARK: - Mutations

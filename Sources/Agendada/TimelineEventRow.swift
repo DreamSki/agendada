@@ -18,10 +18,43 @@ struct TimelineEventRow: View {
         )
     }
 
+    private static let timeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm"
+        return f
+    }()
+
     private var timeString: String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm"
-        return formatter.string(from: event.startDate)
+        Self.timeFormatter.string(from: event.startDate)
+    }
+
+    private var relativeTimeString: String {
+        let now = Date()
+        let interval = event.startDate.timeIntervalSince(now)
+
+        if interval < 0 {
+            let pastInterval = abs(interval)
+            if pastInterval < 60 { return "刚刚" }
+            if pastInterval < 3600 { return "\(Int(pastInterval / 60))分钟前" }
+            if pastInterval < 86400 { return "\(Int(pastInterval / 3600))小时前" }
+            return timeString
+        } else {
+            if interval < 3600 { return "\(Int(interval / 60))分钟后" }
+            if interval < 86400 {
+                let hours = Int(interval / 3600)
+                let minutes = Int((interval.truncatingRemainder(dividingBy: 3600)) / 60)
+                if minutes > 0 {
+                    return "\(hours)小时\(minutes)分后"
+                }
+                return "\(hours)小时后"
+            }
+            return timeString
+        }
+    }
+
+    private var isCurrentlyActive: Bool {
+        let now = Date()
+        return now >= event.startDate && now <= event.endDate
     }
 
     private var selectedNote: AgendadaCore.Note? {
@@ -31,42 +64,61 @@ struct TimelineEventRow: View {
     var body: some View {
         Button(action: { showPopover = true }) {
             HStack(spacing: 8) {
+                // Spine dot — calendar color
+                Circle()
+                    .fill(calendarColor.opacity(0.8))
+                    .frame(width: 4, height: 4)
+
                 if event.isAllDay {
-                    Text("全天")
-                        .font(.custom("Avenir Next", size: 11))
-                        .foregroundStyle(calendarColor.opacity(0.8))
-                        .frame(width: 38, alignment: .trailing)
+                    Text("全日")
+                        .font(AgendaFont.panelCaption)
+                        .foregroundStyle(AgendaColor.panelAllDayText)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(AgendaColor.panelAllDayBg))
                 } else {
                     Text(timeString)
-                        .font(.custom("Avenir Next", size: 12))
-                        .foregroundStyle(Color(red: 0.45, green: 0.45, blue: 0.45))
-                        .frame(width: 38, alignment: .trailing)
+                        .font(AgendaFont.panelCaption)
+                        .foregroundStyle(AgendaColor.panelSub)
+                        .frame(width: 34, alignment: .leading)
+
+                    if !isCurrentlyActive && abs(event.startDate.timeIntervalSince(Date())) < 86400 {
+                        Text(relativeTimeString)
+                            .font(AgendaFont.panelMicro)
+                            .foregroundStyle(AgendaColor.panelHint)
+                    }
                 }
 
-                RoundedRectangle(cornerRadius: 1.5)
-                    .fill(calendarColor)
-                    .frame(width: 3, height: 18)
-
                 Text(event.title)
-                    .font(.custom("Avenir Next", size: 13))
-                    .foregroundStyle(Color(red: 0.20, green: 0.20, blue: 0.20))
+                    .font(AgendaFont.panelBody)
+                    .foregroundStyle(AgendaColor.panelBody)
                     .lineLimit(1)
 
                 Spacer()
 
                 if !event.isAllDay && isCurrentlyActive {
                     Text("现在")
-                        .font(.custom("Avenir Next", size: 11))
+                        .font(AgendaFont.panelCaption)
                         .foregroundStyle(AgendaColor.amber)
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 6)
+            .padding(.vertical, 5)
+            .padding(.leading, AgendaSpacing.timelineRowIndent)
+            .padding(.trailing, AgendaSpacing.panelPaddingH)
             .background(
-                isHovered
-                    ? Color(red: 0.95, green: 0.95, blue: 0.95)
-                    : Color.clear
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(isHovered ? AgendaColor.panelHover.opacity(0.6) : Color.clear)
+                    .animation(.easeOut(duration: 0.2), value: isHovered)
             )
+            .overlay(alignment: .leading) {
+                if isHovered {
+                    RoundedRectangle(cornerRadius: 1)
+                        .fill(calendarColor.opacity(0.7))
+                        .frame(width: 2.5, height: 14)
+                        .padding(.leading, AgendaSpacing.timelineHoverBarOffset)
+                        .transition(.opacity.animation(.easeOut(duration: 0.2)))
+                }
+            }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -76,10 +128,7 @@ struct TimelineEventRow: View {
         }
     }
 
-    private var isCurrentlyActive: Bool {
-        let now = Date()
-        return now >= event.startDate && now <= event.endDate
-    }
+    // MARK: - Popover
 
     private var eventPopover: some View {
         VStack(alignment: .leading, spacing: 4) {

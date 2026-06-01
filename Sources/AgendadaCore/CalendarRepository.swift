@@ -108,13 +108,10 @@ public final class CalendarRepository: @unchecked Sendable {
         let startDay = cal.startOfDay(for: startDate)
         let endDay = cal.startOfDay(for: cal.date(byAdding: .day, value: 1, to: endDate) ?? endDate)
 
-        return reminderData.compactMap { reminder in
-            guard !reminder.isCompleted else { return nil }
-            if let due = reminder.dueDate {
-                let dueDay = cal.startOfDay(for: due)
-                guard dueDay >= startDay && dueDay < endDay else { return nil }
-            }
-            return reminder
+        return reminderData.filter { reminder in
+            guard let due = reminder.dueDate else { return false }
+            let dueDay = cal.startOfDay(for: due)
+            return dueDay >= startDay && dueDay < endDay
         }
     }
 

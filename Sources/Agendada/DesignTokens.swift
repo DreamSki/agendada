@@ -32,14 +32,36 @@ enum AgendaColor {
     static let sidebarHoverBg = Color(red: 0.918, green: 0.918, blue: 0.918)
     static let sidebarBorder = Color(red: 0.898, green: 0.898, blue: 0.898)
 
-    // Right panel — bg #FAFAFA
-    static let panelBg = Color(red: 0.980, green: 0.980, blue: 0.980)
+    // Right panel — warm off-white #FAF9F6
+    static let panelBg = Color(red: 0.980, green: 0.976, blue: 0.965)
 
-    // Text
+    // Panel text hierarchy
+    static let panelHeading = Color(red: 0.125, green: 0.129, blue: 0.141)    // #202124
+    static let panelBody = Color(red: 0.184, green: 0.204, blue: 0.216)       // #2F3437
+    static let panelSub = Color(red: 0.541, green: 0.561, blue: 0.596)        // #8A8F98
+    static let panelHint = Color(red: 0.710, green: 0.722, blue: 0.745)       // #B5B8BE
+
+    // Panel warm divider #EEE8DF
+    static let panelWarmDivider = Color(red: 0.933, green: 0.910, blue: 0.875)
+
+    // Panel all-day event tag
+    static let panelAllDayBg = Color(red: 0.906, green: 0.969, blue: 0.925)    // #E7F7EC
+    static let panelAllDayText = Color(red: 0.149, green: 0.635, blue: 0.412)  // #26A269
+
+    // Panel hover #FFF7EC
+    static let panelHover = Color(red: 1.0, green: 0.969, blue: 0.925)
+
+    // Panel icon gray (for section icons)
+    static let panelIconGray = Color(red: 0.604, green: 0.604, blue: 0.604)   // #9A9A9A
+
+    // Panel timeline spine
+    static let panelSpine = panelWarmDivider.opacity(0.6)
+
+    // Text (legacy — used by sidebar and other components)
     static let textPrimary = Color.primary
     static let textSecondary = Color.secondary
-    static let textMuted = Color(red: 0.557, green: 0.557, blue: 0.576) // #8E8E93
-    static let textBody = Color(red: 0.20, green: 0.20, blue: 0.20)    // #333333
+    static let textMuted = Color(red: 0.557, green: 0.557, blue: 0.576)       // #8E8E93
+    static let textBody = Color(red: 0.20, green: 0.20, blue: 0.20)           // #333333
 
     // Dividers
     static let divider = Color.primary.opacity(0.08)
@@ -70,11 +92,13 @@ enum AgendaFont {
     static let sidebarItem: Font = .custom("Avenir Next", size: 13)
     static let sidebarItemActive: Font = .custom("Avenir Next Medium", size: 13)
 
-    // Panel
-    static let panelSectionHeader: Font = .custom("Avenir Next Medium", size: 12)
-    static let panelTitle: Font = .custom("Avenir Next Medium", size: 13)
-    static let panelBody: Font = .custom("Avenir Next", size: 13)
-    static let panelSubtitle: Font = .custom("Avenir Next", size: 11)
+    // Panel — 5-level type scale
+    static let panelHeader: Font = .custom("Avenir Next Demi Bold", size: 15)
+    static let panelSectionTitle: Font = .custom("Avenir Next Medium", size: 13)
+    static let panelBody: Font = .custom("Avenir Next", size: 12)
+    static let panelBodyMedium: Font = .custom("Avenir Next Medium", size: 12)
+    static let panelCaption: Font = .custom("Avenir Next", size: 10)
+    static let panelMicro: Font = .custom("Avenir Next", size: 9)
 
     // Date chips
     static let dateChip: Font = .custom("Avenir Next Medium", size: 13)
@@ -97,9 +121,24 @@ enum AgendaSpacing {
     static let sidebarPaddingH: CGFloat = 13
     static let sidebarIconCol: CGFloat = 24
 
-    // Panel
-    static let panelPaddingH: CGFloat = 16
-    static let panelPaddingTop: CGFloat = 16
+    // Panel (compact sidebar layout)
+    static let panelPaddingH: CGFloat = 22
+    static let panelModuleSpacing: CGFloat = 24
+    static let panelCardRadius: CGFloat = 18
+    static let panelSectionRadius: CGFloat = 16
+    static let panelCardPadding: CGFloat = 18
+
+    // Panel — collapsible sections
+    static let panelSectionHeaderH: CGFloat = 28
+    static let panelSpineLeading: CGFloat = 14
+    static let panelLevel1: CGFloat = 40   // Event/reminder indent = panelPaddingH + 18
+
+    // Panel — timeline specific
+    static let timelineRowIndent: CGFloat = 30        // Event/reminder row indent from left edge
+    static let timelineTodayTopSpacing: CGFloat = 10 // Extra top spacing for today row (vs 6 for normal days)
+    static let timelineHoverBarOffset: CGFloat = 4   // Hover bar offset from row left edge
+    static let timelineDateDotLeadingAdjust: CGFloat = -3
+    static let timelineTodayBarOffset: CGFloat = -2  // Today amber bar offset from spine
 
     // Body text — leading-relaxed ≈ 1.625 line height
     static let bodyLineSpacing: CGFloat = 4

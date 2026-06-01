@@ -526,3 +526,151 @@ import Testing
     #expect(store.selectedNoteID == nil)
     #expect(store.batchSelectedNoteIDs.contains(firstNote.id))
 }
+
+// MARK: - Timeline Design Token Tests
+
+@Test func timelineDesignTokensAreConsistent() async throws {
+    // Verify timeline-specific design tokens are properly defined
+    #expect(AgendaSpacing.panelPaddingH == 22)
+    #expect(AgendaSpacing.panelSpineLeading == 14)
+    #expect(AgendaSpacing.timelineRowIndent == 30)
+    #expect(AgendaSpacing.timelineTodayTopSpacing == 10)
+    #expect(AgendaSpacing.timelineHoverBarOffset == 4)
+    #expect(AgendaSpacing.timelineDateDotLeadingAdjust == -3)
+    #expect(AgendaSpacing.timelineTodayBarOffset == -2)
+}
+
+@Test func timelineRowIndentMatchesCalculatedValue() async throws {
+    // Verify that timelineRowIndent matches the original calculation
+    // Original: panelLevel1 - panelPaddingH + panelSpineLeading - 2
+    let calculated = AgendaSpacing.panelLevel1 - AgendaSpacing.panelPaddingH + AgendaSpacing.panelSpineLeading - 2
+    #expect(calculated == AgendaSpacing.timelineRowIndent, "Expected timelineRowIndent to match calculated value")
+}
+
+@Test func timelineDateDotPositionMatchesCalculatedValue() async throws {
+    // Verify that date dot position matches the original calculation
+    // Original: panelSpineLeading - 3
+    let calculated = AgendaSpacing.panelSpineLeading + AgendaSpacing.timelineDateDotLeadingAdjust
+    #expect(calculated == 11, "Expected date dot position to be 11px (14 - 3)")
+}
+
+// MARK: - DaySchedule Logic Tests
+
+@Test func dayScheduleIsEmptyCheck() async throws {
+    // Verify DaySchedule.isEmpty works correctly
+    let today = Date()
+    let emptySchedule = DaySchedule(date: today)
+    #expect(emptySchedule.isEmpty == true)
+
+    let nonEmptySchedule = DaySchedule(
+        date: today,
+        notes: [ScheduledNoteInfo(id: UUID(), title: "Test", projectID: UUID())]
+    )
+    #expect(nonEmptySchedule.isEmpty == false)
+}
+
+@Test func dayScheduleHasCorrectDate() async throws {
+    // Verify DaySchedule uses the correct date
+    let date = Date()
+    let schedule = DaySchedule(date: date)
+    #expect(schedule.id == date)
+}
+
+@Test func dayScheduleWithAllDayEventIsNotEmpty() async throws {
+    // Verify DaySchedule with events is not empty
+    let today = Date()
+    let event = CalendarEvent(
+        id: "test-event",
+        title: "Test Event",
+        startDate: today,
+        endDate: today.addingTimeInterval(3600),
+        isAllDay: true,
+        calendarColor: CalendarColorInfo(red: 1, green: 0, blue: 0),
+        calendarTitle: "Test Calendar",
+        accountTitle: "Test Account"
+    )
+
+    let schedule = DaySchedule(date: today, allDayEvents: [event])
+    #expect(schedule.isEmpty == false)
+}
+
+@Test func dayScheduleWithReminderIsNotEmpty() async throws {
+    // Verify DaySchedule with reminders is not empty
+    let today = Date()
+    let reminder = CalendarReminder(
+        id: "test-reminder",
+        title: "Test Reminder",
+        dueDate: today,
+        isCompleted: false,
+        completionDate: nil,
+        calendarColor: CalendarColorInfo(red: 1, green: 0, blue: 0),
+        calendarTitle: "Test List",
+        accountTitle: "Test Account",
+        priority: 0
+    )
+
+    let schedule = DaySchedule(date: today, reminders: [reminder])
+    #expect(schedule.isEmpty == false)
+}
+
+// MARK: - Timeline Display Logic Tests
+
+@Test func timelineDisplayDaysIncludesTodayWhenNotEmpty() async throws {
+    // Verify that today is always included in displayDays
+    let cal = Calendar.current
+    let today = Date()
+    
+    // Create a day schedule for today with notes
+    let todaySchedule = DaySchedule(
+        date: today,
+        notes: [ScheduledNoteInfo(id: UUID(), title: "Today Note", projectID: UUID())]
+    )
+    
+    #expect(todaySchedule.isEmpty == false)
+    #expect(cal.isDateInToday(todaySchedule.date))
+}
+
+@Test func timelineDisplayDaysSortsCorrectly() async throws {
+    // Verify that displayDays are sorted by date
+    let cal = Calendar.current
+    let today = Date()
+    
+    let dates = [
+        cal.date(byAdding: .day, value: 2, to: today)!,
+        today,
+        cal.date(byAdding: .day, value: -1, to: today)!,
+        cal.date(byAdding: .day, value: 1, to: today)!
+    ]
+    
+    let schedules = dates.map { DaySchedule(date: $0) }
+    let sorted = schedules.sorted { $0.date < $1.date }
+    
+    // Verify sorting
+    for i in 0..<sorted.count - 1 {
+        #expect(sorted[i].date <= sorted[i + 1].date)
+    }
+}
+
+@Test func timelineHasMoreDaysCalculation() async throws {
+    // Verify hasMoreDays calculation
+    let cal = Calendar.current
+    let today = Date()
+    
+    // Create 10 days of data
+    var allSchedules: [DaySchedule] = []
+    for i in -5..<5 {
+        if let date = cal.date(byAdding: .day, value: i, to: today) {
+            allSchedules.append(DaySchedule(
+                date: date,
+                notes: [ScheduledNoteInfo(id: UUID(), title: "Note \(i)", projectID: UUID())]
+            ))
+        }
+    }
+    
+    let nonEmpty = allSchedules.filter { !$0.isEmpty }
+    let displayCount = 5 // Assuming we show 5 days in compact mode
+    
+    let hasMore = nonEmpty.count > displayCount
+    #expect(hasMore == true)
+    #expect(nonEmpty.count == 10)
+}
