@@ -77,22 +77,14 @@ final class CalendarStore {
     }
 
     func toggleSource(_ sourceID: String) {
-        if showAllSources {
-            // First click in "show all" mode: switch to filter mode with only this source
-            showAllSources = false
-            enabledSourceIDs = [sourceID]
+        // Toggle individual source: if selected, deselect; if not selected, select
+        if enabledSourceIDs.contains(sourceID) {
+            enabledSourceIDs.remove(sourceID)
         } else {
-            // In filter mode: toggle this source
-            if enabledSourceIDs.contains(sourceID) {
-                enabledSourceIDs.remove(sourceID)
-                // If no sources left, switch back to show all
-                if enabledSourceIDs.isEmpty {
-                    showAllSources = true
-                }
-            } else {
-                enabledSourceIDs.insert(sourceID)
-            }
+            enabledSourceIDs.insert(sourceID)
         }
+        // Auto-switch to/from show all mode
+        showAllSources = enabledSourceIDs.isEmpty || enabledSourceIDs.count == calendarSources.count
         Task { await refresh() }
     }
 
@@ -101,8 +93,14 @@ final class CalendarStore {
     }
 
     func enableAllSources() {
-        showAllSources = true
-        enabledSourceIDs.removeAll()
+        // Toggle: if all selected, deselect all; if not all selected, select all
+        if showAllSources || enabledSourceIDs.count == calendarSources.count {
+            showAllSources = false
+            enabledSourceIDs.removeAll()
+        } else {
+            showAllSources = true
+            enabledSourceIDs.removeAll()
+        }
         Task { await refresh() }
     }
 
