@@ -8,6 +8,7 @@ struct TimelineDateRow: View {
     let onNewNote: (() -> Void)?
     let onNewEvent: (() -> Void)?
     let onSelectNote: ((UUID) -> Void)?
+    @Environment(ObservableLibraryStore.self) private var store
 
     @State private var showPopover = false
     @State private var showNotePopover = false
@@ -32,25 +33,29 @@ struct TimelineDateRow: View {
         }
     }
 
+    private var fullDateString: String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "yyyy年M月d日 EEEE"
+        return formatter.string(from: date)
+    }
+
     var body: some View {
         HStack(spacing: 6) {
-            // Today indicator — small solid amber dot
             Circle()
                 .fill(isToday ? AgendaColor.amber : Color.clear)
                 .frame(width: 6, height: 6)
 
-            // Date label — click for date actions
             Button(action: { showPopover = true }) {
                 Text(dateLabel)
                     .font(.custom("Avenir Next", size: 13))
                     .foregroundStyle(isToday ? AgendaColor.amber : Color(red: 0.35, green: 0.35, blue: 0.35))
             }
             .buttonStyle(.plain)
-            .popover(isPresented: $showPopover, arrowEdge: .bottom) {
+            .popover(isPresented: $showPopover, arrowEdge: .trailing) {
                 datePopover
             }
 
-            // Note indicator button — only if there are scheduled notes
             if !notes.isEmpty {
                 Button(action: { showNotePopover = true }) {
                     HStack(spacing: 3) {
@@ -63,7 +68,7 @@ struct TimelineDateRow: View {
                 }
                 .buttonStyle(.plain)
                 .help("\(notes.count) 条排期笔记")
-                .popover(isPresented: $showNotePopover, arrowEdge: .bottom) {
+                .popover(isPresented: $showNotePopover, arrowEdge: .trailing) {
                     notePopover
                 }
             }
@@ -91,10 +96,8 @@ struct TimelineDateRow: View {
         .onHover { isHovered = $0 }
     }
 
-    // MARK: - Note Popover
-
     private var notePopover: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 4) {
             Text("排期笔记")
                 .font(.custom("Avenir Next", size: 12))
                 .foregroundStyle(AgendaColor.textMuted)
@@ -131,57 +134,52 @@ struct TimelineDateRow: View {
         .padding(.vertical, 4)
     }
 
-    // MARK: - Date Popover
-
     private var datePopover: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            if let onNewNote {
-                Button {
-                    onNewNote()
-                    showPopover = false
-                } label: {
-                    HStack {
-                        Image(systemName: "doc.badge.plus")
-                            .font(.system(size: 13))
-                            .foregroundStyle(AgendaColor.amber)
-                            .frame(width: 18)
-                        Text("在这一天新建笔记")
-                            .font(.custom("Avenir Next", size: 13))
-                            .foregroundStyle(.primary)
-                        Spacer()
+        VStack(alignment: .leading, spacing: 4) {
+            // Go to scheduled notes
+            if !notes.isEmpty {
+                ContextMenuItem(
+                    icon: "arrow.forward.circle",
+                    title: "前往被指定的笔记",
+                    subtitle: "跳转到指定于这天的笔记",
+                    action: {
+                        if let firstNote = notes.first {
+                            onSelectNote?(firstNote.id)
+                        }
+                        showPopover = false
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 7)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .buttonStyle(.plain)
+                )
+
+                ContextMenuDivider()
             }
 
-            Divider().padding(.horizontal, 8)
-
-            if let onNewEvent {
-                Button {
-                    onNewEvent()
-                    showPopover = false
-                } label: {
-                    HStack {
-                        Image(systemName: "calendar.badge.plus")
-                            .font(.system(size: 13))
-                            .foregroundStyle(AgendaColor.amber)
-                            .frame(width: 18)
-                        Text("新建日程")
-                            .font(.custom("Avenir Next", size: 13))
-                            .foregroundStyle(.primary)
-                        Spacer()
+            // New note on this date
+            if let onNew = onNewNote {
+                ContextMenuItem(
+                    icon: "doc.badge.plus",
+                    title: "在这一天新建笔记",
+                    subtitle: "新建一条笔记，指定日期 \(fullDateString)",
+                    action: {
+                        onNew()
+                        showPopover = false
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 7)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .buttonStyle(.plain)
+                )
+            }
+
+            // New event on this date
+            if let onNew = onNewEvent {
+                ContextMenuItem(
+                    icon: "calendar.badge.plus",
+                    title: "新建日程",
+                    subtitle: "在「日历」App 中添加 \(fullDateString) 的日程",
+                    action: {
+                        onNew()
+                        showPopover = false
+                    }
+                )
             }
         }
-        .frame(width: 180)
+        .frame(width: 360)
         .padding(.vertical, 4)
     }
 }
