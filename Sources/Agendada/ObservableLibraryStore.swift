@@ -604,7 +604,6 @@ final class ObservableLibraryStore {
 
     func filteredNotes() -> [Note] {
         observeRevision()
-        // Return cached result when store state hasn't changed and search text is stable.
         if let cached = cachedFilteredNotes,
            cachedFilteredNotesRevision == revision,
            cachedFilteredNotesSearchText == store.searchText {
@@ -614,7 +613,28 @@ final class ObservableLibraryStore {
         cachedFilteredNotes = result
         cachedFilteredNotesRevision = revision
         cachedFilteredNotesSearchText = store.searchText
+        // Invalidate derived caches
+        cachedScheduledNotesHash = nil
         return result
+    }
+
+    /// Cached hash of scheduled notes (id + scheduledDate) for RelatedPanelContentView.
+    /// Computed once per filteredNotes() result to avoid O(n) hashing in view body.
+    @ObservationIgnored
+    private var cachedScheduledNotesHash: Int?
+
+    var scheduledNotesHash: Int {
+        observeRevision()
+        if let cached = cachedScheduledNotesHash { return cached }
+        var hasher = Hasher()
+        let notes = filteredNotes()
+        for note in notes {
+            hasher.combine(note.id)
+            hasher.combine(note.scheduledDate)
+        }
+        let hash = hasher.finalize()
+        cachedScheduledNotesHash = hash
+        return hash
     }
 
     private func invalidateFilteredNotesCache() {

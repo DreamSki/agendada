@@ -7,32 +7,87 @@ struct BlockNotePreviewView: View {
     var maxBlocks: Int?
     var highlightText: String = ""
 
-    /// Simple hash-based cache for block decode, shared across all preview instances.
-    /// Avoids JSON parsing on every render when blockJSON hasn't changed.
-    private static var decodeCache: [Int: [PreviewBlock]] = [:]
-    private static var decodeCacheKeys: [Int] = []  // LRU-ish eviction order
+    /// Cache entry bundling decoded blocks and flattened visible items.
+    /// Avoids both JSON decoding and recursive tree flattening on every body eval.
+    private struct CacheEntry {
+        let blocks: [PreviewBlock]
+        let visibleItems: [PreviewRenderItem]
+    }
+
+    /// Cache keyed by note.id + blockJSON fingerprint for stability.
+    /// Uses note.id for semantic identity and blockJSON byte count + first-byte
+    /// hash as a cheap content fingerprint.
+    private static var decodeCache: [Int: CacheEntry] = [:]
+    private static var decodeCacheKeys: [Int] = []
     private static let decodeCacheMax = 128
 
-    private var blocks: [PreviewBlock] {
-        let key = note.blockJSON.hashValue
+    private var cacheKey: Int {
+        var h = Hasher()
+        h.combine(note.id)
+        h.combine(note.blockJSON.count)
+        // Use first & last 8 bytes as cheap content fingerprint
+        let data = note.blockJSON
+        if data.count >= 8 {
+            h.combine(data[data.startIndex..<data.startIndex.advanced(by: min(8, data.count))])
+        }
+        if data.count > 8 {
+            let lastStart = data.endIndex.advanced(by: -min(8, data.count - 8))
+            h.combine(data[lastStart..<data.endIndex])
+        }
+        return h.finalize()
+    }
+
+    private var cacheEntry: CacheEntry {
+        let key = cacheKey
         if let cached = Self.decodeCache[key] {
             return cached
         }
         let decoded = PreviewBlock.decode(from: note.blockJSON)
-        Self.decodeCache[key] = decoded
+        let items = Self.flattenAndFilter(decoded)
+        let entry = CacheEntry(blocks: decoded, visibleItems: items)
+        Self.decodeCache[key] = entry
         Self.decodeCacheKeys.append(key)
         if Self.decodeCacheKeys.count > Self.decodeCacheMax {
             Self.decodeCache.removeValue(forKey: Self.decodeCacheKeys.removeFirst())
         }
-        return decoded
+        return entry
     }
 
+    private var blocks: [PreviewBlock] { cacheEntry.blocks }
+
     private var visibleItems: [PreviewRenderItem] {
-        let visible = flattenedItems(from: blocks).filter { !$0.block.isVisuallyEmpty }
         if let maxBlocks = maxBlocks {
-            return Array(visible.prefix(maxBlocks))
+            return Array(cacheEntry.visibleItems.prefix(maxBlocks))
         }
-        return visible
+        return cacheEntry.visibleItems
+    }
+
+    private static func flattenAndFilter(_ blocks: [PreviewBlock]) -> [PreviewRenderItem] {
+        var items: [PreviewRenderItem] = []
+        var numberedIndex = 1
+
+        func walk(_ blockList: [PreviewBlock], depth: Int) {
+            for block in blockList {
+                let numberIndex: Int?
+                if block.type == "numberedListItem" {
+                    numberIndex = numberedIndex
+                    numberedIndex += 1
+                } else {
+                    numberIndex = nil
+                    numberedIndex = 1
+                }
+
+                items.append(PreviewRenderItem(block: block, depth: depth, numberIndex: numberIndex))
+                if let children = block.children, !children.isEmpty {
+                    walk(children, depth: depth + 1)
+                }
+            }
+        }
+
+        walk(blocks, depth: 0)
+        // isVisuallyEmpty always returns false, so filter is a no-op.
+        // Keep it for future use but skip the work now.
+        return items
     }
 
     var body: some View {
@@ -59,28 +114,6 @@ struct BlockNotePreviewView: View {
         .padding(.trailing, PreviewMetrics.editorTrailingPadding)
     }
 
-    private func flattenedItems(from blocks: [PreviewBlock], depth: Int = 0) -> [PreviewRenderItem] {
-        var items: [PreviewRenderItem] = []
-        var numberedIndex = 1
-
-        for block in blocks {
-            let numberIndex: Int?
-            if block.type == "numberedListItem" {
-                numberIndex = numberedIndex
-                numberedIndex += 1
-            } else {
-                numberIndex = nil
-                numberedIndex = 1
-            }
-
-            items.append(PreviewRenderItem(block: block, depth: depth, numberIndex: numberIndex))
-            if let children = block.children, !children.isEmpty {
-                items.append(contentsOf: flattenedItems(from: children, depth: depth + 1))
-            }
-        }
-
-        return items
-    }
 }
 
 // MARK: - Metrics (基于对比视图精准测量)

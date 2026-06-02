@@ -796,8 +796,8 @@ public final class LibraryStore {
                 }
                 switch (lhs.position, rhs.position) {
                 case let (l?, r?): return l < r
-                case (_?, nil): return true
-                case (nil, _?): return false
+                case (_?, nil): return false   // nil (new) notes sort on top
+                case (nil, _?): return true   // nil (new) notes sort on top
                 case (nil, nil): return lhs.editedAt > rhs.editedAt
                 }
             }
@@ -1279,23 +1279,23 @@ public final class LibraryStore {
             var noteOccIdx = 0
             var bodyIdx = 0
 
+            // 在标题中搜索（标题匹配排在正文前面）
+            let title = note.title
+            for keyword in keywords {
+                findOccurrences(
+                    in: title, keyword: keyword,
+                    field: .title, note: note,
+                    occurrences: &occurrences, globalIdx: &globalIdx,
+                    noteOccIdx: &noteOccIdx, bodyIdx: &bodyIdx
+                )
+            }
+
             // 在正文中搜索
             let body = note.bodyPlainText
             for keyword in keywords {
                 findOccurrences(
                     in: body, keyword: keyword,
                     field: .body, note: note,
-                    occurrences: &occurrences, globalIdx: &globalIdx,
-                    noteOccIdx: &noteOccIdx, bodyIdx: &bodyIdx
-                )
-            }
-
-            // 在标题中搜索
-            let title = note.title
-            for keyword in keywords {
-                findOccurrences(
-                    in: title, keyword: keyword,
-                    field: .title, note: note,
                     occurrences: &occurrences, globalIdx: &globalIdx,
                     noteOccIdx: &noteOccIdx, bodyIdx: &bodyIdx
                 )

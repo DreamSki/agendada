@@ -31,7 +31,8 @@ struct RelatedPanelContentView: View {
     @State private var showFilterPopover = false
     @State private var filterMenuPresenter = AgendadaFloatingMenuPresenter()
     @State private var filterMenuDismissedAt = Date.distantPast
-    @State private var scrollDebounceTask: Task<Void, Never>?
+    @State private var lastScrollProcessTime: Date = .distantPast
+    @State private var pendingScrollWorkItem: DispatchWorkItem?
 
     private var focusedMonth: String {
         CalendarStore.formatMonth(focusedMonthDate)
@@ -92,7 +93,7 @@ struct RelatedPanelContentView: View {
         .onChange(of: calendarStore.daySchedules.count) { _, _ in
             calendarStore.mergeScheduledNotes(store.filteredNotes())
         }
-        .onChange(of: scheduledNotesHash) { _, _ in
+        .onChange(of: store.scheduledNotesHash) { _, _ in
             calendarStore.mergeScheduledNotes(store.filteredNotes())
         }
         .onChange(of: timelineExpanded) { _, expanded in
@@ -132,14 +133,9 @@ struct RelatedPanelContentView: View {
 
     // MARK: - Data
 
-    private var scheduledNotesHash: Int {
-        var hasher = Hasher()
-        for note in store.filteredNotes() {
-            hasher.combine(note.id)
-            hasher.combine(note.scheduledDate)
-        }
-        return hasher.finalize()
-    }
+    /// Cached displayDays to avoid filtering 730+ entries on every body evaluation.
+    @State private var cachedDisplayDays: [DaySchedule] = []
+    @State private var cachedDisplayDaysSourceHash: Int = 0
 
     private var todaySchedule: DaySchedule? {
         let today = Calendar.current.startOfDay(for: Date())
@@ -149,6 +145,18 @@ struct RelatedPanelContentView: View {
     }
 
     private var displayDays: [DaySchedule] {
+        // Compute a hash of the source data to decide whether we need to rebuild.
+        var h = Hasher()
+        h.combine(calendarStore.daySchedules.count)
+        // Use first/last date as proxy for content changes.
+        if let first = calendarStore.daySchedules.first?.date { h.combine(first) }
+        if let last = calendarStore.daySchedules.last?.date { h.combine(last) }
+        let currentHash = h.finalize()
+
+        if currentHash == cachedDisplayDaysSourceHash, !cachedDisplayDays.isEmpty {
+            return cachedDisplayDays
+        }
+
         let cal = Calendar.current
         let today = cal.startOfDay(for: Date())
         let nonEmpty = calendarStore.daySchedules.filter { !$0.isEmpty }
@@ -162,6 +170,10 @@ struct RelatedPanelContentView: View {
                 result.append(todaySchedule)
             }
         }
+
+        // Update cache on main thread — body is @MainActor.
+        cachedDisplayDays = result
+        cachedDisplayDaysSourceHash = currentHash
         return result
     }
 
@@ -215,19 +227,38 @@ struct RelatedPanelContentView: View {
                     .onPreferenceChange(TimelineRowPositionsKey.self) { positions in
                         rowPositions = positions
                         guard initialScrollDone else { return }
-                        // Debounce focusedMonthDate + extendRange to avoid
-                        // updating @State on every scroll pixel (perf hang risk).
-                        scrollDebounceTask?.cancel()
-                        scrollDebounceTask = Task { @MainActor in
-                            try? await Task.sleep(nanoseconds: 150_000_000)
-                            guard !Task.isCancelled else { return }
+                        let now = Date()
+                        // If enough time has passed, process immediately.
+                        // Otherwise schedule a single deferred work item (cancelling
+                        // the previous one) to avoid per-frame Task creation during
+                        // rapid scrolling.
+                        if now.timeIntervalSince(lastScrollProcessTime) > 0.15 {
+                            lastScrollProcessTime = now
                             if let topDate = positions.min(by: { abs($0.value) < abs($1.value) })?.key {
                                 focusedMonthDate = topDate
-                                await calendarStore.extendRangeIfNeeded(
-                                    visibleStart: topDate,
-                                    visibleEnd: topDate
-                                )
+                                Task {
+                                    await calendarStore.extendRangeIfNeeded(
+                                        visibleStart: topDate,
+                                        visibleEnd: topDate
+                                    )
+                                }
                             }
+                        } else {
+                            pendingScrollWorkItem?.cancel()
+                            let work = DispatchWorkItem { [self] in
+                                lastScrollProcessTime = Date()
+                                if let topDate = rowPositions.min(by: { abs($0.value) < abs($1.value) })?.key {
+                                    focusedMonthDate = topDate
+                                    Task {
+                                        await calendarStore.extendRangeIfNeeded(
+                                            visibleStart: topDate,
+                                            visibleEnd: topDate
+                                        )
+                                    }
+                                }
+                            }
+                            pendingScrollWorkItem = work
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
                         }
                     }
                     .onAppear {
