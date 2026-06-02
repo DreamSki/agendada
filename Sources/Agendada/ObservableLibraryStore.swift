@@ -12,6 +12,8 @@ final class ObservableLibraryStore {
     @ObservationIgnored
     private var persistTask: Task<Void, Never>?
     @ObservationIgnored
+    private var saveTask: Task<Void, Never>?
+    @ObservationIgnored
     private let persistenceEnabled: Bool
 
     // MARK: - Filtered Notes Cache
@@ -148,15 +150,17 @@ final class ObservableLibraryStore {
         self.persistenceEnabled = persistenceEnabled
     }
 
-    static func load(repository: FileLibraryRepository = FileLibraryRepository()) -> ObservableLibraryStore {
+    static func load(repository: FileLibraryRepository = FileLibraryRepository()) async -> ObservableLibraryStore {
         do {
-            if let snapshot = try repository.load() {
-                repository.collectGarbage(in: snapshot)
+            if let snapshot = try await repository.load() {
+                // Defer GC to background so it doesn't block startup
+                let repo = repository
+                Task { await repo.collectGarbage(in: snapshot) }
                 return ObservableLibraryStore(seed: LibraryStore(snapshot: snapshot), repository: repository)
             }
         } catch {
             print("Failed to load Agendada library: \(error)")
-            if repository.fileExists {
+            if await repository.fileExists {
                 return ObservableLibraryStore(seed: .sample(), repository: repository, persistenceEnabled: false)
             }
         }
@@ -691,10 +695,30 @@ final class ObservableLibraryStore {
 
     private func persist() {
         guard persistenceEnabled else { return }
-        do {
-            try repository.save(store.snapshot())
-        } catch {
-            assertionFailure("Failed to save Agendada library: \(error)")
+        saveTask?.cancel()
+        let snapshot = store.snapshot()
+        let repo = repository
+        saveTask = Task {
+            do { try await repo.save(snapshot) }
+            catch { assertionFailure("Failed to save Agendada library: \(error)") }
         }
+    }
+
+    /// Synchronously flush any pending save. Blocks the calling thread until the
+    /// write completes. Only intended for app-termination paths.
+    func flushPendingSaveSync() {
+        guard persistenceEnabled else { return }
+        persistTask?.cancel()
+        persistTask = nil
+        let snapshot = store.snapshot()
+        let repo = repository
+        let done = DispatchGroup()
+        done.enter()
+        Task {
+            do { try await repo.save(snapshot) }
+            catch { assertionFailure("Failed to save Agendada library on terminate: \(error)") }
+            done.leave()
+        }
+        done.wait()
     }
 }

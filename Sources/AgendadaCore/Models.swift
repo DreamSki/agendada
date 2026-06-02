@@ -1,6 +1,6 @@
 import Foundation
 
-public struct ProjectCategory: Identifiable, Hashable, Codable {
+public struct ProjectCategory: Identifiable, Hashable, Codable, Sendable {
     public let id: UUID
     public var name: String
     public var projectIDs: [Project.ID]
@@ -12,7 +12,7 @@ public struct ProjectCategory: Identifiable, Hashable, Codable {
     }
 }
 
-public struct Project: Identifiable, Hashable, Codable {
+public struct Project: Identifiable, Hashable, Codable, Sendable {
     public let id: UUID
     public var name: String
     public var categoryID: ProjectCategory.ID?
@@ -37,7 +37,7 @@ public struct Project: Identifiable, Hashable, Codable {
     }
 }
 
-public enum ProjectColor: String, CaseIterable, Codable, Hashable {
+public enum ProjectColor: String, CaseIterable, Codable, Hashable, Sendable {
     case blue
     case green
     case orange
@@ -45,7 +45,7 @@ public enum ProjectColor: String, CaseIterable, Codable, Hashable {
     case gray
 }
 
-public struct Note: Identifiable, Hashable, Codable {
+public struct Note: Identifiable, Hashable, Codable, Sendable {
     public let id: UUID
     public var projectID: Project.ID
     public var title: String
@@ -198,7 +198,7 @@ public extension Note {
     }
 }
 
-public struct ChecklistSummary: Hashable {
+public struct ChecklistSummary: Hashable, Sendable {
     public let openCount: Int
     public let completedCount: Int
 
@@ -239,7 +239,7 @@ public struct ChecklistSummary: Hashable {
 
 // MARK: - Enums
 
-public enum NoteColor: String, CaseIterable, Codable, Hashable {
+public enum NoteColor: String, CaseIterable, Codable, Hashable, Sendable {
     case accent, red, green, blue, yellow, brown, pink, purple, gray
     public var title: String {
         switch self {
@@ -256,7 +256,7 @@ public enum NoteColor: String, CaseIterable, Codable, Hashable {
     }
 }
 
-public enum PinState: String, CaseIterable, Codable, Hashable {
+public enum PinState: String, CaseIterable, Codable, Hashable, Sendable {
     case none, pinnedTop, pinnedBottom
     public var title: String {
         switch self {
@@ -267,7 +267,7 @@ public enum PinState: String, CaseIterable, Codable, Hashable {
     }
 }
 
-public enum NoteStatus: String, CaseIterable, Codable, Hashable {
+public enum NoteStatus: String, CaseIterable, Codable, Hashable, Sendable {
     case open, completed, closed, trashed
     public var title: String {
         switch self {
@@ -279,7 +279,7 @@ public enum NoteStatus: String, CaseIterable, Codable, Hashable {
     }
 }
 
-public enum Overview: String, CaseIterable, Codable, Identifiable {
+public enum Overview: String, CaseIterable, Codable, Identifiable, Sendable {
     case today, tasks, upcoming, focused, starred, brief, all, trash
     public var id: String { rawValue }
     public var title: String {
@@ -296,7 +296,7 @@ public enum Overview: String, CaseIterable, Codable, Identifiable {
     }
 }
 
-public struct SmartOverview: Identifiable, Hashable, Codable {
+public struct SmartOverview: Identifiable, Hashable, Codable, Sendable {
     public let id: UUID
     public var name: String
     public var query: String
@@ -305,7 +305,7 @@ public struct SmartOverview: Identifiable, Hashable, Codable {
     }
 }
 
-public struct TimelineCounts: Hashable {
+public struct TimelineCounts: Hashable, Sendable {
     public let today, tomorrow, yesterday, overdue, thisWeek: Int
     public init(today: Int, tomorrow: Int, yesterday: Int, overdue: Int, thisWeek: Int) {
         self.today = today; self.tomorrow = tomorrow; self.yesterday = yesterday
@@ -313,7 +313,7 @@ public struct TimelineCounts: Hashable {
     }
 }
 
-public struct RelatedNote: Identifiable, Hashable {
+public struct RelatedNote: Identifiable, Hashable, Sendable {
     public let noteID: Note.ID
     public let title: String
     public let reasons: [String]
@@ -386,7 +386,7 @@ public struct SearchSummary: Sendable, Equatable {
 
 // MARK: - Sort Mode
 
-public enum SortMode: String, CaseIterable, Codable {
+public enum SortMode: String, CaseIterable, Codable, Sendable {
     case manual
     case scheduledDate
     case editedAt
@@ -402,7 +402,7 @@ public enum SortMode: String, CaseIterable, Codable {
     }
 }
 
-public enum PositionMove {
+public enum PositionMove: Sendable {
     case beforePrevious
     case afterNext
     case toFirst
@@ -411,7 +411,7 @@ public enum PositionMove {
 
 // MARK: - NoteTemplate
 
-public enum NoteSortOrder: String, CaseIterable, Codable {
+public enum NoteSortOrder: String, CaseIterable, Codable, Sendable {
     case scheduledDateDesc
     case scheduledDateAsc
     case editedAtDesc
@@ -427,7 +427,7 @@ public enum NoteSortOrder: String, CaseIterable, Codable {
     }
 }
 
-public enum NoteTemplate: String, CaseIterable, Codable, Identifiable {
+public enum NoteTemplate: String, CaseIterable, Codable, Identifiable, Sendable {
     case blank, meeting, weeklyReview, projectReview, research
     public var id: String { rawValue }
     public var title: String {
@@ -470,7 +470,7 @@ public enum NoteTemplate: String, CaseIterable, Codable, Identifiable {
 
 // MARK: - Custom Note Template
 
-public struct CustomNoteTemplate: Identifiable, Hashable, Codable {
+public struct CustomNoteTemplate: Identifiable, Hashable, Codable, Sendable {
 	public let id: UUID
 	public var name: String
 	public var title: String

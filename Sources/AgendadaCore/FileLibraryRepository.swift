@@ -1,6 +1,6 @@
 import Foundation
 
-public final class FileLibraryRepository {
+public actor FileLibraryRepository {
     public let fileURL: URL
 
     private var libraryDirectory: URL { fileURL.deletingLastPathComponent() }
@@ -20,7 +20,7 @@ public final class FileLibraryRepository {
         return baseURL.appending(path: "Agendada").appending(path: "Library.json")
     }
 
-    public func load() throws -> LibrarySnapshot? {
+    public func load() async throws -> LibrarySnapshot? {
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
             return nil
         }
@@ -31,7 +31,7 @@ public final class FileLibraryRepository {
         return try decoder.decode(LibrarySnapshot.self, from: data)
     }
 
-    public func save(_ snapshot: LibrarySnapshot) throws {
+    public func save(_ snapshot: LibrarySnapshot) async throws {
         try FileManager.default.createDirectory(
             at: fileURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
@@ -51,7 +51,7 @@ public final class FileLibraryRepository {
 
     // MARK: - Asset GC
 
-    public func collectGarbage(in snapshot: LibrarySnapshot) {
+    public func collectGarbage(in snapshot: LibrarySnapshot) async {
         let fm = FileManager.default
         guard fm.fileExists(atPath: assetsDirectory.path) else {
             print("[AssetGC] no Assets directory, skipping")

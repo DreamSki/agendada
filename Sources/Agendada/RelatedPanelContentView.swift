@@ -151,6 +151,9 @@ struct RelatedPanelContentView: View {
         // Use first/last date as proxy for content changes.
         if let first = calendarStore.daySchedules.first?.date { h.combine(first) }
         if let last = calendarStore.daySchedules.last?.date { h.combine(last) }
+        // Include the monotonically-increasing version so that filter/refresh
+        // always invalidates the cache, even when count and date range stay the same.
+        h.combine(calendarStore.daySchedulesVersion)
         let currentHash = h.finalize()
 
         if currentHash == cachedDisplayDaysSourceHash, !cachedDisplayDays.isEmpty {

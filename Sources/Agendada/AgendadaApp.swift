@@ -15,7 +15,17 @@ struct AgendadaMain {
         app.delegate = delegate
         app.setActivationPolicy(.regular)
         app.finishLaunching()
-        delegate.showMainWindow()
+
+        // Load store asynchronously, then finish UI setup.
+        // No DispatchGroup blocking — the event loop is running,
+        // and the Task executes on MainActor via the run loop.
+        Task { @MainActor in
+            delegate.store = await delegate.loadStore()
+            // Pre-warm editor WebView so the first card tap is instant
+            _ = SharedBlockNoteWebView.shared.webView
+            delegate.showMainWindow()
+        }
+
         app.run()
     }
 }
@@ -24,17 +34,17 @@ struct AgendadaMain {
 private final class AppDelegate: NSObject, NSApplicationDelegate {
     private var window: NSWindow?
     private var measurementWindow: NSWindow?
-    private let store = ObservableLibraryStore.load()
+    var store: ObservableLibraryStore!
     private let calendarStore = CalendarStore()
+
+    nonisolated func loadStore() async -> ObservableLibraryStore {
+        await ObservableLibraryStore.load()
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupMainMenu()
-        // Eagerly initialise the editor WKWebView so itʼs ready before
-        // the user taps any note card.  Without this the very first
-        // card tap triggers lazy init, the page hasnʼt loaded yet,
-        // isReady stays false, and the editor never appears.
-        _ = SharedBlockNoteWebView.shared.webView
-        showMainWindow()
+        // WebView pre-warming and window display are deferred until the
+        // store finishes loading (see Task in AgendadaMain.main()).
     }
 
     private func setupMainMenu() {
@@ -251,5 +261,9 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        store.flushPendingSaveSync()
     }
 }

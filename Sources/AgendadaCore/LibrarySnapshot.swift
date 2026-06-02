@@ -1,6 +1,6 @@
 import Foundation
 
-public struct LibrarySnapshot: Codable, Equatable {
+public struct LibrarySnapshot: Codable, Equatable, Sendable {
     public var categories: [ProjectCategory]
     public var projects: [Project]
     public var notes: [Note]

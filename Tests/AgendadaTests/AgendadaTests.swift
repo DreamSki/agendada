@@ -218,7 +218,7 @@ import Testing
     try originalData.write(to: libraryURL)
 
     let repository = FileLibraryRepository(fileURL: libraryURL)
-    let observableStore = ObservableLibraryStore.load(repository: repository)
+    let observableStore = await ObservableLibraryStore.load(repository: repository)
 
     observableStore.addNote()
 
@@ -235,11 +235,11 @@ import Testing
     let libraryURL = temporaryDirectory.appending(path: "Library.json")
     let repository = FileLibraryRepository(fileURL: libraryURL)
     let firstSnapshot = LibraryStore.sample().snapshot()
-    try repository.save(firstSnapshot)
+    try await repository.save(firstSnapshot)
 
     let secondStore = LibraryStore(snapshot: firstSnapshot)
     secondStore.updateSearchText("changed")
-    try repository.save(secondStore.snapshot())
+    try await repository.save(secondStore.snapshot())
 
     let backupURL = temporaryDirectory.appending(path: "Library.previous.json")
     let backupData = try Data(contentsOf: backupURL)

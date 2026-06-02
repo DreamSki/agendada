@@ -22,6 +22,11 @@ final class CalendarStore {
     var showAllSources: Bool = true
     var enabledSourceIDs: Set<String> = []
 
+    /// Monotonically increasing version bumped every time daySchedules is replaced
+    /// or merged (load, refresh, extend). Use this as a cache-bust key so caches
+    /// that depend on daySchedules content (not just count/dates) stay fresh.
+    var daySchedulesVersion: Int = 0
+
     // MARK: - Private State
 
     @ObservationIgnored private var loadedStartDate: Date?
@@ -224,6 +229,7 @@ final class CalendarStore {
 
     /// Merge fetched schedules into `daySchedules`, preserving notes from existing entries.
     private func mergeSchedules(_ newSchedules: [DaySchedule], updateRange: Bool) {
+        daySchedulesVersion &+= 1
         var merged = newSchedules
         let newDates = Set(merged.map { $0.date })
 

@@ -282,7 +282,13 @@ struct AgendadaFloatingMenuView: View {
     }
 
     private var visibleSections: [AgendadaFloatingMenuSection] {
-        presenter.currentSections.isEmpty ? sections : presenter.currentSections
+        // When in a submenu, use the presenterʼs navigation stack.
+        // At root level, always use the latest `sections` prop so that
+        // filter state changes (e.g. calendar source toggles) are reflected.
+        if presenter.isInSubmenu {
+            return presenter.currentSections
+        }
+        return sections
     }
 
     private var reservedHeight: CGFloat {
