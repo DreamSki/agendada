@@ -109,7 +109,7 @@ import Testing
     let store = LibraryStore.sample()
     store.selectOverview(.all)
 
-    store.searchText = "工程"
+    store.updateSearchText("工程")
 
     #expect(store.filteredNotes().contains { $0.people.contains("工程") })
 }
@@ -118,7 +118,7 @@ import Testing
     let store = LibraryStore.sample()
     store.selectOverview(.all)
 
-    store.searchText = "has:tasks"
+    store.updateSearchText("has:tasks")
 
     let notes = store.filteredNotes()
     #expect(notes.isEmpty == false)
@@ -130,7 +130,7 @@ import Testing
     let store = LibraryStore.sample(today: now)
     store.selectOverview(.all)
 
-    store.searchText = "is:starred date:today"
+    store.updateSearchText("is:starred date:today")
 
     let notes = store.filteredNotes(now: now)
     #expect(notes.isEmpty == false)
@@ -144,7 +144,7 @@ import Testing
     let store = LibraryStore.sample()
     store.selectOverview(.all)
 
-    store.searchText = "tag:MVP person:产品"
+    store.updateSearchText("tag:MVP person:产品")
 
     let notes = store.filteredNotes()
     #expect(notes.isEmpty == false)
@@ -238,7 +238,7 @@ import Testing
     try repository.save(firstSnapshot)
 
     let secondStore = LibraryStore(snapshot: firstSnapshot)
-    secondStore.searchText = "changed"
+    secondStore.updateSearchText("changed")
     try repository.save(secondStore.snapshot())
 
     let backupURL = temporaryDirectory.appending(path: "Library.previous.json")
@@ -253,7 +253,7 @@ import Testing
 @Test func smartOverviewFiltersBySavedQuery() async throws {
     let store = LibraryStore.sample()
     let smartOverview = store.addSmartOverview(name: "有待办", query: "has:tasks")
-    store.searchText = ""
+    store.updateSearchText("")
 
     let notes = store.filteredNotes()
 
@@ -673,4 +673,563 @@ import Testing
     let hasMore = nonEmpty.count > displayCount
     #expect(hasMore == true)
     #expect(nonEmpty.count == 10)
+}
+
+// MARK: - Search Comprehensive Tests
+
+@Test func searchEmptyStringReturnsAllNotes() async throws {
+    let store = LibraryStore.sample()
+    store.selectOverview(.all)
+    store.updateSearchText("")
+
+    let notes = store.filteredNotes()
+    let baseline = LibraryStore.sample()
+    baseline.selectOverview(.all)
+    #expect(notes.count == baseline.filteredNotes().count)
+}
+
+@Test func searchMatchesTitle() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    _ = store.addNote(title: "架构设计文档")
+    _ = store.addNote(title: "接口规范")
+    store.selectOverview(.all)
+
+    store.updateSearchText("架构")
+
+    let notes = store.filteredNotes()
+    #expect(notes.count == 1)
+    #expect(notes.first?.title == "架构设计文档")
+}
+
+@Test func searchMatchesBodyContent() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    let noteA = store.addNote(title: "笔记A")
+    store.updateNote(noteID: noteA.id, title: "笔记A", body: "这是一段关于机器学习的正文内容", scheduledDate: nil, tags: [], people: [])
+    let noteB = store.addNote(title: "笔记B")
+    store.updateNote(noteID: noteB.id, title: "笔记B", body: "这是关于前端开发的正文", scheduledDate: nil, tags: [], people: [])
+    store.selectOverview(.all)
+
+    store.updateSearchText("机器学习")
+
+    let notes = store.filteredNotes()
+    #expect(notes.count == 1)
+    #expect(notes.first?.title == "笔记A")
+}
+
+@Test func searchIsCaseInsensitive() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    _ = store.addNote(title: "API Documentation")
+    store.selectOverview(.all)
+
+    store.updateSearchText("api")
+
+    let notes = store.filteredNotes()
+    #expect(notes.count == 1)
+}
+
+@Test func searchMultipleTermsUseANDLogic() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    let noteA = store.addNote(title: "Swift入门")
+    store.updateNote(noteID: noteA.id, title: "Swift入门", body: "", scheduledDate: nil, tags: ["教程"], people: [])
+    let noteB = store.addNote(title: "Swift进阶")
+    store.updateNote(noteID: noteB.id, title: "Swift进阶", body: "", scheduledDate: nil, tags: ["高级"], people: [])
+    let noteC = store.addNote(title: "Python入门")
+    store.updateNote(noteID: noteC.id, title: "Python入门", body: "", scheduledDate: nil, tags: ["教程"], people: [])
+    store.selectOverview(.all)
+
+    store.updateSearchText("swift 教程")
+
+    let notes = store.filteredNotes()
+    #expect(notes.count == 1)
+    #expect(notes.first?.title == "Swift入门")
+}
+
+@Test func searchTermNotFound() async throws {
+    let store = LibraryStore.sample()
+    store.selectOverview(.all)
+
+    store.updateSearchText("xyz不存在的内容abc")
+
+    let notes = store.filteredNotes()
+    #expect(notes.isEmpty)
+}
+
+@Test func searchWithTagPrefix() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    let noteA = store.addNote(title: "笔记A")
+    store.updateNote(noteID: noteA.id, title: "笔记A", body: "", scheduledDate: nil, tags: ["MVP", "重要"], people: [])
+    let noteB = store.addNote(title: "笔记B")
+    store.updateNote(noteID: noteB.id, title: "笔记B", body: "", scheduledDate: nil, tags: ["调研"], people: [])
+    store.selectOverview(.all)
+
+    store.updateSearchText("tag:MVP")
+
+    let notes = store.filteredNotes()
+    #expect(notes.count == 1)
+    #expect(notes.first?.title == "笔记A")
+}
+
+@Test func searchWithPersonPrefix() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    let noteA = store.addNote(title: "笔记A")
+    store.updateNote(noteID: noteA.id, title: "笔记A", body: "", scheduledDate: nil, tags: [], people: ["产品", "工程"])
+    let noteB = store.addNote(title: "笔记B")
+    store.updateNote(noteID: noteB.id, title: "笔记B", body: "", scheduledDate: nil, tags: [], people: ["设计"])
+    store.selectOverview(.all)
+
+    store.updateSearchText("person:产品")
+
+    let notes = store.filteredNotes()
+    #expect(notes.count == 1)
+    #expect(notes.first?.title == "笔记A")
+}
+
+@Test func searchWithStatusPrefix() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    let note = store.addNote(title: "已完成笔记")
+    store.setStatus(.closed, noteID: note.id)
+    _ = store.addNote(title: "进行中笔记")
+    store.selectOverview(.all)
+
+    store.updateSearchText("status:closed")
+
+    let notes = store.filteredNotes()
+    #expect(notes.count == 1)
+    #expect(notes.first?.title == "已完成笔记")
+}
+
+@Test func searchHasDatePredicate() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    _ = store.addNote(title: "有日期笔记", date: Date())
+    _ = store.addNote(title: "无日期笔记", date: nil)
+    store.selectOverview(.all)
+
+    store.updateSearchText("has:date")
+
+    let notes = store.filteredNotes()
+    #expect(notes.count == 1)
+    #expect(notes.first?.title == "有日期笔记")
+}
+
+@Test func searchIsFocusedPredicate() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    let focused = store.addNote(title: "关注笔记")
+    store.setFocused(true, noteID: focused.id)
+    _ = store.addNote(title: "普通笔记")
+    store.selectOverview(.all)
+
+    store.updateSearchText("is:focused")
+
+    let notes = store.filteredNotes()
+    #expect(notes.count == 1)
+    #expect(notes.first?.title == "关注笔记")
+}
+
+@Test func searchIsStarredPredicate() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    let starred = store.addNote(title: "星标笔记")
+    store.setStarred(true, noteID: starred.id)
+    _ = store.addNote(title: "普通笔记")
+    store.selectOverview(.all)
+
+    store.updateSearchText("is:starred")
+
+    let notes = store.filteredNotes()
+    #expect(notes.count == 1)
+    #expect(notes.first?.title == "星标笔记")
+}
+
+@Test func searchDateTodayPredicate() async throws {
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    _ = store.addNote(title: "今天笔记", date: now)
+    let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: now)!
+    _ = store.addNote(title: "明天笔记", date: tomorrow)
+    store.selectOverview(.all)
+
+    store.updateSearchText("date:today")
+
+    let notes = store.filteredNotes(now: now)
+    #expect(notes.count == 1)
+    #expect(notes.first?.title == "今天笔记")
+}
+
+@Test func searchDateUpcomingPredicate() async throws {
+    // date:upcoming uses `scheduledDate > startOfDay`, which includes today
+    // (any time after midnight today qualifies as "upcoming")
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    _ = store.addNote(title: "今天笔记", date: now)
+    let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: now)!
+    _ = store.addNote(title: "明天笔记", date: tomorrow)
+    store.selectOverview(.all)
+
+    store.updateSearchText("date:upcoming")
+
+    let notes = store.filteredNotes(now: now)
+    // Both today and tomorrow notes have dates > startOfDay
+    #expect(notes.count == 2)
+}
+
+@Test func searchCombinedTagAndKeyword() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    let noteA = store.addNote(title: "架构设计")
+    store.updateNote(noteID: noteA.id, title: "架构设计", body: "", scheduledDate: nil, tags: ["MVP"], people: [])
+    let noteB = store.addNote(title: "需求文档")
+    store.updateNote(noteID: noteB.id, title: "需求文档", body: "", scheduledDate: nil, tags: ["MVP"], people: [])
+    let noteC = store.addNote(title: "架构设计")
+    store.updateNote(noteID: noteC.id, title: "架构设计", body: "", scheduledDate: nil, tags: ["调研"], people: [])
+    store.selectOverview(.all)
+
+    store.updateSearchText("tag:MVP 架构")
+
+    let notes = store.filteredNotes()
+    #expect(notes.count == 1)
+    #expect(notes.first?.title == "架构设计")
+}
+
+@Test func searchWithSmartOverviewAndAdditionalFilter() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    let starred = store.addNote(title: "星标有任务")
+    store.updateNote(noteID: starred.id, title: "星标有任务", body: "- [ ] 任务1", scheduledDate: nil, tags: [], people: [])
+    store.setStarred(true, noteID: starred.id)
+    let normal = store.addNote(title: "普通有任务")
+    store.updateNote(noteID: normal.id, title: "普通有任务", body: "- [ ] 任务2", scheduledDate: nil, tags: [], people: [])
+    _ = store.addNote(title: "星标无任务")
+    let lastStarred = store.addNote(title: "最后星标")
+    store.setStarred(true, noteID: lastStarred.id)
+
+    _ = store.addSmartOverview(name: "星标", query: "is:starred")
+
+    // Smart overview filters to starred only, then further filter with keyword
+    store.updateSearchText("任务")
+
+    let notes = store.filteredNotes()
+    #expect(notes.count == 1)
+    #expect(notes.first?.title == "星标有任务")
+}
+
+@Test func searchMatchesPeople() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    let noteA = store.addNote(title: "会议")
+    store.updateNote(noteID: noteA.id, title: "会议", body: "", scheduledDate: nil, tags: [], people: ["张三", "李四"])
+    let noteB = store.addNote(title: "评审")
+    store.updateNote(noteID: noteB.id, title: "评审", body: "", scheduledDate: nil, tags: [], people: ["王五"])
+    store.selectOverview(.all)
+
+    store.updateSearchText("张三")
+
+    let notes = store.filteredNotes()
+    #expect(notes.count == 1)
+    #expect(notes.first?.title == "会议")
+}
+
+@Test func searchTrashedNotesAreExcludedFromNonTrashViews() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    let deleted = store.addNote(title: "被删笔记")
+    store.updateNote(noteID: deleted.id, title: "被删笔记", body: "特殊关键词xyz", scheduledDate: nil, tags: [], people: [])
+    store.deleteNote(deleted.id)
+    let normal = store.addNote(title: "正常笔记")
+    store.updateNote(noteID: normal.id, title: "正常笔记", body: "特殊关键词xyz", scheduledDate: nil, tags: [], people: [])
+    store.selectOverview(.all)
+
+    store.updateSearchText("特殊关键词xyz")
+
+    let notes = store.filteredNotes()
+    #expect(notes.count == 1)
+    #expect(notes.first?.title == "正常笔记")
+}
+
+// MARK: - Search Occurrence Tests
+
+@Test func searchOccurrencesFindsMatchesInBody() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    let n = store.addNote(title: "Swift教程")
+    store.updateNote(noteID: n.id, title: "Swift教程", body: "Swift 是一门编程语言，Swift 很流行。", scheduledDate: nil, tags: [], people: [])
+    store.selectOverview(.all)
+
+    store.updateSearchText("swift")
+
+    let summary = store.searchSummary
+    // "swift" appears 3 times: once in title, twice in body
+    #expect(summary.totalOccurrences == 3)
+    #expect(summary.totalMatchedNotes == 1)
+    #expect(summary.currentOccurrenceIndex == 1)
+}
+
+@Test func searchOccurrencesAcrossMultipleNotes() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    let n1 = store.addNote(title: "架构设计")
+    store.updateNote(noteID: n1.id, title: "架构设计", body: "讨论微服务架构方案", scheduledDate: nil, tags: [], people: [])
+    let n2 = store.addNote(title: "架构评审")
+    store.updateNote(noteID: n2.id, title: "架构评审", body: "评审结果：架构有缺陷", scheduledDate: nil, tags: [], people: [])
+    store.selectOverview(.all)
+
+    store.updateSearchText("架构")
+
+    let summary = store.searchSummary
+    // Note 1: title "架构设计" (1), body "讨论微服务架构方案" (1) = 2
+    // Note 2: title "架构评审" (1), body "评审结果：架构有缺陷" (1) = 2
+    // Total = 4
+    #expect(summary.totalOccurrences == 4)
+    #expect(summary.totalMatchedNotes == 2)
+    #expect(summary.currentOccurrenceIndex == 1)
+}
+
+@Test func searchOccurrencesOrderedByNoteThenPosition() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    let nA = store.addNote(title: "AAA笔记", date: nil)
+    store.updateNote(noteID: nA.id, title: "AAA笔记", body: "关键词 出现在 关键词 正文中。", scheduledDate: nil, tags: [], people: [])
+    store.selectOverview(.all)
+
+    store.updateSearchText("关键词")
+
+    let occurrences = store.searchOccurrences
+    // Title has no "关键词" match. Body has 2 matches.
+    #expect(occurrences.count == 2)
+
+    // Both occurrences in same note, globalIndex 0 and 1
+    #expect(occurrences[0].globalIndex == 0)
+    #expect(occurrences[0].occurrenceIndexInNote == 0)
+    #expect(occurrences[0].noteID == nA.id)
+    #expect(occurrences[0].excerpt.contains("关键词"))
+
+    #expect(occurrences[1].globalIndex == 1)
+    #expect(occurrences[1].occurrenceIndexInNote == 1)
+    #expect(occurrences[1].noteID == nA.id)
+    // Second occurrence should appear after the first in the text
+    #expect(occurrences[1].matchPosition > occurrences[0].matchPosition)
+}
+
+@Test func searchOccurrenceTitleField() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    _ = store.addNote(title: "架构设计文档")
+    store.selectOverview(.all)
+
+    store.updateSearchText("架构")
+
+    let occurrences = store.searchOccurrences
+    #expect(occurrences.count == 1)
+    #expect(occurrences[0].field == .title)
+    #expect(occurrences[0].excerpt.contains("架构"))
+}
+
+@Test func searchOccurrenceBodyField() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    let n = store.addNote(title: "无关键词标题")
+    store.updateNote(noteID: n.id, title: "无关键词标题", body: "正文中包含 架构 这两个字。", scheduledDate: nil, tags: [], people: [])
+    store.selectOverview(.all)
+
+    store.updateSearchText("架构")
+
+    let occurrences = store.searchOccurrences
+    #expect(occurrences.count == 1)
+    #expect(occurrences[0].field == .body)
+    #expect(occurrences[0].excerpt.contains("架构"))
+}
+
+@Test func searchOccurrenceNavigationGoesToNext() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    let n = store.addNote(title: "Swift")
+    store.updateNote(noteID: n.id, title: "Swift", body: "Swift A Swift B Swift C", scheduledDate: nil, tags: [], people: [])
+    store.selectOverview(.all)
+
+    store.updateSearchText("swift")
+    // Occurrences: title(0), body(1), body(2), body(3) = 4 total
+    // currentOccurrenceIndex starts nil; first Enter lands on index 0.
+
+    let summary = store.searchSummary
+    #expect(summary.totalOccurrences == 4)
+    #expect(summary.currentOccurrenceIndex == 1)
+
+    // First goToNext: lands on index 0 (first match, no longer skipped)
+    let next1 = store.goToNextSearchOccurrence()
+    #expect(next1?.globalIndex == 0)
+    #expect(store.searchSummary.currentOccurrenceIndex == 1)
+
+    // Second: index 1
+    let next2 = store.goToNextSearchOccurrence()
+    #expect(next2?.globalIndex == 1)
+    #expect(store.searchSummary.currentOccurrenceIndex == 2)
+
+    // Fourth: index 3
+    _ = store.goToNextSearchOccurrence() // index 2
+    let next4 = store.goToNextSearchOccurrence() // index 3
+    #expect(next4?.globalIndex == 3)
+    #expect(store.searchSummary.currentOccurrenceIndex == 4)
+
+    // Wrap to 1st
+    let wrap = store.goToNextSearchOccurrence()
+    #expect(wrap?.globalIndex == 0)
+    #expect(store.searchSummary.currentOccurrenceIndex == 1)
+}
+
+@Test func searchOccurrenceNavigationGoesToPreviousAndWraps() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    let n = store.addNote(title: "Swift")
+    store.updateNote(noteID: n.id, title: "Swift", body: "Swift A Swift B", scheduledDate: nil, tags: [], people: [])
+    store.selectOverview(.all)
+
+    store.updateSearchText("swift")
+    // 3 occurrences
+
+    // Previous from first wraps to last
+    let prev = store.goToPreviousSearchOccurrence()
+    #expect(prev?.globalIndex == 2)
+    #expect(store.searchSummary.currentOccurrenceIndex == 3)
+}
+
+@Test func searchOccurrenceNavigationSwitchesNote() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    // Use nil dates so sort is by createdAt (nA created first, nB second)
+    let nA = store.addNote(title: "架构文档", date: nil)
+    store.updateNote(noteID: nA.id, title: "架构文档", body: "只有一处 架构。", scheduledDate: nil, tags: [], people: [])
+    let nB = store.addNote(title: "架构评审", date: nil)
+    store.updateNote(noteID: nB.id, title: "架构评审", body: "另外一处 架构。", scheduledDate: nil, tags: [], people: [])
+    store.selectOverview(.all)
+
+    store.updateSearchText("架构")
+
+    // filteredNotes sorts by createdAt desc → nB (later) first, nA second
+    // Occurrences: nB title(0), nB body(1), nA title(2), nA body(3)
+    // updateSearchText auto-selects nB
+    #expect(store.searchOccurrences[0].noteID == nB.id)
+    #expect(store.selectedNoteID == nB.id)
+
+    // 1st goToNext: index 0 → nB title (no longer skipped)
+    _ = store.goToNextSearchOccurrence()
+    #expect(store.selectedNoteID == nB.id)
+
+    // 2nd goToNext: index 1 → nB body (still nB)
+    _ = store.goToNextSearchOccurrence()
+    #expect(store.selectedNoteID == nB.id)
+
+    // 3rd goToNext: index 2 → nA title → switches to nA
+    let next = store.goToNextSearchOccurrence()
+    #expect(next?.globalIndex == 2)
+    #expect(store.selectedNoteID == nA.id)
+}
+
+@Test func searchOccurrenceEmptyWhenNoResults() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    _ = store.addNote(title: "Hello World")
+    store.selectOverview(.all)
+
+    store.updateSearchText("xyz不存在")
+
+    let summary = store.searchSummary
+    #expect(summary == .empty)
+    #expect(store.searchOccurrences.isEmpty)
+    #expect(store.currentOccurrence == nil)
+    #expect(store.goToNextSearchOccurrence() == nil)
+    #expect(store.goToPreviousSearchOccurrence() == nil)
+}
+
+@Test func searchOccurrenceWithSyntaxOnlyNoKeywords() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    let taskNote = store.addNote(title: "有任务")
+    store.updateNote(noteID: taskNote.id, title: "有任务", body: "- [ ] 任务1", scheduledDate: nil, tags: [], people: [])
+    _ = store.addNote(title: "无任务")
+    store.selectOverview(.all)
+
+    // has:tasks syntax — no plain keywords
+    store.updateSearchText("has:tasks")
+
+    // Occurrences: empty (no plain keywords to search for), but filteredNotes still works
+    let summary = store.searchSummary
+    #expect(summary.totalOccurrences == 0)
+}
+
+// MARK: - searchHighlightText Tests
+
+@Test func searchHighlightTextExcludesSyntaxPrefixes() async throws {
+    let store = LibraryStore()
+    store.updateSearchText("tag:MVP 重要 keyword")
+    let highlight = store.searchHighlightText
+    #expect(!highlight.contains("tag:"))
+    #expect(highlight.contains("重要"))
+    #expect(highlight.contains("keyword"))
+}
+
+@Test func searchHighlightTextEmptyWhenOnlySyntax() async throws {
+    let store = LibraryStore()
+    store.updateSearchText("has:tasks is:starred")
+    let highlight = store.searchHighlightText
+    #expect(highlight.isEmpty)
+}
+
+// MARK: - Search within Project Filter Tests
+
+@Test func searchWithinProjectOnlySearchesProjectNotes() async throws {
+    let store = LibraryStore()
+    let cat = store.addCategory(name: "工作")
+    let proj1 = store.addProject(name: "项目A", categoryID: cat.id)
+    let proj2 = store.addProject(name: "项目B", categoryID: cat.id)
+
+    store.selectProject(proj1.id)
+    _ = store.addNote(title: "架构文档A")
+    store.selectProject(proj2.id)
+    _ = store.addNote(title: "架构文档B")
+
+    store.selectProject(proj1.id)
+    store.updateSearchText("架构")
+
+    let notes = store.filteredNotes()
+    #expect(notes.count == 1)
+    #expect(notes.first?.title == "架构文档A")
+}
+
+// MARK: - Search with Special Characters
+
+@Test func searchWithPartialMatch() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    _ = store.addNote(title: "机器学习入门")
+    _ = store.addNote(title: "深度学习入门")
+    store.selectOverview(.all)
+
+    store.updateSearchText("学习")
+
+    let notes = store.filteredNotes()
+    #expect(notes.count == 2)
+}
+
+@Test func searchWithSingleCharacter() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    _ = store.addNote(title: "A笔记")
+    _ = store.addNote(title: "B笔记")
+    store.selectOverview(.all)
+
+    store.updateSearchText("A")
+
+    let notes = store.filteredNotes()
+    #expect(notes.count == 1)
+    #expect(notes.first?.title == "A笔记")
 }

@@ -63,6 +63,7 @@ public struct Note: Identifiable, Hashable, Codable {
     public var noteColor: NoteColor?
     public var pinState: PinState
     public var isBrief: Bool
+    public var position: Double?
     public var createdAt: Date
     public var editedAt: Date
 
@@ -84,6 +85,7 @@ public struct Note: Identifiable, Hashable, Codable {
         noteColor: NoteColor? = nil,
         pinState: PinState = .none,
         isBrief: Bool = false,
+        position: Double? = nil,
         createdAt: Date = Date(),
         editedAt: Date = Date()
     ) {
@@ -104,6 +106,7 @@ public struct Note: Identifiable, Hashable, Codable {
         self.noteColor = noteColor
         self.pinState = pinState
         self.isBrief = isBrief
+        self.position = position
         self.createdAt = createdAt
         self.editedAt = editedAt
     }
@@ -150,6 +153,7 @@ public struct Note: Identifiable, Hashable, Codable {
         case noteColor
         case pinState
         case isBrief
+        case position
         case createdAt
         case editedAt
     }
@@ -175,6 +179,14 @@ public struct Note: Identifiable, Hashable, Codable {
         noteColor = try container.decodeIfPresent(NoteColor.self, forKey: .noteColor)
         pinState = try container.decodeIfPresent(PinState.self, forKey: .pinState) ?? .none
         isBrief = try container.decodeIfPresent(Bool.self, forKey: .isBrief) ?? false
+        // Decode from either Double (current) or Int (legacy) for backward compat
+        if let d = try? container.decodeIfPresent(Double.self, forKey: .position) {
+            position = d
+        } else if let i = try? container.decodeIfPresent(Int.self, forKey: .position) {
+            position = Double(i)
+        } else {
+            position = nil
+        }
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
         editedAt = try container.decodeIfPresent(Date.self, forKey: .editedAt) ?? createdAt
     }
@@ -311,6 +323,92 @@ public struct RelatedNote: Identifiable, Hashable {
     }
 }
 
+// MARK: - Search Occurrence
+
+/// 匹配字段类型
+public enum SearchField: String, Sendable, Codable {
+    case title
+    case body
+}
+
+/// 表示搜索结果中的一个具体文本命中位置
+public struct SearchOccurrence: Identifiable, Hashable, Sendable {
+    public let id = UUID()
+    public let noteID: Note.ID
+    public let noteTitle: String
+    public let globalIndex: Int           // 在所有命中位置中的全局索引（0-based）
+    public let occurrenceIndexInNote: Int // 在当前笔记中的索引（0-based）
+    public let bodyIndexInNote: Int       // 当前笔记中 body 的序号（0-based），title 固定为 -1
+    public let field: SearchField         // 匹配发生在 title 还是 body
+    public let matchPosition: Int         // 匹配在 field 文本中的 UTF-16 偏移
+    public let matchLength: Int           // 匹配文本的长度
+    public let excerpt: String            // 匹配上下文片段
+
+    public init(
+        noteID: Note.ID,
+        noteTitle: String,
+        globalIndex: Int,
+        occurrenceIndexInNote: Int,
+        bodyIndexInNote: Int,
+        field: SearchField,
+        matchPosition: Int,
+        matchLength: Int,
+        excerpt: String
+    ) {
+        self.noteID = noteID
+        self.noteTitle = noteTitle
+        self.globalIndex = globalIndex
+        self.occurrenceIndexInNote = occurrenceIndexInNote
+        self.bodyIndexInNote = bodyIndexInNote
+        self.field = field
+        self.matchPosition = matchPosition
+        self.matchLength = matchLength
+        self.excerpt = excerpt
+    }
+}
+
+/// 搜索匹配摘要信息
+public struct SearchSummary: Sendable, Equatable {
+    public let totalOccurrences: Int      // 总命中位置数
+    public let totalMatchedNotes: Int     // 匹配到的笔记数
+    public let currentOccurrenceIndex: Int // 当前命中位置的全局索引（0-based）
+    public let currentNoteIndex: Int       // 当前所在的笔记索引（1-based）
+
+    public init(totalOccurrences: Int, totalMatchedNotes: Int, currentOccurrenceIndex: Int, currentNoteIndex: Int) {
+        self.totalOccurrences = totalOccurrences
+        self.totalMatchedNotes = totalMatchedNotes
+        self.currentOccurrenceIndex = currentOccurrenceIndex
+        self.currentNoteIndex = currentNoteIndex
+    }
+
+    public static let empty = SearchSummary(totalOccurrences: 0, totalMatchedNotes: 0, currentOccurrenceIndex: 0, currentNoteIndex: 0)
+}
+
+// MARK: - Sort Mode
+
+public enum SortMode: String, CaseIterable, Codable {
+    case manual
+    case scheduledDate
+    case editedAt
+    case createdAt
+
+    public var title: String {
+        switch self {
+        case .manual: "手动排序"
+        case .scheduledDate: "按日期"
+        case .editedAt: "按编辑时间"
+        case .createdAt: "按创建时间"
+        }
+    }
+}
+
+public enum PositionMove {
+    case beforePrevious
+    case afterNext
+    case toFirst
+    case toLast
+}
+
 // MARK: - NoteTemplate
 
 public enum NoteSortOrder: String, CaseIterable, Codable {
@@ -368,6 +466,24 @@ public enum NoteTemplate: String, CaseIterable, Codable, Identifiable {
         case .research: "<h2>观察</h2><p></p><h2>证据</h2><p></p><h2>判断</h2><p></p><h2>下一步</h2><ul data-type=\"taskList\"><li data-type=\"taskItem\" data-checked=\"false\"><label><input type=\"checkbox\"></label><div><p></p></div></li></ul>"
         }
     }
+}
+
+// MARK: - Custom Note Template
+
+public struct CustomNoteTemplate: Identifiable, Hashable, Codable {
+	public let id: UUID
+	public var name: String
+	public var title: String
+	public var body: String
+	public var tags: [String]
+
+	public init(id: UUID = UUID(), name: String, title: String, body: String, tags: [String] = []) {
+		self.id = id
+		self.name = name
+		self.title = title
+		self.body = body
+		self.tags = tags
+	}
 }
 
 // MARK: - HTML to plain text helper (used by Core, defined here to avoid AppKit dependency)

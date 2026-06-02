@@ -11,6 +11,8 @@ public struct LibrarySnapshot: Codable, Equatable {
     public var selectedNoteID: Note.ID?
     public var searchText: String
     public var sortOrder: NoteSortOrder
+    public var sortMode: SortMode = .scheduledDate
+    public var customNoteTemplates: [CustomNoteTemplate] = []
 
     public init(
         categories: [ProjectCategory],
@@ -22,7 +24,9 @@ public struct LibrarySnapshot: Codable, Equatable {
         selectedSmartOverviewID: SmartOverview.ID? = nil,
         selectedNoteID: Note.ID?,
         searchText: String,
-        sortOrder: NoteSortOrder = .scheduledDateDesc
+        sortOrder: NoteSortOrder = .scheduledDateDesc,
+        sortMode: SortMode = .scheduledDate,
+        customNoteTemplates: [CustomNoteTemplate] = []
     ) {
         self.categories = categories
         self.projects = projects
@@ -34,12 +38,14 @@ public struct LibrarySnapshot: Codable, Equatable {
         self.selectedNoteID = selectedNoteID
         self.searchText = searchText
         self.sortOrder = sortOrder
+        self.sortMode = sortMode
+        self.customNoteTemplates = customNoteTemplates
     }
 
     private enum CodingKeys: String, CodingKey {
         case categories, projects, notes, smartOverviews
         case selectedProjectID, selectedOverview, selectedSmartOverviewID
-        case selectedNoteID, searchText, sortOrder
+        case selectedNoteID, searchText, sortOrder, sortMode, customNoteTemplates
     }
 
     public init(from decoder: Decoder) throws {
@@ -54,5 +60,7 @@ public struct LibrarySnapshot: Codable, Equatable {
         selectedNoteID = try container.decodeIfPresent(Note.ID.self, forKey: .selectedNoteID)
         searchText = try container.decodeIfPresent(String.self, forKey: .searchText) ?? ""
         sortOrder = try container.decodeIfPresent(NoteSortOrder.self, forKey: .sortOrder) ?? .scheduledDateDesc
+        sortMode = try container.decodeIfPresent(SortMode.self, forKey: .sortMode) ?? .scheduledDate
+        customNoteTemplates = try container.decodeIfPresent([CustomNoteTemplate].self, forKey: .customNoteTemplates) ?? []
     }
 }

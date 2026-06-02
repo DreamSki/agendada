@@ -70,8 +70,20 @@ struct SidebarView: View {
             AgendaSidebarSectionLabel("概览")
                 .padding(.bottom, 6)
 
-            sidebarButton("简达", systemImage: "smallcircle.fill.circle", selection: .overview(.brief), tint: AgendaColor.amber)
-            sidebarButton(todayTitle, systemImage: "calendar", selection: .overview(.today), tint: Color(red: 0.29, green: 0.56, blue: 0.89))
+            sidebarButton("简达", systemImage: "smallcircle.fill.circle", selection: .overview(.brief), tint: AgendaColor.amber,
+                dropAction: { payload in
+                    guard let note = store.note(withID: payload.noteID), !note.isBrief else { return false }
+                    store.setBrief(true, noteID: payload.noteID)
+                    return true
+                })
+            sidebarButton(todayTitle, systemImage: "calendar", selection: .overview(.today), tint: Color(red: 0.29, green: 0.56, blue: 0.89),
+                dropAction: { payload in
+                    guard let note = store.note(withID: payload.noteID) else { return false }
+                    let isToday = note.scheduledDate.map { Calendar.current.isDateInToday($0) } ?? false
+                    guard !isToday else { return false }
+                    store.scheduleToday(noteID: payload.noteID)
+                    return true
+                })
             sidebarButton("待办事项", systemImage: "checkmark.circle", selection: .overview(.tasks), tint: Color(red: 0.96, green: 0.32, blue: 0.37))
             sidebarTrashButton
         }
@@ -181,7 +193,8 @@ struct SidebarView: View {
         systemImage: String,
         selection: SidebarSelection,
         tint: Color,
-        showsSelectionBackground: Bool = true
+        showsSelectionBackground: Bool = true,
+        dropAction: ((DragPayload) -> Bool)? = nil
     ) -> some View {
         AgendaSidebarRow(
             title: title,
@@ -189,10 +202,10 @@ struct SidebarView: View {
             isSelected: currentSelection == selection,
             tint: tint,
             selectedTextColor: showsSelectionBackground ? AgendaColor.amber : AgendaColor.textPrimary,
-            showsSelectionBackground: showsSelectionBackground
-        ) {
-            select(selection)
-        }
+            showsSelectionBackground: showsSelectionBackground,
+            action: { select(selection) },
+            dropAction: dropAction
+        )
     }
 
     private var defaultCategory: ProjectCategory? {
@@ -219,16 +232,20 @@ struct SidebarView: View {
             isSelected: isSelected,
             tint: AgendaColor.textMuted,
             selectedTextColor: AgendaColor.amber,
-            showsSelectionBackground: false
-        ) {
-            store.selectOverview(.trash)
-        }
+            showsSelectionBackground: false,
+            action: { store.selectOverview(.trash) },
+            dropAction: { payload in
+                store.deleteNote(payload.noteID)
+                return true
+            }
+        )
     }
 }
 
 // MARK: - Category Section (with hover controls)
 
 private struct CategorySectionView: View {
+    @Environment(ObservableLibraryStore.self) private var store
     let category: ProjectCategory
     let currentSelection: SidebarSelection?
     let projects: [Project]
@@ -251,10 +268,15 @@ private struct CategorySectionView: View {
                     isSelected: currentSelection == .project(project.id),
                     tint: project.color.sidebarTint,
                     selectedTextColor: AgendaColor.amber,
-                    showsSelectionBackground: true
-                ) {
-                    onSelectProject(project.id)
-                }
+                    showsSelectionBackground: true,
+                    action: { onSelectProject(project.id) },
+                    dropAction: { payload in
+                        guard let note = store.note(withID: payload.noteID),
+                              note.projectID != project.id else { return false }
+                        store.moveNotes([payload.noteID], toProject: project.id)
+                        return true
+                    }
+                )
                 .contextMenu {
                     Button("重命名") { onRenameProject(project) }
                     Button("删除", role: .destructive) { onDeleteProject(project) }
@@ -283,10 +305,38 @@ private struct AgendaSidebarRow: View {
     let selectedTextColor: Color
     let showsSelectionBackground: Bool
     let action: () -> Void
+    let dropAction: ((DragPayload) -> Bool)?
 
     @State private var isHovering = false
+    @State private var isDropTargeted = false
+
+    init(title: String, systemImage: String, isSelected: Bool, tint: Color, selectedTextColor: Color, showsSelectionBackground: Bool, action: @escaping () -> Void, dropAction: ((DragPayload) -> Bool)? = nil) {
+        self.title = title
+        self.systemImage = systemImage
+        self.isSelected = isSelected
+        self.tint = tint
+        self.selectedTextColor = selectedTextColor
+        self.showsSelectionBackground = showsSelectionBackground
+        self.action = action
+        self.dropAction = dropAction
+    }
 
     var body: some View {
+        rowContent
+            .buttonStyle(.plain)
+            .padding(.horizontal, 8)
+            .onHover { isHovering = $0 }
+            .when(dropAction != nil) { view in
+                view.dropDestination(for: DragPayload.self) { items, _ in
+                    guard let payload = items.first else { return false }
+                    return dropAction?(payload) ?? false
+                } isTargeted: { targeted in
+                    isDropTargeted = targeted
+                }
+            }
+    }
+
+    private var rowContent: some View {
         Button(action: action) {
             HStack(spacing: 8) {
                 SidebarIcon(systemImage: systemImage, tint: tint, isSelected: isSelected)
@@ -304,7 +354,7 @@ private struct AgendaSidebarRow: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
             .contentShape(RoundedRectangle(cornerRadius: 6))
-            .background(rowBackground, in: RoundedRectangle(cornerRadius: 6))
+            .background(dropBackground, in: RoundedRectangle(cornerRadius: 6))
             .overlay(alignment: .leading) {
                 if isSelected && showsSelectionBackground {
                     RoundedRectangle(cornerRadius: 2)
@@ -314,17 +364,29 @@ private struct AgendaSidebarRow: View {
                         .padding(.vertical, 4)
                 }
             }
+            .overlay(
+                isDropTargeted
+                    ? RoundedRectangle(cornerRadius: 6)
+                        .stroke(AgendaColor.amber, lineWidth: 1.5)
+                    : nil
+            )
         }
-        .buttonStyle(.plain)
-        .padding(.horizontal, 8)
-        .onHover { isHovering = $0 }
+    }
+
+    private var dropBackground: Color {
+        if isDropTargeted {
+            return AgendaColor.amber.opacity(0.15)
+        }
+        if isSelected && showsSelectionBackground {
+            return AgendaColor.sidebarSelectedBg
+        }
+        return isHovering ? AgendaColor.sidebarHoverBg : .clear
     }
 
     private var rowBackground: Color {
         if isSelected && showsSelectionBackground {
             return AgendaColor.sidebarSelectedBg
         }
-
         return isHovering ? AgendaColor.sidebarHoverBg : .clear
     }
 }

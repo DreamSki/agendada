@@ -61,3 +61,16 @@ func copyToPasteboard(_ text: String) {
 func splitCommaList(_ text: String) -> [String] {
     text.split(separator: ",").map(String.init)
 }
+
+// MARK: - View Extension
+
+extension View {
+    @ViewBuilder
+    func `when`(_ condition: Bool, transform: (Self) -> some View) -> some View {
+        if condition {
+            transform(self)
+        } else {
+            self
+        }
+    }
+}

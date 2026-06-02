@@ -5,9 +5,26 @@ import SwiftUI
 struct BlockNotePreviewView: View {
     let note: Note
     var maxBlocks: Int?
+    var highlightText: String = ""
+
+    /// Simple hash-based cache for block decode, shared across all preview instances.
+    /// Avoids JSON parsing on every render when blockJSON hasn't changed.
+    private static var decodeCache: [Int: [PreviewBlock]] = [:]
+    private static var decodeCacheKeys: [Int] = []  // LRU-ish eviction order
+    private static let decodeCacheMax = 128
 
     private var blocks: [PreviewBlock] {
-        PreviewBlock.decode(from: note.blockJSON)
+        let key = note.blockJSON.hashValue
+        if let cached = Self.decodeCache[key] {
+            return cached
+        }
+        let decoded = PreviewBlock.decode(from: note.blockJSON)
+        Self.decodeCache[key] = decoded
+        Self.decodeCacheKeys.append(key)
+        if Self.decodeCacheKeys.count > Self.decodeCacheMax {
+            Self.decodeCache.removeValue(forKey: Self.decodeCacheKeys.removeFirst())
+        }
+        return decoded
     }
 
     private var visibleItems: [PreviewRenderItem] {
@@ -29,7 +46,7 @@ struct BlockNotePreviewView: View {
             } else {
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(visibleItems) { item in
-                        PreviewBlockRow(item: item)
+                        PreviewBlockRow(item: item, highlightText: highlightText)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -139,7 +156,9 @@ private enum PreviewMetrics {
 }
 
 private struct PreviewRenderItem: Identifiable {
-    let id = UUID()
+    /// Stable ID derived from block identity + structural position.
+    /// Avoids UUID() which causes SwiftUI to destroy/recreate views every body evaluation.
+    var id: String { "\(block.id)-d\(depth)-n\(numberIndex ?? -1)" }
     let block: PreviewBlock
     let depth: Int
     let numberIndex: Int?
@@ -149,6 +168,7 @@ private struct PreviewRenderItem: Identifiable {
 
 private struct PreviewBlockRow: View {
     let item: PreviewRenderItem
+    let highlightText: String
 
     private var block: PreviewBlock { item.block }
 
@@ -184,7 +204,7 @@ private struct PreviewBlockRow: View {
     // MARK: Paragraph
 
     private var paragraphView: some View {
-        bodyText(block.content)
+        bodyText(block.content, highlightText: highlightText)
             .padding(.vertical, PreviewMetrics.blockVPadding)
             .background(block.backgroundColor ?? Color.clear)
     }
@@ -197,7 +217,8 @@ private struct PreviewBlockRow: View {
             fallback: block.plainText,
             fontSize: headingSize,
             baseWeight: .bold,
-            baseColor: headingTextColor
+            baseColor: headingTextColor,
+            highlightText: highlightText
         )
             .padding(.top, isH1 ? PreviewMetrics.heading1TopPadding : PreviewMetrics.headingVPadding)
             .padding(.bottom, PreviewMetrics.headingVPadding)
@@ -227,7 +248,7 @@ private struct PreviewBlockRow: View {
                 .font(.custom("Avenir Next Demi Bold", size: PreviewMetrics.bodyFontSize))
                 .foregroundStyle(PreviewMetrics.mutedColor)
                 .frame(width: PreviewMetrics.markerWidth, alignment: .center)
-            bodyText(block.content)
+            bodyText(block.content, highlightText: highlightText)
         }
         .padding(.vertical, PreviewMetrics.blockVPadding)
         .background(block.backgroundColor ?? Color.clear)
@@ -239,7 +260,7 @@ private struct PreviewBlockRow: View {
                 .font(.custom("Avenir Next", size: PreviewMetrics.bodyFontSize))
                 .foregroundStyle(PreviewMetrics.mutedColor)
                 .frame(width: PreviewMetrics.markerWidth, alignment: .trailing)
-            bodyText(block.content)
+            bodyText(block.content, highlightText: highlightText)
         }
         .padding(.vertical, PreviewMetrics.blockVPadding)
         .background(block.backgroundColor ?? Color.clear)
@@ -251,7 +272,7 @@ private struct PreviewBlockRow: View {
                 .font(.custom("Avenir Next Medium", size: PreviewMetrics.bodyFontSize))
                 .foregroundStyle(block.isChecked ? AgendaColor.amber : PreviewMetrics.mutedColor)
                 .frame(width: PreviewMetrics.markerWidth, alignment: .center)
-            bodyText(block.checkboxContent)
+            bodyText(block.checkboxContent, highlightText: highlightText)
                 .strikethrough(block.isChecked, color: PreviewMetrics.mutedColor)
                 .foregroundStyle(block.isChecked ? PreviewMetrics.mutedColor : PreviewMetrics.bodyColor)
         }
@@ -273,7 +294,8 @@ private struct PreviewBlockRow: View {
             block.content,
             fallback: block.plainText,
             fontSize: PreviewMetrics.bodyFontSize,
-            baseColor: Color(red: 0.2, green: 0.2, blue: 0.2)  // #333333
+            baseColor: Color(red: 0.2, green: 0.2, blue: 0.2),  // #333333
+            highlightText: highlightText
         )
             .padding(.leading, PreviewMetrics.quoteBorderWidth + PreviewMetrics.quoteTextInset)
             .overlay(alignment: .leading) {
@@ -293,7 +315,8 @@ private struct PreviewBlockRow: View {
             fontSize: PreviewMetrics.codeFontSize,
             baseColor: PreviewMetrics.codeColor,
             forceMonospace: true,
-            lineHeight: 1.4  // 代码块使用更紧凑的行高
+            lineHeight: 1.4,  // 代码块使用更紧凑的行高
+            highlightText: highlightText
         )
             .padding(.horizontal, PreviewMetrics.tableCellHPadding)
             .padding(.vertical, 8)
@@ -327,9 +350,9 @@ private struct PreviewBlockRow: View {
         let headerCount = tc.headerRows ?? 0
         return AnyView(
             VStack(alignment: .leading, spacing: 0) {
-                ForEach(Array(tc.rows.enumerated()), id: \.offset) { rowIndex, row in
+                ForEach(Array(tc.rows.enumerated()), id: \.element.stableID) { rowIndex, row in
                     HStack(alignment: .top, spacing: 0) {
-                        ForEach(Array(row.cells.enumerated()), id: \.offset) { _, cell in
+                        ForEach(Array(row.cells.enumerated()), id: \.element.stableID) { _, cell in
                             let isHeader = rowIndex < headerCount || cell.type == "tableHeader"
                             PreviewRichText(
                                 fragments: cell.content.flatMap(\.fragments),
@@ -358,12 +381,13 @@ private struct PreviewBlockRow: View {
 
     // MARK: Helpers
 
-    private func bodyText(_ content: PreviewContent?) -> some View {
+    private func bodyText(_ content: PreviewContent?, highlightText: String = "") -> some View {
         richText(
             content,
             fallback: block.plainText,
             fontSize: PreviewMetrics.bodyFontSize,
-            baseColor: block.textColor ?? PreviewMetrics.bodyColor
+            baseColor: block.textColor ?? PreviewMetrics.bodyColor,
+            highlightText: highlightText
         )
     }
 
@@ -374,7 +398,8 @@ private struct PreviewBlockRow: View {
         baseWeight: Font.Weight = .regular,
         baseColor: Color,
         forceMonospace: Bool = false,
-        lineHeight: CGFloat? = nil
+        lineHeight: CGFloat? = nil,
+        highlightText: String = ""
     ) -> some View {
         PreviewRichText(
             fragments: content?.fragments ?? [],
@@ -383,7 +408,8 @@ private struct PreviewBlockRow: View {
             baseWeight: baseWeight,
             baseColor: baseColor,
             forceMonospace: forceMonospace,
-            lineHeight: lineHeight
+            lineHeight: lineHeight,
+            highlightText: highlightText
         )
     }
 }
@@ -398,6 +424,7 @@ private struct PreviewRichText: View {
     var baseColor: Color = PreviewMetrics.bodyColor
     var forceMonospace = false
     var lineHeight: CGFloat?
+    var highlightText: String = ""
 
     var body: some View {
         let metrics = PreviewMetrics.lineMetrics(
@@ -416,11 +443,63 @@ private struct PreviewRichText: View {
         let visibleFragments = fragments.isEmpty
             ? [PreviewTextFragment(text: fallback.isEmpty ? " " : fallback)]
             : fragments
+
+        let shouldHighlight = !highlightText.isEmpty
+
         var attributed = AttributedString("")
         for fragment in visibleFragments {
-            attributed += styledAttributed(fragment)
+            let styled = styledAttributed(fragment)
+            if shouldHighlight {
+                attributed += highlightText(in: styled, searchText: highlightText)
+            } else {
+                attributed += styled
+            }
         }
         return Text(attributed)
+    }
+
+    /// 在文本中高亮搜索关键词（支持多个关键词独立高亮）。
+    /// Uses NSString range APIs (O(1)) instead of CharacterView index walking (O(N)).
+    private func highlightText(in attributedString: AttributedString, searchText: String) -> AttributedString {
+        let keywords = searchText
+            .split(separator: " ")
+            .map(String.init)
+            .filter { !$0.isEmpty }
+
+        guard !keywords.isEmpty else {
+            return attributedString
+        }
+
+        let plainText = String(attributedString.characters).lowercased()
+        let hasAnyMatch = keywords.contains { plainText.contains($0.lowercased()) }
+        guard hasAnyMatch else {
+            return attributedString
+        }
+
+        var result = attributedString
+        let plainString = String(attributedString.characters)
+        let nsPlain = plainString as NSString
+
+        for keyword in keywords {
+            var searchRange = NSRange(location: 0, length: nsPlain.length)
+            while searchRange.location < nsPlain.length {
+                let found = nsPlain.range(of: keyword, options: .caseInsensitive, range: searchRange)
+                guard found.location != NSNotFound else { break }
+
+                let strStart = String.Index(utf16Offset: found.location, in: plainString)
+                let strEnd = String.Index(utf16Offset: found.location + found.length, in: plainString)
+
+                guard let attrStart = AttributedString.Index(strStart, within: result),
+                      let attrEnd = AttributedString.Index(strEnd, within: result) else { break }
+
+                result[attrStart..<attrEnd].backgroundColor = Color.yellow.opacity(0.4)
+
+                searchRange.location = found.location + found.length
+                searchRange.length = nsPlain.length - searchRange.location
+            }
+        }
+
+        return result
     }
 
     private func styledAttributed(_ fragment: PreviewTextFragment) -> AttributedString {
@@ -497,7 +576,13 @@ private struct PreviewImageBlock: View {
 // MARK: - Block JSON Decoding
 
 private struct PreviewBlock: Decodable, Identifiable {
-    var id = UUID()
+    /// Stable ID derived from block content, not UUID().
+    /// Prevents SwiftUI from treating identical blocks as new views on every decode.
+    var id: String {
+        let contentHash = content?.plainText.hashValue ?? 0
+        let childrenHash = children?.map(\.id).joined().hashValue ?? 0
+        return "\(type)-h\(headingLevel)-c\(contentHash)-ch\(childrenHash)"
+    }
     var type: String
     var content: PreviewContent?
     var props: [String: PreviewJSONValue]?
@@ -625,11 +710,27 @@ private struct PreviewTableContent: Decodable {
 
 private struct PreviewTableRow: Decodable {
     let cells: [PreviewTableCell]
+
+    /// Stable ID based on content hash, avoids `\.offset` identity shifts
+    /// when rows are inserted or removed.
+    var stableID: Int {
+        var h = Hasher()
+        for cell in cells { h.combine(cell.stableID) }
+        return h.finalize()
+    }
 }
 
 private struct PreviewTableCell: Decodable {
     let type: String?
     let content: [PreviewInline]
+
+    /// Stable ID based on type + content plain text hash.
+    var stableID: Int {
+        var h = Hasher()
+        h.combine(type)
+        h.combine(content.map(\.plainText).joined())
+        return h.finalize()
+    }
 }
 
 private struct PreviewInline: Decodable {

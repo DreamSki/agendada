@@ -14,16 +14,67 @@ final class ObservableLibraryStore {
     @ObservationIgnored
     private let persistenceEnabled: Bool
 
+    // MARK: - Filtered Notes Cache
+
+    /// Cached result of filteredNotes() to avoid recomputing on every view body evaluation.
+    /// Invalidated when revision changes or searchText changes.
+    @ObservationIgnored
+    private var cachedFilteredNotes: [Note]?
+    @ObservationIgnored
+    private var cachedFilteredNotesRevision: Int = -1
+    @ObservationIgnored
+    private var cachedFilteredNotesSearchText: String = ""
+
+    /// Debounced search-occurrence calculation task.
+    @ObservationIgnored
+    private var searchCalcTask: Task<Void, Never>?
+
     var searchText: String {
         get {
             observeRevision()
             return store.searchText
         }
         set {
-            store.searchText = newValue
+            store.setSearchTextOnly(newValue)
             publishChange()
+            scheduleSearchCalculation()
             persistSoon()
         }
+    }
+
+    // MARK: - Search
+
+    /// 底层 LibraryStore 的直接访问（只读）
+    var library: LibraryStore {
+        observeRevision()
+        return store
+    }
+
+    var searchOccurrences: [SearchOccurrence] {
+        observeRevision()
+        return store.searchOccurrences
+    }
+
+    var currentOccurrence: SearchOccurrence? {
+        observeRevision()
+        return store.currentOccurrence
+    }
+
+    var searchSummary: SearchSummary {
+        observeRevision()
+        return store.searchSummary
+    }
+
+    func goToNextSearchOccurrence() {
+        store.goToNextSearchOccurrence()
+        publishChange()
+        persistSoon()
+    }
+
+    func goToPreviousSearchOccurrence() {
+        store.goToPreviousSearchOccurrence()
+        publishChange()
+        persistSoon()
     }
 
     var sortOrder: NoteSortOrder {
@@ -36,6 +87,59 @@ final class ObservableLibraryStore {
             publishChange()
             persistSoon()
         }
+    }
+
+    var sortMode: SortMode {
+        get {
+            observeRevision()
+            return store.sortMode
+        }
+        set {
+            store.setSortMode(newValue)
+            publishChange()
+            persistSoon()
+        }
+    }
+
+    func setSortMode(_ mode: SortMode) {
+        store.setSortMode(mode)
+        publishChange()
+        persistSoon()
+    }
+
+    func moveNote(_ noteID: Note.ID, to move: PositionMove) {
+        store.moveNote(noteID, to: move)
+        publishChange()
+        persistSoon()
+    }
+
+    func wouldCrossPinnedTopBoundary(_ noteID: Note.ID, move: PositionMove) -> Bool {
+        store.wouldCrossPinnedTopBoundary(noteID, move: move)
+    }
+
+    func moveToFirstNonPinned(_ noteID: Note.ID) {
+        store.moveToFirstNonPinned(noteID)
+        publishChange()
+        persistSoon()
+    }
+
+    func pinAndMoveNote(_ noteID: Note.ID, to move: PositionMove) {
+        store.setPinState(.pinnedTop, noteID: noteID)
+        store.moveNote(noteID, to: move)
+        publishChange()
+        persistSoon()
+    }
+
+    func insertNoteBefore(_ noteID: Note.ID, targetID: Note.ID) {
+        store.insertNoteBefore(noteID, targetID: targetID)
+        publishChange()
+        persistSoon()
+    }
+
+    func insertNoteAfter(_ noteID: Note.ID, targetID: Note.ID) {
+        store.insertNoteAfter(noteID, targetID: targetID)
+        publishChange()
+        persistSoon()
     }
 
     init(seed: LibraryStore, repository: FileLibraryRepository = FileLibraryRepository(), persistenceEnabled: Bool = true) {
@@ -196,6 +300,25 @@ final class ObservableLibraryStore {
         return note.id
     }
 
+    // MARK: - Custom Note Templates
+
+    func addCustomNoteTemplate(name: String, from note: Note) {
+        _ = store.addCustomNoteTemplate(name: name, from: note)
+        publishChange()
+        persistNow()
+    }
+
+    func deleteCustomNoteTemplate(_ templateID: CustomNoteTemplate.ID) {
+        store.deleteCustomNoteTemplate(templateID)
+        publishChange()
+        persistNow()
+    }
+
+    func customNoteTemplatesList() -> [CustomNoteTemplate] {
+        observeRevision()
+        return store.customNoteTemplates
+    }
+
     func duplicateNote(_ noteID: Note.ID) {
         _ = store.duplicateNote(noteID)
         publishChange()
@@ -220,7 +343,10 @@ final class ObservableLibraryStore {
         persistSoon()
     }
 
-    var trashedNotes: [Note] { store.trashedNotes }
+    var trashedNotes: [Note] {
+        observeRevision()
+        return store.trashedNotes
+    }
 
     func emptyTrash() {
         store.emptyTrash()
@@ -230,8 +356,14 @@ final class ObservableLibraryStore {
 
     // MARK: - Batch Selection
 
-    var batchSelectedNoteIDs: Set<Note.ID> { store.batchSelectedNoteIDs }
-    var isInBatchMode: Bool { !store.batchSelectedNoteIDs.isEmpty }
+    var batchSelectedNoteIDs: Set<Note.ID> {
+        observeRevision()
+        return store.batchSelectedNoteIDs
+    }
+    var isInBatchMode: Bool {
+        observeRevision()
+        return !store.batchSelectedNoteIDs.isEmpty
+    }
 
     func selectAllFilteredNotes() {
         store.selectAllFilteredNotes()
@@ -472,7 +604,42 @@ final class ObservableLibraryStore {
 
     func filteredNotes() -> [Note] {
         observeRevision()
-        return store.filteredNotes()
+        // Return cached result when store state hasn't changed and search text is stable.
+        if let cached = cachedFilteredNotes,
+           cachedFilteredNotesRevision == revision,
+           cachedFilteredNotesSearchText == store.searchText {
+            return cached
+        }
+        let result = store.filteredNotes()
+        cachedFilteredNotes = result
+        cachedFilteredNotesRevision = revision
+        cachedFilteredNotesSearchText = store.searchText
+        return result
+    }
+
+    private func invalidateFilteredNotesCache() {
+        cachedFilteredNotes = nil
+        cachedFilteredNotesRevision = -1
+        cachedFilteredNotesSearchText = ""
+    }
+
+    /// Debounce search-occurrence calculation so fast typing doesn't
+    /// trigger expensive full-text scanning on every keystroke.
+    private func scheduleSearchCalculation() {
+        searchCalcTask?.cancel()
+        let text = store.searchText
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            store.clearSearchOccurrences()
+            return
+        }
+        searchCalcTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 180_000_000) // 180ms debounce
+            guard !Task.isCancelled, let self else { return }
+            self.store.calculateSearchOccurrences()
+            // Don't auto-select first result during typing — wait for Enter.
+            // Only publish the change so searchSummary / occurrences are visible.
+            self.publishChange()
+        }
     }
 
     private func observeRevision() {
@@ -481,6 +648,7 @@ final class ObservableLibraryStore {
 
     private func publishChange() {
         revision &+= 1
+        invalidateFilteredNotesCache()
     }
 
     private func persistSoon() {

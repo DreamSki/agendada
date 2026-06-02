@@ -31,6 +31,7 @@ struct RelatedPanelContentView: View {
     @State private var showFilterPopover = false
     @State private var filterMenuPresenter = AgendadaFloatingMenuPresenter()
     @State private var filterMenuDismissedAt = Date.distantPast
+    @State private var scrollDebounceTask: Task<Void, Never>?
 
     private var focusedMonth: String {
         CalendarStore.formatMonth(focusedMonthDate)
@@ -114,7 +115,7 @@ struct RelatedPanelContentView: View {
 
     private var timelineSummary: String? {
         guard let today = todaySchedule, !today.isEmpty else { return nil }
-        let count = today.allDayEvents.count + today.timedEvents.count + today.reminders.count
+        let count = today.allDayEvents.count + today.timedEvents.count + today.reminders.count + today.notes.count
         return count > 0 ? "今天 · \(count)件事" : nil
     }
 
@@ -214,9 +215,14 @@ struct RelatedPanelContentView: View {
                     .onPreferenceChange(TimelineRowPositionsKey.self) { positions in
                         rowPositions = positions
                         guard initialScrollDone else { return }
-                        if let topDate = positions.min(by: { abs($0.value) < abs($1.value) })?.key {
-                            focusedMonthDate = topDate
-                            Task {
+                        // Debounce focusedMonthDate + extendRange to avoid
+                        // updating @State on every scroll pixel (perf hang risk).
+                        scrollDebounceTask?.cancel()
+                        scrollDebounceTask = Task { @MainActor in
+                            try? await Task.sleep(nanoseconds: 150_000_000)
+                            guard !Task.isCancelled else { return }
+                            if let topDate = positions.min(by: { abs($0.value) < abs($1.value) })?.key {
+                                focusedMonthDate = topDate
                                 await calendarStore.extendRangeIfNeeded(
                                     visibleStart: topDate,
                                     visibleEnd: topDate

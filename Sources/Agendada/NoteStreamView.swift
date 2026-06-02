@@ -8,6 +8,7 @@ struct NoteStreamView: View {
     @State private var isSearching = false
     @State private var showSortPopover = false
     @State private var showMoveMenu = false
+    @State private var dropAtEndTargeted = false
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -169,37 +170,6 @@ struct NoteStreamView: View {
         }
     }
 
-    private var searchButton: some View {
-        HoverableCircleButton(systemName: "magnifyingglass", help: "搜索", action: { isSearching = true })
-            .popover(isPresented: $isSearching, arrowEdge: .bottom) {
-            VStack(spacing: 0) {
-                HStack(spacing: 8) {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(AgendaColor.textMuted)
-                    TextField("搜索标题、正文、标签或人员", text: $searchText)
-                        .textFieldStyle(.plain)
-                        .font(.custom("Avenir Next", size: 13))
-                        .frame(width: 220)
-                    if !searchText.isEmpty {
-                        Button {
-                            searchText = ""
-                            SharedBlockNoteWebView.shared.clearSearch()
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundStyle(AgendaColor.textMuted)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(.horizontal, 10).padding(.vertical, 8)
-            }
-            .frame(width: 300)
-            .agendadaGlassPopover()
-        }
-    }
-
     private var plusButton: some View {
         Button {
             store.addNote(template: .blank)
@@ -288,6 +258,32 @@ struct NoteStreamView: View {
                     StreamNoteRow(note: note)
                         .id(note.id).padding(.bottom, AgendaSpacing.cardGap)
                 }
+                // Bottom terminal drop zone
+                Rectangle()
+                    .fill(dropAtEndTargeted ? AgendaColor.amber.opacity(0.1) : Color.clear)
+                    .frame(height: 80)
+                    .overlay(alignment: .top) {
+                        if dropAtEndTargeted {
+                            RoundedRectangle(cornerRadius: 2)
+                                .fill(AgendaColor.amber)
+                                .frame(height: 3)
+                                .padding(.horizontal, 40)
+                        }
+                    }
+                    .dropDestination(for: DragPayload.self) { items, _ in
+                        guard let payload = items.first else { return false }
+                        guard let lastNote = notes.last, lastNote.id != payload.noteID else {
+                            return false
+                        }
+                        guard let draggedNote = store.note(withID: payload.noteID) else { return false }
+                        guard notes.contains(where: { $0.id == draggedNote.id }) || draggedNote.projectID == (notes.first?.projectID) else { return false }
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                            store.insertNoteAfter(payload.noteID, targetID: lastNote.id)
+                        }
+                        return true
+                    } isTargeted: { targeted in
+                        dropAtEndTargeted = targeted
+                    }
             }
             .padding(.horizontal, 12).padding(.top, 100).padding(.bottom, 80)
         }
@@ -310,6 +306,10 @@ private struct AgendadaCardTitle: View {
     @Binding var draftTitle: String
     let isSelected: Bool
     let isDimmed: Bool
+    var highlightText: String = ""
+    /// The UTF-16 range of the *current* search occurrence in this title, if any.
+    /// Highlighted in orange to distinguish from other matches (yellow).
+    var activeTitleRange: NSRange? = nil
 
     private var fgColor: Color {
         isDimmed ? .secondary : Color(red: 0.102, green: 0.102, blue: 0.102)
@@ -318,22 +318,75 @@ private struct AgendadaCardTitle: View {
     var body: some View {
         ZStack(alignment: .leading) {
             // Preview — always in layout, determines HStack height & baseline.
-            Text(title.isEmpty ? "无标题" : title)
-                .font(AgendaFont.cardTitle)
-                .foregroundStyle(fgColor)
-                .lineLimit(1)
-                .opacity(isSelected ? 0 : 1)
-                .allowsHitTesting(false)
-            // Editor — custom NSTextField that never shifts on focus.
-            StableTextField(
-                text: $draftTitle,
-                placeholder: "无标题",
-                font: NSFont(name: "Avenir Next", size: 20) ?? .systemFont(ofSize: 20),
-                textColor: isDimmed ? .secondaryLabelColor : NSColor(red: 0.102, green: 0.102, blue: 0.102, alpha: 1),
-                isEnabled: isSelected
-            )
-            .opacity(isSelected ? 1 : 0)
+            // When search is active, show highlighted title even if selected (searching ≠ editing).
+            if highlightText.isEmpty {
+                Text(title.isEmpty ? "无标题" : title)
+                    .font(AgendaFont.cardTitle)
+                    .foregroundStyle(fgColor)
+                    .lineLimit(1)
+                    .opacity(isSelected ? 0 : 1)
+                    .allowsHitTesting(false)
+            } else {
+                Text(highlightedTitle)
+                    .font(AgendaFont.cardTitle)
+                    .lineLimit(1)
+                    .allowsHitTesting(false)
+                // Always visible when search is active, regardless of selection state
+            }
+            // Editor — NSTextField; hidden when search highlighting is active.
+            if highlightText.isEmpty {
+                StableTextField(
+                    text: $draftTitle,
+                    placeholder: "无标题",
+                    font: NSFont(name: "Avenir Next", size: 20) ?? .systemFont(ofSize: 20),
+                    textColor: isDimmed ? .secondaryLabelColor : NSColor(red: 0.102, green: 0.102, blue: 0.102, alpha: 1),
+                    isEnabled: isSelected
+                )
+                .opacity(isSelected ? 1 : 0)
+            }
         }
+    }
+
+    /// 带搜索高亮的标题（预览模式）。
+    /// All matches get yellow background; the current/active occurrence gets orange.
+    private var highlightedTitle: AttributedString {
+        let display = title.isEmpty ? "无标题" : title
+        var attributed = AttributedString(display)
+        attributed.foregroundColor = fgColor
+
+        let keywords = highlightText
+            .split(separator: " ")
+            .map(String.init)
+            .filter { !$0.isEmpty }
+
+        guard !keywords.isEmpty else { return attributed }
+
+        let nsDisplay = display as NSString
+        let chars = String(attributed.characters)
+
+        for keyword in keywords {
+            var searchRange = NSRange(location: 0, length: nsDisplay.length)
+            while searchRange.location < nsDisplay.length {
+                let found = nsDisplay.range(of: keyword, options: .caseInsensitive, range: searchRange)
+                guard found.location != NSNotFound else { break }
+
+                let strStart = String.Index(utf16Offset: found.location, in: chars)
+                let strEnd = String.Index(utf16Offset: found.location + found.length, in: chars)
+
+                guard let attrStart = AttributedString.Index(strStart, within: attributed),
+                      let attrEnd = AttributedString.Index(strEnd, within: attributed) else { break }
+
+                // Orange for the current occurrence, yellow for others.
+                let isActive = activeTitleRange.map { NSEqualRanges(found, $0) } ?? false
+                attributed[attrStart..<attrEnd].backgroundColor = isActive
+                    ? AgendaColor.amber.opacity(0.45)
+                    : Color.yellow.opacity(0.4)
+
+                searchRange.location = found.location + found.length
+                searchRange.length = nsDisplay.length - searchRange.location
+            }
+        }
+        return attributed
     }
 }
 
@@ -402,6 +455,8 @@ private struct StreamNoteRow: View {
     @State private var capturedPreviewHeight: CGFloat = 0
     @State private var editorHasUserChanges = false
     @State private var isHovering = false
+    @State private var cardHeight: CGFloat = 0
+    @State private var isDropTargeted = false
     @State private var editorIsVisible = false
     @State private var initialBlockJSON: Data?
     @State private var skipNextCardTap = false
@@ -411,6 +466,8 @@ private struct StreamNoteRow: View {
     @State private var bulletMenuSections: [AgendadaFloatingMenuSection] = []
     @State private var bulletMenuPresenter = AgendadaFloatingMenuPresenter()
     @State private var bulletMenuDismissedAt = Date.distantPast
+    @State private var showTemplateSheet = false
+    @State private var templateName = ""
     @State private var showSettingsPopover = false
     @State private var settingsMenuOpenPending = false
     @State private var settingsMenuDismissedAt = Date.distantPast
@@ -446,6 +503,15 @@ private struct StreamNoteRow: View {
         )
     }
 
+    /// The active (orange) match range for this note's title, if the current
+    /// search occurrence is a title match in this note.
+    private var activeTitleRange: NSRange? {
+        guard let occ = store.currentOccurrence,
+              occ.noteID == note.id,
+              occ.field == .title else { return nil }
+        return NSRange(location: occ.matchPosition, length: occ.matchLength)
+    }
+
     private var headerRow: some View {
         HStack(alignment: .top, spacing: 10) {
             bulletIcon.frame(width: bulletCol, alignment: .leading).padding(.top, 1)
@@ -454,7 +520,9 @@ private struct StreamNoteRow: View {
                     title: note.title,
                     draftTitle: $draft.title,
                     isSelected: isSelected,
-                    isDimmed: isNoteDimmed
+                    isDimmed: isNoteDimmed,
+                    highlightText: store.library.searchHighlightText,
+                    activeTitleRange: activeTitleRange
                 )
                 Spacer(minLength: 8)
                 dateControl
@@ -505,7 +573,7 @@ private struct StreamNoteRow: View {
             }
         }
         .overlay(alignment: .top) {
-            if isSelected {
+            if isSelected || isHovering {
                 RoundedRectangle(cornerRadius: 1).fill(AgendaColor.cardDragHandle).frame(width: 24, height: 3).padding(.top, 6)
             }
         }
@@ -520,9 +588,78 @@ private struct StreamNoteRow: View {
             }
         }
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(isSelected ? AgendaColor.cardActiveBorder : .clear, lineWidth: 0.75))
-        .shadow(color: isSelected ? .black.opacity(0.04) : .clear, radius: 4, x: 0, y: 2)
+        .overlay(alignment: .top) {
+            if isDropTargeted {
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(AgendaColor.amber)
+                    .frame(height: 3)
+                    .padding(.horizontal, 16)
+            }
+        }
+        .shadow(color: isDropTargeted ? AgendaColor.amber.opacity(0.15) : (isSelected ? .black.opacity(0.04) : .clear), radius: 8, x: 0, y: 2)
         .padding(.horizontal, 20).contentShape(Rectangle())
+        .when(canDrag(store: store, note: note)) { view in
+            view
+                .draggable(DragPayload(noteID: note.id)) { dragPreview }
+                .dropDestination(for: DragPayload.self) { items, location in
+                    handleDrop(items: items, location: location)
+                } isTargeted: { targeted in
+                    isDropTargeted = targeted
+                }
+        }
         .contextMenu { contextMenuContent }
+        .background(
+            GeometryReader { geo in
+                Color.clear.onAppear {
+                    cardHeight = geo.size.height
+                }
+            }
+        )
+    }
+
+    private var dragPreview: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(note.title.isEmpty ? "无标题" : note.title)
+                .font(.custom("Avenir Next Medium", size: 13))
+                .foregroundStyle(Color(red: 0.102, green: 0.102, blue: 0.102))
+                .lineLimit(1)
+            Text(note.bodyPlainText)
+                .font(.custom("Avenir Next", size: 11))
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .frame(width: 240)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.white)
+                .shadow(color: .black.opacity(0.12), radius: 8, y: 4)
+        )
+    }
+
+    private func canDrag(store: ObservableLibraryStore, note: Note) -> Bool {
+        !store.isInBatchMode && store.selectedOverview != .trash
+    }
+
+    private func handleDrop(items: [DragPayload], location: CGPoint) -> Bool {
+        guard let payload = items.first else { return false }
+        guard payload.noteID != note.id else { return false }
+        guard let draggedNote = store.note(withID: payload.noteID) else { return false }
+        guard draggedNote.projectID == note.projectID else { return false }
+
+        // Flush draft before reordering
+        flushDraft()
+
+        let insertBefore = location.y < cardHeight / 2
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+            if insertBefore {
+                store.insertNoteBefore(payload.noteID, targetID: note.id)
+            } else {
+                store.insertNoteAfter(payload.noteID, targetID: note.id)
+            }
+        }
+        return true
     }
 
     var body: some View {
@@ -577,7 +714,7 @@ private struct StreamNoteRow: View {
 
         return ZStack(alignment: .topLeading) {
             // Preview — always present, measures its natural height for card sizing.
-            BlockNotePreviewView(note: note)
+            BlockNotePreviewView(note: note, highlightText: store.library.searchHighlightText)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
                 .opacity(isSelected && editorIsVisible ? 0 : (isNoteDimmed ? 0.58 : 1))
@@ -590,7 +727,12 @@ private struct StreamNoteRow: View {
                     }
                 )
                 .onPreferenceChange(PreviewHeightKey.self) { h in
-                    if h > 0 { capturedPreviewHeight = h }
+                    // Only update when height changes meaningfully (>0.5px).
+                    // Prevents feedback loop where tiny floating-point differences
+                    // from view recreation cause unnecessary re-renders.
+                    if h > 0, abs(capturedPreviewHeight - h) > 0.5 {
+                        capturedPreviewHeight = h
+                    }
                 }
 
             // Editor
@@ -604,7 +746,22 @@ private struct StreamNoteRow: View {
                         applyEditorContent(content)
                         if editorHasUserChanges { saveDraft() }
                     },
-                    onReady: { editorIsVisible = true }
+                    onReady: {
+                        editorIsVisible = true
+                        let q = store.library.searchHighlightText
+                        if !q.isEmpty {
+                            SharedBlockNoteWebView.shared.searchInEditor(query: q) { _ in
+                                // 搜索完成后跳到当前 occurrence 对应的 body 位置
+                                if let occ = store.currentOccurrence,
+                                   occ.field == .body,
+                                   occ.noteID == note.id {
+                                    SharedBlockNoteWebView.shared.navigateToMatch(
+                                        index: occ.bodyIndexInNote
+                                    ) { _, _ in }
+                                }
+                            }
+                        }
+                    }
                 )
                 .frame(maxWidth: .infinity, alignment: .topLeading)
                 .frame(height: cardHeight, alignment: .top)
@@ -826,7 +983,7 @@ private struct StreamNoteRow: View {
                     iconSystemName: "rectangle.dashed",
                     title: "存储为模板..."
                 ) { _ in
-                    // Template management has a dedicated UI planned; keep the entry visible for layout parity.
+                    saveAsTemplate()
                 }
             ]),
             AgendadaFloatingMenuSection(items: [
@@ -1276,26 +1433,30 @@ private struct StreamNoteRow: View {
             AgendadaFloatingMenuSection(items: [
                 AgendadaFloatingMenuItem(
                     iconSystemName: "arrow.up",
-                    title: "上一条笔记前",
-                    isEnabled: false
-                ) { _ in },
+                    title: "上一条笔记前"
+                ) { _ in
+                    moveWithPinCheck(.beforePrevious)
+                },
                 AgendadaFloatingMenuItem(
                     iconSystemName: "arrow.down",
-                    title: "下一条笔记后",
-                    isEnabled: false
-                ) { _ in }
+                    title: "下一条笔记后"
+                ) { _ in
+                    store.moveNote(note.id, to: .afterNext)
+                }
             ]),
             AgendadaFloatingMenuSection(items: [
                 AgendadaFloatingMenuItem(
                     iconSystemName: "arrow.up.to.line",
-                    title: "第一条笔记前",
-                    isEnabled: false
-                ) { _ in },
+                    title: "第一条笔记前"
+                ) { _ in
+                    moveWithPinCheck(.toFirst)
+                },
                 AgendadaFloatingMenuItem(
                     iconSystemName: "arrow.down.to.line",
-                    title: "最后一条笔记后",
-                    isEnabled: false
-                ) { _ in }
+                    title: "最后一条笔记后"
+                ) { _ in
+                    store.moveNote(note.id, to: .toLast)
+                }
             ])
         ]
 
@@ -1470,6 +1631,62 @@ private struct StreamNoteRow: View {
         printInfo.leftMargin = 36; printInfo.rightMargin = 36
         let printOp = NSPrintOperation(view: textView, printInfo: printInfo)
         printOp.runModal(for: NSApp.keyWindow ?? NSWindow(), delegate: nil, didRun: nil, contextInfo: nil)
+    }
+
+    private func saveAsTemplate() {
+        let alert = NSAlert()
+        alert.messageText = "存储为模板"
+        alert.informativeText = "保存当前笔记为可复用的模板"
+        alert.alertStyle = .informational
+
+        let textField = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
+        textField.placeholderString = "模板名称"
+        textField.stringValue = note.title
+        alert.accessoryView = textField
+
+        alert.addButton(withTitle: "保存")
+        alert.addButton(withTitle: "取消")
+
+        guard let window = NSApp.keyWindow else { return }
+        alert.beginSheetModal(for: window) { response in
+            if response == .alertFirstButtonReturn {
+                let name = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !name.isEmpty else { return }
+                store.addCustomNoteTemplate(name: name, from: note)
+            }
+        }
+    }
+
+    private func moveWithPinCheck(_ move: PositionMove) {
+        guard store.wouldCrossPinnedTopBoundary(note.id, move: move) else {
+            store.moveNote(note.id, to: move)
+            return
+        }
+
+        let alert = NSAlert()
+        alert.messageText = "是否要将当前笔记置顶？"
+        alert.informativeText = "该笔记上方有置顶笔记，需要先将当前笔记置顶才能移动到此位置。"
+        alert.alertStyle = .informational
+
+        alert.addButton(withTitle: "置顶并移动")
+        if move == .toFirst {
+            alert.addButton(withTitle: "除置顶外的第一条前")
+        }
+        alert.addButton(withTitle: "取消")
+
+        guard let window = NSApp.keyWindow else { return }
+        alert.beginSheetModal(for: window) { response in
+            switch response {
+            case .alertFirstButtonReturn:
+                store.pinAndMoveNote(note.id, to: move)
+            case .alertSecondButtonReturn:
+                if move == .toFirst {
+                    store.moveToFirstNonPinned(note.id)
+                }
+            default:
+                break
+            }
+        }
     }
 
     @ViewBuilder
@@ -1860,12 +2077,12 @@ private struct CapsuleIconPopoverButton<PopoverContent: View>: View {
 @MainActor
 private func sortFloatingMenuSections(store: ObservableLibraryStore) -> [AgendadaFloatingMenuSection] {
     [
-        AgendadaFloatingMenuSection(items: NoteSortOrder.allCases.map { order in
+        AgendadaFloatingMenuSection(items: SortMode.allCases.map { mode in
             AgendadaFloatingMenuItem(
-                iconSystemName: store.sortOrder == order ? "checkmark" : "circle",
-                title: order.title
+                iconSystemName: store.sortMode == mode ? "checkmark" : "circle",
+                title: mode.title
             ) { _ in
-                store.sortOrder = order
+                store.setSortMode(mode)
             }
         })
     ]
@@ -1918,35 +2135,168 @@ private func sortPopoverContent(store: ObservableLibraryStore, showSortPopover: 
     .frame(width: 180)
 }
 
+// MARK: - Enter-intercepting TextField for Search Popover
+
+private struct ReturnKeyTextField: NSViewRepresentable {
+    @Binding var text: String
+    let placeholder: String
+    var onReturn: () -> Void
+
+    func makeNSView(context: Context) -> NSTextField {
+        let tf = NSTextField()
+        tf.isBezeled = false
+        tf.isBordered = false
+        tf.drawsBackground = false
+        tf.focusRingType = .none
+        tf.font = NSFont(name: "Avenir Next", size: 13)
+        tf.placeholderString = placeholder
+        tf.lineBreakMode = .byTruncatingTail
+        tf.cell?.isScrollable = true
+        tf.cell?.wraps = false
+        tf.delegate = context.coordinator
+        return tf
+    }
+
+    func updateNSView(_ tf: NSTextField, context: Context) {
+        if tf.stringValue != text { tf.stringValue = text }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text, onReturn: onReturn)
+    }
+
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        @Binding var text: String
+        let onReturn: () -> Void
+
+        init(text: Binding<String>, onReturn: @escaping () -> Void) {
+            _text = text
+            self.onReturn = onReturn
+        }
+
+        func controlTextDidChange(_ obj: Notification) {
+            guard let tf = obj.object as? NSTextField else { return }
+            text = tf.stringValue
+        }
+
+        func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+            if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+                onReturn()
+                return true  // 拦截回车，不再传给系统
+            }
+            return false
+        }
+    }
+}
+
 // MARK: - Search Popover Content
 
 private struct SearchPopoverContent: View {
     @Binding var searchText: String
     @Environment(ObservableLibraryStore.self) private var store
 
+    private var summary: SearchSummary {
+        store.searchSummary
+    }
+
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(AgendaColor.textMuted)
-            TextField("搜索标题、正文、标签或人员", text: $searchText)
-                .textFieldStyle(.plain)
-                .font(.custom("Avenir Next", size: 13))
-                .frame(width: 220)
-            if !searchText.isEmpty {
-                Button {
-                    searchText = ""
-                    SharedBlockNoteWebView.shared.clearSearch()
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 13, weight: .medium))
+        VStack(alignment: .leading, spacing: 8) {
+            // 搜索输入框行
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(AgendaColor.textMuted)
+                ReturnKeyTextField(
+                    text: $searchText,
+                    placeholder: "搜索标题、正文、标签或人员",
+                    onReturn: { handleNext() }
+                )
+                .frame(width: 180, height: 20)
+                if !searchText.isEmpty {
+                    Button {
+                        searchText = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(AgendaColor.textMuted)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            // 导航和计数行
+            if summary.totalOccurrences > 0 {
+                HStack(spacing: 8) {
+                    Button { handlePrevious() } label: {
+                        Image(systemName: "chevron.up")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(AgendaColor.amber)
+                    }
+                    .buttonStyle(.plain)
+
+                    Button { handleNext() } label: {
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(AgendaColor.amber)
+                    }
+                    .buttonStyle(.plain)
+
+                    Text("\(summary.currentOccurrenceIndex)/\(summary.totalOccurrences)")
+                        .font(.custom("Avenir Next Medium", size: 11))
+                        .foregroundStyle(AgendaColor.textMuted)
+
+                    Spacer()
+
+                    Text("笔记 \(summary.currentNoteIndex)/\(summary.totalMatchedNotes)")
+                        .font(.custom("Avenir Next", size: 11))
                         .foregroundStyle(AgendaColor.textMuted)
                 }
-                .buttonStyle(.plain)
+            } else if !searchText.isEmpty {
+                Text("无匹配结果")
+                    .font(.custom("Avenir Next", size: 11))
+                    .foregroundStyle(AgendaColor.textMuted)
             }
         }
         .padding(.horizontal, 10).padding(.vertical, 8)
-        .frame(width: 300)
+        .frame(width: 320)
+        .onChange(of: searchText) { _, newValue in
+            if newValue.isEmpty {
+                SharedBlockNoteWebView.shared.clearSearch()
+            }
+        }
+        .onChange(of: store.searchOccurrences.count) { _, newCount in
+            // Fire searchInEditor only after calculateSearchOccurrences
+            // completes (180ms debounced in ObservableLibraryStore).
+            // This avoids the double-debounce race where the old 250ms
+            // timer could fire before occurrences were ready.
+            guard !searchText.isEmpty, newCount > 0 else { return }
+            let q = store.library.searchHighlightText
+            guard !q.isEmpty else { return }
+            SharedBlockNoteWebView.shared.searchInEditor(query: q) { _ in }
+        }
+    }
+
+    // MARK: - Navigation helpers
+
+    private func handleNext() {
+        store.goToNextSearchOccurrence()
+        syncEditorHighlight()
+    }
+
+    private func handlePrevious() {
+        store.goToPreviousSearchOccurrence()
+        syncEditorHighlight()
+    }
+
+    /// 引擎跳转后，同步编辑器的橙色高亮到当前 occurrence。
+    /// - 同笔记 body：直接 navigateToMatch
+    /// - 跨笔记：新编辑器的 onReady 会在 searchInEditor 完成后 navigateToMatch
+    /// - title：编辑器里没有对应 DOM 高亮，回退到本条笔记的第一个 body 匹配
+    ///   作为视觉锚点（navigateToMatch JS 会做边界检查，无 body 匹配时安全跳过）
+    private func syncEditorHighlight() {
+        guard let occ = store.currentOccurrence else { return }
+        let index: Int = occ.field == .body ? occ.bodyIndexInNote : 0
+        SharedBlockNoteWebView.shared.navigateToMatch(index: index) { _, _ in }
     }
 }
 

@@ -5,13 +5,20 @@ public final class LibraryStore {
     public private(set) var projects: [Project]
     public private(set) var notes: [Note]
     public private(set) var smartOverviews: [SmartOverview]
+    public private(set) var customNoteTemplates: [CustomNoteTemplate] = []
     public private(set) var selectedProjectID: Project.ID?
     public private(set) var selectedOverview: Overview?
     public private(set) var selectedSmartOverviewID: SmartOverview.ID?
     public private(set) var selectedNoteID: Note.ID?
     public var batchSelectedNoteIDs: Set<Note.ID> = []
-    public var searchText: String
+    public private(set) var searchText: String
     public var sortOrder: NoteSortOrder = .scheduledDateDesc
+    public var sortMode: SortMode = .scheduledDate
+
+    // MARK: - Search State
+
+    public private(set) var searchOccurrences: [SearchOccurrence] = []
+    public private(set) var currentOccurrenceIndex: Int? = nil
 
     public init(
         categories: [ProjectCategory] = [],
@@ -23,7 +30,9 @@ public final class LibraryStore {
         selectedSmartOverviewID: SmartOverview.ID? = nil,
         selectedNoteID: Note.ID? = nil,
         searchText: String = "",
-        sortOrder: NoteSortOrder = .scheduledDateDesc
+        sortOrder: NoteSortOrder = .scheduledDateDesc,
+        sortMode: SortMode = .scheduledDate,
+        customNoteTemplates: [CustomNoteTemplate] = []
     ) {
         self.categories = categories
         self.projects = projects
@@ -35,6 +44,8 @@ public final class LibraryStore {
         self.selectedNoteID = selectedNoteID
         self.searchText = searchText
         self.sortOrder = sortOrder
+        self.sortMode = sortMode
+        self.customNoteTemplates = customNoteTemplates
     }
 
     public convenience init(snapshot: LibrarySnapshot) {
@@ -48,7 +59,9 @@ public final class LibraryStore {
             selectedSmartOverviewID: snapshot.selectedSmartOverviewID,
             selectedNoteID: snapshot.selectedNoteID,
             searchText: snapshot.searchText,
-            sortOrder: snapshot.sortOrder
+            sortOrder: snapshot.sortOrder,
+            sortMode: snapshot.sortMode,
+            customNoteTemplates: snapshot.customNoteTemplates
         )
     }
 
@@ -317,6 +330,28 @@ public final class LibraryStore {
         return note
     }
 
+    // MARK: - Custom Note Templates
+
+    @discardableResult
+    public func addCustomNoteTemplate(name: String, from note: Note) -> CustomNoteTemplate {
+        let template = CustomNoteTemplate(
+            name: name,
+            title: note.title,
+            body: note.body,
+            tags: note.tags
+        )
+        customNoteTemplates.append(template)
+        return template
+    }
+
+    public func deleteCustomNoteTemplate(_ templateID: CustomNoteTemplate.ID) {
+        customNoteTemplates.removeAll { $0.id == templateID }
+    }
+
+    public func customNoteTemplate(withID templateID: CustomNoteTemplate.ID) -> CustomNoteTemplate? {
+        customNoteTemplates.first { $0.id == templateID }
+    }
+
     @discardableResult
     public func duplicateNote(_ noteID: Note.ID) -> Note? {
         guard let note = notes.first(where: { $0.id == noteID }) else { return nil }
@@ -336,7 +371,8 @@ public final class LibraryStore {
             isCollapsed: note.isCollapsed,
             noteColor: note.noteColor,
             pinState: note.pinState,
-            isBrief: note.isBrief
+            isBrief: note.isBrief,
+            position: note.position
         )
         notes.insert(copy, at: 0)
         selectedProjectID = copy.projectID
@@ -746,6 +782,27 @@ public final class LibraryStore {
                 matchesSearch(trimmedSearch, note: note, now: now)
             }
 
+        // Manual sorting mode
+        if sortMode == .manual {
+            return matchingNotes.sorted { lhs, rhs in
+                // Pin state still takes priority in manual mode.
+                // To move a note above a pinned note, user must explicitly
+                // pin it via the confirmation prompt.
+                if lhs.pinState != rhs.pinState {
+                    if lhs.pinState == .pinnedTop { return true }
+                    if rhs.pinState == .pinnedTop { return false }
+                    if lhs.pinState == .pinnedBottom { return false }
+                    if rhs.pinState == .pinnedBottom { return true }
+                }
+                switch (lhs.position, rhs.position) {
+                case let (l?, r?): return l < r
+                case (_?, nil): return true
+                case (nil, _?): return false
+                case (nil, nil): return lhs.editedAt > rhs.editedAt
+                }
+            }
+        }
+
         return matchingNotes.sorted { lhs, rhs in
             // Pin state takes priority
             if lhs.pinState != rhs.pinState {
@@ -1019,6 +1076,372 @@ public final class LibraryStore {
         return trimmedName.isEmpty ? fallback : trimmedName
     }
 
+    // MARK: - Position Management
+
+    /// Detect whether a position move would cross a pinned-top boundary.
+    /// Returns true if the user should be prompted about pinning the note.
+    public func wouldCrossPinnedTopBoundary(_ noteID: Note.ID, move: PositionMove) -> Bool {
+        let currentNotes = filteredNotes()
+        guard let currentIndex = currentNotes.firstIndex(where: { $0.id == noteID }) else { return false }
+        let note = currentNotes[currentIndex]
+
+        // Already pinned — no boundary to cross
+        guard note.pinState != .pinnedTop else { return false }
+
+        switch move {
+        case .toFirst:
+            return currentNotes.first?.pinState == .pinnedTop
+        case .beforePrevious:
+            guard currentIndex > 0 else { return false }
+            return currentNotes[currentIndex - 1].pinState == .pinnedTop
+        default:
+            return false
+        }
+    }
+
+    /// Move note to the first position among non-pinned notes.
+    public func moveToFirstNonPinned(_ noteID: Note.ID) {
+        let currentNotes = filteredNotes()
+        guard let noteIndex = notes.firstIndex(where: { $0.id == noteID }) else { return }
+        if sortMode != .manual { setSortMode(.manual) }
+
+        let nonPinnedNotes = currentNotes.filter { $0.pinState != .pinnedTop }
+        if let firstNonPinned = nonPinnedNotes.first {
+            notes[noteIndex].position = (firstNonPinned.position ?? 10.0) - 1.0
+        } else {
+            notes[noteIndex].position = 1.0
+        }
+        notes[noteIndex].editedAt = Date()
+    }
+
+    public func setSortMode(_ mode: SortMode) {
+        sortMode = mode
+        if mode == .manual {
+            assignInitialPositions()
+        } else {
+            // Keep sortOrder in sync so the filteredNotes() non-manual path
+            // (which still reads sortOrder) produces the correct ordering.
+            switch mode {
+            case .scheduledDate: sortOrder = .scheduledDateDesc
+            case .editedAt:      sortOrder = .editedAtDesc
+            case .createdAt:     sortOrder = .createdAtDesc
+            default: break
+            }
+        }
+    }
+
+    public func moveNote(_ noteID: Note.ID, to move: PositionMove) {
+        guard let noteIndex = notes.firstIndex(where: { $0.id == noteID }) else { return }
+
+        // Auto-switch to manual mode
+        if sortMode != .manual {
+            setSortMode(.manual)
+        }
+
+        let currentNotes = filteredNotes()
+        guard let currentIndex = currentNotes.firstIndex(where: { $0.id == noteID }) else { return }
+
+        switch move {
+        case .beforePrevious:
+            guard currentIndex > 0 else { return }
+            let prevNote = currentNotes[currentIndex - 1]
+            insertNote(noteID, before: prevNote.id, in: currentNotes)
+        case .afterNext:
+            guard currentIndex < currentNotes.count - 1 else { return }
+            let nextNote = currentNotes[currentIndex + 1]
+            insertNote(noteID, after: nextNote.id, in: currentNotes)
+        case .toFirst:
+            guard let firstNote = currentNotes.first, firstNote.id != noteID else { return }
+            notes[noteIndex].position = (firstNote.position ?? 1000.0) - 1.0
+        case .toLast:
+            guard let lastNote = currentNotes.last, lastNote.id != noteID else { return }
+            notes[noteIndex].position = (lastNote.position ?? 0.0) + 1.0
+        }
+
+        notes[noteIndex].editedAt = Date()
+    }
+
+    // Public wrappers for drag-and-drop reordering
+
+    public func insertNoteBefore(_ noteID: Note.ID, targetID: Note.ID) {
+        guard noteID != targetID else { return }
+        guard let noteIndex = notes.firstIndex(where: { $0.id == noteID }) else { return }
+        if sortMode != .manual { setSortMode(.manual) }
+        let currentNotes = filteredNotes()
+        insertNote(noteID, before: targetID, in: currentNotes)
+        notes[noteIndex].editedAt = Date()
+    }
+
+    public func insertNoteAfter(_ noteID: Note.ID, targetID: Note.ID) {
+        guard noteID != targetID else { return }
+        guard let noteIndex = notes.firstIndex(where: { $0.id == noteID }) else { return }
+        if sortMode != .manual { setSortMode(.manual) }
+        let currentNotes = filteredNotes()
+        insertNote(noteID, after: targetID, in: currentNotes)
+        notes[noteIndex].editedAt = Date()
+    }
+
+    private func insertNote(_ noteID: Note.ID, before targetID: Note.ID, in currentNotes: [Note]) {
+        guard let targetPosition = notes.first(where: { $0.id == targetID })?.position else { return }
+        guard let noteIndex = notes.firstIndex(where: { $0.id == noteID }) else { return }
+
+        // Find previous position (or target - 1)
+        let prevPosition: Double? = {
+            let sorted = currentNotes.filter { ($0.position ?? Double.greatestFiniteMagnitude) < targetPosition }
+            return sorted.last?.position
+        }()
+
+        if let prev = prevPosition {
+            notes[noteIndex].position = (prev + targetPosition) / 2.0
+        } else {
+            notes[noteIndex].position = targetPosition - 1.0
+        }
+    }
+
+    private func insertNote(_ noteID: Note.ID, after targetID: Note.ID, in currentNotes: [Note]) {
+        guard let targetPosition = notes.first(where: { $0.id == targetID })?.position else { return }
+        guard let noteIndex = notes.firstIndex(where: { $0.id == noteID }) else { return }
+
+        // Find next position
+        let nextPosition: Double? = {
+            let sorted = currentNotes.filter { ($0.position ?? -Double.greatestFiniteMagnitude) > targetPosition }
+            return sorted.first?.position
+        }()
+
+        if let next = nextPosition {
+            notes[noteIndex].position = (targetPosition + next) / 2.0
+        } else {
+            notes[noteIndex].position = targetPosition + 1.0
+        }
+    }
+
+    private func assignInitialPositions() {
+        // Only seed positions the first time the user switches to manual mode.
+        // If any note already has a non-nil position, the user has manually
+        // arranged notes before — preserve that work.
+        let hasExistingPositions = notes.contains { $0.position != nil }
+        guard !hasExistingPositions else { return }
+
+        let currentNotes = filteredNotes()
+        for (index, note) in currentNotes.enumerated() {
+            if let noteIndex = notes.firstIndex(where: { $0.id == note.id }) {
+                notes[noteIndex].position = Double(index + 1) * 10.0
+            }
+        }
+    }
+
+    // MARK: - Search Engine
+
+    /// 更新搜索文本并重新计算所有命中位置（同步，适合一次性提交）。
+    /// Auto-selects the first matching note — appropriate for programmatic use
+    /// (e.g. tests, Enter key). The debounced typing path in ObservableLibraryStore
+    /// uses setSearchTextOnly + calculateSearchOccurrences to avoid the auto-select.
+    public func updateSearchText(_ newText: String) {
+        searchText = newText
+        calculateSearchOccurrences()
+        if let first = searchOccurrences.first {
+            selectedNoteID = first.noteID
+        }
+    }
+
+    /// 仅设置搜索文本，不触发计算（由 ObservableLibraryStore 的 debounce 机制调用）
+    public func setSearchTextOnly(_ newText: String) {
+        searchText = newText
+    }
+
+    /// 清除所有搜索命中（搜索文本已清空时调用）
+    public func clearSearchOccurrences() {
+        searchOccurrences = []
+        currentOccurrenceIndex = nil
+    }
+
+    /// 重新计算搜索命中位置（由 debounce 机制调用）
+    public func calculateSearchOccurrences() {
+        let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+        guard !trimmed.isEmpty else {
+            searchOccurrences = []
+            currentOccurrenceIndex = nil
+            return
+        }
+
+        // 提取纯关键词（排除搜索语法前缀）
+        let keywords = plainKeywords(from: trimmed)
+
+        // 获取过滤后的笔记列表（应用全部搜索语法）
+        let notes = filteredNotes()
+
+        // 收集所有出现位置
+        var occurrences: [SearchOccurrence] = []
+        var globalIdx = 0
+
+        for note in notes {
+            var noteOccIdx = 0
+            var bodyIdx = 0
+
+            // 在正文中搜索
+            let body = note.bodyPlainText
+            for keyword in keywords {
+                findOccurrences(
+                    in: body, keyword: keyword,
+                    field: .body, note: note,
+                    occurrences: &occurrences, globalIdx: &globalIdx,
+                    noteOccIdx: &noteOccIdx, bodyIdx: &bodyIdx
+                )
+            }
+
+            // 在标题中搜索
+            let title = note.title
+            for keyword in keywords {
+                findOccurrences(
+                    in: title, keyword: keyword,
+                    field: .title, note: note,
+                    occurrences: &occurrences, globalIdx: &globalIdx,
+                    noteOccIdx: &noteOccIdx, bodyIdx: &bodyIdx
+                )
+            }
+        }
+
+        searchOccurrences = occurrences
+        currentOccurrenceIndex = nil
+        // Leave currentOccurrenceIndex as nil so the first Enter/next press
+        // lands on the first match (goToNextSearchOccurrence resolves
+        // (nil ?? -1) + 1 = 0 → index 0). Do NOT auto-select the first note
+        // here — that would trigger an onChange storm across all StreamNoteRow views.
+    }
+
+    /// 在给定文本中查找关键词的所有出现位置。
+    /// Searches case-insensitively on the original text to avoid the
+    /// String.Index cross-instance crash that would occur when using
+    /// lowercased-text indices to subscript the original string.
+    private func findOccurrences(
+        in text: String,
+        keyword: String,
+        field: SearchField,
+        note: Note,
+        occurrences: inout [SearchOccurrence],
+        globalIdx: inout Int,
+        noteOccIdx: inout Int,
+        bodyIdx: inout Int
+    ) {
+        var searchStart = text.startIndex
+
+        while let range = text.range(of: keyword, options: .caseInsensitive, range: searchStart..<text.endIndex) {
+            // UTF-16 偏移（用于 WebView 定位）
+            let prefix = String(text[..<range.lowerBound])
+            let matchPosition = prefix.utf16.count
+            let matchLength = keyword.utf16.count
+
+            // 上下文片段（±30 字符）
+            let contextStart = text.index(range.lowerBound, offsetBy: -30, limitedBy: text.startIndex) ?? text.startIndex
+            let contextEnd = text.index(range.upperBound, offsetBy: 30, limitedBy: text.endIndex) ?? text.endIndex
+            var excerpt = String(text[contextStart..<contextEnd])
+                .replacingOccurrences(of: "\n", with: " ")
+                .trimmingCharacters(in: .whitespaces)
+            if contextStart > text.startIndex { excerpt = "…" + excerpt }
+            if contextEnd < text.endIndex { excerpt = excerpt + "…" }
+
+            occurrences.append(SearchOccurrence(
+                noteID: note.id,
+                noteTitle: note.title,
+                globalIndex: globalIdx,
+                occurrenceIndexInNote: noteOccIdx,
+                bodyIndexInNote: field == .body ? bodyIdx : -1,
+                field: field,
+                matchPosition: matchPosition,
+                matchLength: matchLength,
+                excerpt: excerpt
+            ))
+
+            globalIdx += 1
+            noteOccIdx += 1
+            if field == .body { bodyIdx += 1 }
+            searchStart = range.upperBound
+        }
+    }
+
+    /// 从搜索查询中提取纯关键词（排除 tag:、person: 等语法前缀）
+    private func plainKeywords(from query: String) -> [String] {
+        query.split(separator: " ").map(String.init).filter { term in
+            !term.hasPrefix("tag:") && !term.hasPrefix("person:") &&
+            !term.hasPrefix("status:") && !term.hasPrefix("has:") &&
+            !term.hasPrefix("is:") && !term.hasPrefix("date:")
+        }
+    }
+
+    /// 用于 UI 高亮的纯关键词（空格分隔）
+    public var searchHighlightText: String {
+        plainKeywords(from: searchText.lowercased()).joined(separator: " ")
+    }
+
+    // MARK: - Occurrence Navigation
+
+    /// 当前所在的命中位置
+    public var currentOccurrence: SearchOccurrence? {
+        guard let idx = currentOccurrenceIndex,
+              idx >= 0, idx < searchOccurrences.count else { return nil }
+        return searchOccurrences[idx]
+    }
+
+    /// 跳转到下一个命中位置
+    @discardableResult
+    public func goToNextSearchOccurrence() -> SearchOccurrence? {
+        guard !searchOccurrences.isEmpty else { return nil }
+
+        let nextIdx = ((currentOccurrenceIndex ?? -1) + 1) % searchOccurrences.count
+        currentOccurrenceIndex = nextIdx
+
+        let occ = searchOccurrences[nextIdx]
+        // 跨笔记时切换 selectedNoteID
+        if occ.noteID != selectedNoteID {
+            selectedNoteID = occ.noteID
+        }
+        return occ
+    }
+
+    /// 跳转到上一个命中位置
+    @discardableResult
+    public func goToPreviousSearchOccurrence() -> SearchOccurrence? {
+        guard !searchOccurrences.isEmpty else { return nil }
+
+        let prevIdx = ((currentOccurrenceIndex ?? 0) - 1 + searchOccurrences.count) % searchOccurrences.count
+        currentOccurrenceIndex = prevIdx
+
+        let occ = searchOccurrences[prevIdx]
+        if occ.noteID != selectedNoteID {
+            selectedNoteID = occ.noteID
+        }
+        return occ
+    }
+
+    /// 搜索摘要信息
+    public var searchSummary: SearchSummary {
+        guard !searchOccurrences.isEmpty else { return .empty }
+
+        let currentIdx = currentOccurrenceIndex ?? 0
+        let currentNoteID = searchOccurrences[safe: currentIdx]?.noteID
+
+        // 计算当前所在笔记的索引
+        let uniqueNoteIDs = orderedMatchedNoteIDs()
+        let noteIdx = currentNoteID.flatMap { id in
+            uniqueNoteIDs.firstIndex(of: id)
+        } ?? 0
+
+        return SearchSummary(
+            totalOccurrences: searchOccurrences.count,
+            totalMatchedNotes: uniqueNoteIDs.count,
+            currentOccurrenceIndex: currentIdx + 1, // 1-based for display
+            currentNoteIndex: noteIdx + 1
+        )
+    }
+
+    /// 按 filteredNotes 顺序返回匹配到的笔记 ID 列表
+    private func orderedMatchedNoteIDs() -> [Note.ID] {
+        let noteIDs = Set(searchOccurrences.map(\.noteID))
+        let filtered = filteredNotes()
+        return filtered.compactMap { noteIDs.contains($0.id) ? $0.id : nil }
+    }
+
     public func snapshot() -> LibrarySnapshot {
         LibrarySnapshot(
             categories: categories,
@@ -1030,7 +1453,17 @@ public final class LibraryStore {
             selectedSmartOverviewID: selectedSmartOverviewID,
             selectedNoteID: selectedNoteID,
             searchText: searchText,
-            sortOrder: sortOrder
+            sortOrder: sortOrder,
+            sortMode: sortMode,
+            customNoteTemplates: customNoteTemplates
         )
+    }
+}
+
+// MARK: - Array Safe Access Extension
+
+private extension Array {
+    subscript(safe index: Int) -> Element? {
+        return indices.contains(index) ? self[index] : nil
     }
 }

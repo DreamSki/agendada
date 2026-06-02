@@ -225,8 +225,21 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
         }
     }
 
-    func navigateMatch(direction: Int, completion: @escaping (_ current: Int, _ total: Int) -> Void) {
+    func navigateMatch(direction: Int, completion: @escaping (_ current: Int, _ total: Int, _ atBoundary: Bool) -> Void) {
         webView.evaluateJavaScript("window.navigateMatch && window.navigateMatch(\(direction))") { result, _ in
+            if let dict = result as? [String: Any],
+               let c = dict["current"] as? Int,
+               let t = dict["total"] as? Int {
+                let atBoundary = dict["atBoundary"] as? Bool ?? false
+                completion(c, t, atBoundary)
+            } else {
+                completion(0, 0, true)
+            }
+        }
+    }
+
+    func navigateToMatch(index: Int, completion: @escaping (_ current: Int, _ total: Int) -> Void) {
+        webView.evaluateJavaScript("window.navigateToMatch && window.navigateToMatch(\(index))") { result, _ in
             if let dict = result as? [String: Any],
                let c = dict["current"] as? Int,
                let t = dict["total"] as? Int {
@@ -399,37 +412,40 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
             try { CSS.highlights.delete('agendada-search-active'); } catch(e) {}
             window.__agendadaSearch = { matches: [], currentIdx: -1 };
             if (!query || !query.trim()) return 0;
+            var keywords = query.toLowerCase().split(/\\s+/).filter(function(k) { return k.length > 0; });
+            if (keywords.length === 0) return 0;
             var editor = document.querySelector('.bn-editor') || document.querySelector('.mantine-RichTextEditor-root') || document.getElementById('root');
             if (!editor) return 0;
             var walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
             var ranges = [];
-            var lower = query.toLowerCase();
             while (walker.nextNode()) {
               var node = walker.currentNode;
               if (node.parentElement && (node.parentElement.tagName === 'SCRIPT' || node.parentElement.tagName === 'STYLE')) continue;
               var text = node.textContent.toLowerCase();
-              var idx = 0;
-              while ((idx = text.indexOf(lower, idx)) !== -1) {
-                var r = new Range();
-                r.setStart(node, idx);
-                r.setEnd(node, idx + query.length);
-                ranges.push(r);
-                idx += query.length;
+              for (var ki = 0; ki < keywords.length; ki++) {
+                var kw = keywords[ki];
+                var idx = 0;
+                while ((idx = text.indexOf(kw, idx)) !== -1) {
+                  var r = new Range();
+                  r.setStart(node, idx);
+                  r.setEnd(node, idx + kw.length);
+                  ranges.push(r);
+                  idx += kw.length;
+                }
               }
             }
+            // Sort ranges by document position for sequential navigation
+            ranges.sort(function(a, b) { return a.compareBoundaryPoints(Range.START_TO_START, b); });
             if (ranges.length > 0) {
               try {
-                var h = new Highlight();
+                var h = CSS.highlights.get('agendada-search') || new Highlight();
+                h.clear();
                 for (var i = 0; i < ranges.length; i++) { h.add(ranges[i]); }
                 CSS.highlights.set('agendada-search', h);
               } catch(e) {}
-              window.__agendadaSearch = { matches: ranges, currentIdx: 0 };
-              try { ranges[0].startContainer.parentElement.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch(e) {}
-              try {
-                CSS.highlights.delete('agendada-search-active');
-                var ah = new Highlight(); ah.add(ranges[0]);
-                CSS.highlights.set('agendada-search-active', ah);
-              } catch(e) {}
+              window.__agendadaSearch = { matches: ranges, currentIdx: -1 };
+              // Do NOT set initial active (orange) highlight or scroll here —
+              // navigateToMatch is called right after to set the correct active match.
             }
             return ranges.length;
           };
@@ -437,17 +453,36 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
           window.navigateMatch = function(direction) {
             var s = window.__agendadaSearch;
             if (!s || s.matches.length === 0) return { current: 0, total: 0 };
-            s.currentIdx += direction;
-            if (s.currentIdx >= s.matches.length) s.currentIdx = 0;
-            if (s.currentIdx < 0) s.currentIdx = s.matches.length - 1;
+            var nextIdx = s.currentIdx + direction;
+            // Return boundary info without wrapping — Swift handles note transitions
+            if (nextIdx < 0 || nextIdx >= s.matches.length) {
+              return { current: s.currentIdx + 1, total: s.matches.length, atBoundary: true };
+            }
+            s.currentIdx = nextIdx;
             var range = s.matches[s.currentIdx];
             try {
-              CSS.highlights.delete('agendada-search-active');
-              var ah = new Highlight(); ah.add(range);
-              CSS.highlights.set('agendada-search-active', ah);
+              var ah = CSS.highlights.get('agendada-search-active');
+              if (!ah) { ah = new Highlight(); CSS.highlights.set('agendada-search-active', ah); }
+              ah.clear(); ah.add(range);
             } catch(e) {}
             try { range.startContainer.parentElement.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch(e) {}
-            return { current: s.currentIdx + 1, total: s.matches.length };
+            return { current: s.currentIdx + 1, total: s.matches.length, atBoundary: false };
+          };
+
+          window.navigateToMatch = function(index) {
+            var s = window.__agendadaSearch;
+            if (!s || s.matches.length === 0) return { current: 0, total: 0 };
+            if (index < 0) index = 0;
+            if (index >= s.matches.length) index = s.matches.length - 1;
+            s.currentIdx = index;
+            var range = s.matches[index];
+            try {
+              var ah = CSS.highlights.get('agendada-search-active');
+              if (!ah) { ah = new Highlight(); CSS.highlights.set('agendada-search-active', ah); }
+              ah.clear(); ah.add(range);
+            } catch(e) {}
+            try { range.startContainer.parentElement.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch(e) {}
+            return { current: index + 1, total: s.matches.length };
           };
 
           window.clearSearch = function() {
