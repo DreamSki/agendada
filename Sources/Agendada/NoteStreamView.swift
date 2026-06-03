@@ -605,7 +605,9 @@ private struct StableTextField: NSViewRepresentable {
 
         func controlTextDidChange(_ obj: Notification) {
             guard let tf = obj.object as? NSTextField else { return }
-            text.wrappedValue = tf.stringValue
+            let newValue = tf.stringValue
+            guard newValue != text.wrappedValue else { return }
+            text.wrappedValue = newValue
         }
     }
 }
@@ -1894,7 +1896,11 @@ private struct ReturnKeyTextField: NSViewRepresentable {
 
         func controlTextDidChange(_ obj: Notification) {
             guard let tf = obj.object as? NSTextField else { return }
-            text = tf.stringValue
+            // Only write to binding if value actually changed — prevents
+            // unnecessary publishChange → re-render → binding writeback cycles
+            let newValue = tf.stringValue
+            guard newValue != text else { return }
+            text = newValue
         }
 
         func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {

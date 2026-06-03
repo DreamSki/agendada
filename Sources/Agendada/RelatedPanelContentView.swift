@@ -37,6 +37,10 @@ struct RelatedPanelContentView: View {
     @State private var filterMenuDismissedAt = Date.distantPast
     @State private var lastScrollProcessTime: Date = .distantPast
     @State private var pendingScrollWorkItem: DispatchWorkItem?
+
+    // Cache computed data to avoid calling store.filteredNotes() during body rendering
+    @State private var cachedRecentNotes: [AgendadaCore.Note] = []
+    @State private var cachedRelatedNotes: [RelatedNote] = []
     /// True when expanding after collapse — skip animation on scroll restore.
     @State private var isRestoringOnExpand = false
     /// Non-zero while a programmatic scroll is in flight.  Incremented on each
@@ -95,7 +99,7 @@ struct RelatedPanelContentView: View {
         .padding(.top, 28)
         .padding(.bottom, 20)
         .task {
-            // Initial load — safe to call repeatedly, skips if already loaded.
+            refreshCachedNotes()
             await calendarStore.loadIfNeeded(withNotes: store.filteredNotes())
         }
         .onChange(of: calendarStore.hasAnyPermission) { _, hasPermission in
@@ -106,13 +110,16 @@ struct RelatedPanelContentView: View {
             }
         }
         .onChange(of: calendarStore.daySchedulesVersion) { _, _ in
-            // Rebuild displayDays cache when source data changes.
-            // Called from onChange, NOT from inside body/computed-property.
             calendarStore.updateDisplayDaysIfNeeded()
             calendarStore.mergeScheduledNotes(store.filteredNotes())
+            refreshCachedNotes()
         }
         .onChange(of: store.scheduledNotesHash) { _, _ in
             calendarStore.mergeScheduledNotes(store.filteredNotes())
+            refreshCachedNotes()
+        }
+        .onChange(of: store.selectedNoteID) { _, _ in
+            refreshCachedNotes()
         }
         .onChange(of: timelineExpanded) { _, expanded in
             if expanded {
@@ -168,15 +175,20 @@ struct RelatedPanelContentView: View {
         calendarStore.displayDays
     }
 
-    private var recentNotes: [AgendadaCore.Note] {
-        Array(store.filteredNotes()
+    // Cached to avoid calling store.filteredNotes() during body rendering
+    // (which triggers observeRevision → AttributeGraph dependency → cycle risk)
+    private var recentNotes: [AgendadaCore.Note] { cachedRecentNotes }
+    private var relatedNotes: [RelatedNote] { cachedRelatedNotes }
+
+    private func refreshCachedNotes() {
+        cachedRecentNotes = Array(store.filteredNotes()
             .sorted { $0.editedAt > $1.editedAt }
             .prefix(3))
-    }
-
-    private var relatedNotes: [RelatedNote] {
-        guard let selectedNoteID = store.selectedNoteID else { return [] }
-        return Array(store.relatedNotes(for: selectedNoteID).prefix(3))
+        if let sid = store.selectedNoteID {
+            cachedRelatedNotes = Array(store.relatedNotes(for: sid).prefix(3))
+        } else {
+            cachedRelatedNotes = []
+        }
     }
 
     // MARK: - Timeline Content

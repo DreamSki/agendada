@@ -41,6 +41,7 @@ final class ObservableLibraryStore {
             return store.searchText
         }
         set {
+            guard newValue != store.searchText else { return }
             store.setSearchTextOnly(newValue)
             publishChange()
             scheduleSearchCalculation()
@@ -628,38 +629,17 @@ final class ObservableLibraryStore {
     }
 
     func filteredNotes() -> [Note] {
-        #if DEBUG
-        let start = Date()
-        let cacheHit = cachedFilteredNotes != nil &&
-                       cachedFilteredNotesRevision == dataRevision &&
-                       cachedFilteredNotesSearchText == store.searchText
-        #endif
         observeRevision()
         if let cached = cachedFilteredNotes,
            cachedFilteredNotesRevision == dataRevision,
            cachedFilteredNotesSearchText == store.searchText {
-            #if DEBUG
-            if !cacheHit {
-                print("🔄 [PERF] filteredNotes cache MISS - recalculating")
-            }
-            #endif
             return cached
         }
-        #if DEBUG
-        print("🔄 [PERF] filteredNotes recalculating...")
-        #endif
         let result = store.filteredNotes()
         cachedFilteredNotes = result
         cachedFilteredNotesRevision = dataRevision
         cachedFilteredNotesSearchText = store.searchText
-        // Invalidate derived caches
         cachedScheduledNotesHash = nil
-        #if DEBUG
-        let elapsed = Date().timeIntervalSince(start)
-        if elapsed > 0.050 {
-            print("⚠️ [PERF] filteredNotes took \(String(format: "%.3f", elapsed))s - result count: \(result.count)")
-        }
-        #endif
         return result
     }
 
@@ -711,28 +691,31 @@ final class ObservableLibraryStore {
         _ = revision
     }
 
+    @ObservationIgnored
+    private var publishCount = 0
+    @ObservationIgnored
+    private var lastPublishLogTime: CFAbsoluteTime = 0
+
     private func publishChange() {
-        #if DEBUG
-        let start = Date()
-        let caller = Thread.callStackSymbols.dropFirst().first?.components(separatedBy: " ").last ?? "unknown"
-        let logLine = "📢 [PERF] publishChange called from: \(caller.prefix(50))\n"
-        print(logLine)
-        appendToLogFile(logLine)
-        #endif
+        publishCount += 1
+        let now = CFAbsoluteTimeGetCurrent()
+
+        // Log full call stack when publishing rapidly (potential cycle)
+        if publishCount > 3 && now - lastPublishLogTime < 2.0 {
+            print("🚨 [CYCLE DETECT] publishChange #\(publishCount) in <1s — full call stack:")
+            for (i, sym) in Thread.callStackSymbols.prefix(20).enumerated() {
+                print("  [\(i)] \(sym)")
+            }
+            publishCount = 0
+            lastPublishLogTime = now
+        } else if now - lastPublishLogTime >= 1.0 {
+            publishCount = 0
+            lastPublishLogTime = now
+        }
+
         revision &+= 1
         dataRevision &+= 1
         invalidateFilteredNotesCache()
-        #if DEBUG
-        let elapsed = Date().timeIntervalSince(start)
-        if elapsed > 0.001 {
-            let warnLine = "⚠️ [PERF] publishChange took \(String(format: "%.3f", elapsed))s\n"
-            print(warnLine)
-            appendToLogFile(warnLine)
-        }
-        #endif
-
-        // Notify auto monitor
-        // Task { await autoMonitor?.logOperation("publishChange") }
     }
 
     private func publishSelectionChange() {
@@ -759,17 +742,9 @@ final class ObservableLibraryStore {
 
     private func persist() {
         guard persistenceEnabled else { return }
-        #if DEBUG
-        let start = Date()
-        print("🔖 [PERF] persist() started")
-        #endif
         saveTask?.cancel()
         let snapshot = store.snapshot()
         let repo = repository
-        #if DEBUG
-        let snapshotTime = Date().timeIntervalSince(start)
-        print("⏱️ [PERF] snapshot() took \(String(format: "%.3f", snapshotTime))s")
-        #endif
         saveTask = Task {
             do { try await repo.save(snapshot) }
             catch { assertionFailure("Failed to save Agendada library: \(error)") }
@@ -831,23 +806,4 @@ final class ObservableLibraryStore {
             print("⚠️ [Agendada] flushPendingSaveSync: save timed out after 5s — proceeding with termination")
         }
     }
-
-    #if DEBUG
-    @ObservationIgnored
-    private let logFilePath = "/tmp/agendada-perf.log"
-
-    private func appendToLogFile(_ message: String) {
-        DispatchQueue.main.async {
-            if let data = message.data(using: .utf8) {
-                if let handle = FileHandle(forWritingAtPath: self.logFilePath) {
-                    handle.seekToEndOfFile()
-                    handle.write(data)
-                    handle.closeFile()
-                } else {
-                    FileManager.default.createFile(atPath: self.logFilePath, contents: data, attributes: nil)
-                }
-            }
-        }
-    }
-    #endif
 }

@@ -213,13 +213,25 @@ final class CalendarStore {
                 ScheduledNoteInfo(id: note.id, title: note.title, projectID: note.projectID)
             )
         }
+
+        // Check if anything actually changed before mutating daySchedules
+        var changed = false
         for i in daySchedules.indices {
             let day = daySchedules[i].date
-            daySchedules[i].notes = noteMap[day] ?? []
+            let newNotes = noteMap[day] ?? []
+            let oldNoteIDs = Set(daySchedules[i].notes.map(\.id))
+            let newNoteIDs = Set(newNotes.map(\.id))
+            if oldNoteIDs != newNoteIDs {
+                changed = true
+                daySchedules[i].notes = newNotes
+            }
         }
-        // Notes-only mutations don't bump daySchedulesVersion, so the hash
-        // guard in updateDisplayDaysIfNeeded won't trigger.  Rebuild directly.
-        rebuildDisplayDays()
+
+        // Only rebuild displayDays if notes actually changed, to avoid
+        // triggering unnecessary SwiftUI re-renders that fuel onChange cycles.
+        if changed {
+            rebuildDisplayDays()
+        }
     }
 
     func loadInitialData() async {
