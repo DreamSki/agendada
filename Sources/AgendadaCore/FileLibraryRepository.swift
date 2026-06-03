@@ -32,6 +32,21 @@ public actor FileLibraryRepository {
     }
 
     public func save(_ snapshot: LibrarySnapshot) async throws {
+        try performSave(snapshot, to: fileURL)
+    }
+
+    /// Synchronous save for app-termination paths where async/await cannot run.
+    /// Safe to call from any thread — reads only the immutable `fileURL`.
+    nonisolated public func saveSync(_ snapshot: LibrarySnapshot) throws {
+        try performSave(snapshot, to: fileURL)
+    }
+
+    // MARK: - Private
+
+    private nonisolated func performSave(
+        _ snapshot: LibrarySnapshot,
+        to fileURL: URL
+    ) throws {
         try FileManager.default.createDirectory(
             at: fileURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
@@ -49,7 +64,7 @@ public actor FileLibraryRepository {
         // Phase 2: Create a backup of the current file before replacing it.
         // Use copyItem (not replaceItemAt) to avoid deleting the main file.
         // A crash between Phase 1 and Phase 3 must never leave fileURL missing.
-        if fileExists {
+        if FileManager.default.fileExists(atPath: fileURL.path) {
             let backupURL = fileURL.deletingPathExtension().appendingPathExtension("previous.json")
             // Remove old backup first (best-effort).
             try? FileManager.default.removeItem(at: backupURL)

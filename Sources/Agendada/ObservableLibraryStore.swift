@@ -794,16 +794,10 @@ final class ObservableLibraryStore {
         }
 
         let snapshot = store.snapshot()
-        let repo = repository
-        let done = DispatchGroup()
-        done.enter()
-        Task {
-            do { try await repo.save(snapshot) }
-            catch { assertionFailure("Failed to save Agendada library on terminate: \(error)") }
-            done.leave()
-        }
-        if done.wait(timeout: .now() + 5.0) == .timedOut {
-            print("⚠️ [Agendada] flushPendingSaveSync: save timed out after 5s — proceeding with termination")
+        do {
+            try repository.saveSync(snapshot)
+        } catch {
+            assertionFailure("Failed to save Agendada library on terminate: \(error)")
         }
     }
 }
