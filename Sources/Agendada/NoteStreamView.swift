@@ -351,6 +351,11 @@ struct NoteStreamView: View {
         navigationTargetNoteID = nil
     }
 
+    /// Lock duration: WebView editor expansion settles within ~200ms.
+    /// Longer locks make scroll feel unresponsive ("硬").
+    private static let scrollLockDelays: [TimeInterval] = [0.0, 0.016, 0.05, 0.10, 0.18, 0.25]
+    private static let scrollLockDuration: TimeInterval = 0.28
+
     private func preserveScrollDuringLocalSelection(_ update: @escaping () -> Void) {
         let scrollView = streamScrollView
         let originalOrigin = scrollView?.contentView.bounds.origin
@@ -363,16 +368,16 @@ struct NoteStreamView: View {
         localSelectionScrollLockGeneration += 1
         let generation = localSelectionScrollLockGeneration
         localSelectionScrollLockOrigin = originalOrigin
-        localSelectionScrollLockDeadline = Date().addingTimeInterval(0.8)
+        localSelectionScrollLockDeadline = Date().addingTimeInterval(Self.scrollLockDuration)
 
         update()
 
         restoreScrollOrigin(originalOrigin, in: scrollView)
-        for delay in [0.0, 0.016, 0.05, 0.10, 0.18, 0.30, 0.50, 0.80] {
+        for delay in Self.scrollLockDelays {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
                 guard generation == localSelectionScrollLockGeneration else { return }
                 restoreLocalSelectionScrollPosition()
-                if delay >= 0.80 {
+                if delay >= Self.scrollLockDelays.last! {
                     clearLocalSelectionScrollLock(generation: generation)
                 }
             }
@@ -631,6 +636,11 @@ private struct StreamNoteRow: View {
     @State private var initialBlockJSON: Data?
     @State private var skipNextCardTap = false
 
+    /// Local mirror of selection state so only the two affected cards
+    /// re-render when selection changes, instead of every visible card
+    /// re-reading store.selectedNoteID via observeRevision().
+    @State private var isLocalSelected: Bool
+
     init(
         note: Note,
         cancelPendingNavigation: @escaping () -> Void = {},
@@ -644,9 +654,20 @@ private struct StreamNoteRow: View {
         let d = StreamNoteDraft(note: note)
         _draft = State(initialValue: d)
         _initialDraft = State(initialValue: d)
+        _isLocalSelected = State(initialValue: false)
     }
 
-    private var isSelected: Bool { store.selectedNoteID == note.id }
+    private var isSelected: Bool { isLocalSelected }
+
+    /// Sync local selection state when store.selectedNoteID changes.
+    /// This lets us avoid reading store.selectedNoteID in body (which would
+    /// force every visible card to re-render via observeRevision).
+    private func syncSelectionFromStore() {
+        let shouldBeSelected = store.selectedNoteID == note.id
+        if isLocalSelected != shouldBeSelected {
+            isLocalSelected = shouldBeSelected
+        }
+    }
     private let bulletCol: CGFloat = 24
 
 
@@ -766,6 +787,7 @@ private struct StreamNoteRow: View {
             if isSelected { preserveLocalScrollPosition() }
         }
         .onChange(of: store.selectedNoteID) { oldValue, newValue in
+            syncSelectionFromStore()
             if oldValue == note.id && newValue != note.id {
                 flushDraft()
                 editorHeight = 0
@@ -775,6 +797,9 @@ private struct StreamNoteRow: View {
                 prepareEditorOverlayForSelection()
                 preserveLocalScrollPosition()
             }
+        }
+        .onAppear {
+            syncSelectionFromStore()
         }
         .onChange(of: note.id) {
             resetDraft()
@@ -846,6 +871,8 @@ private struct StreamNoteRow: View {
             }
         }
         .frame(minHeight: minH, alignment: .top)
+        .animation(.easeInOut(duration: 0.12), value: isSelected)
+        .animation(.easeInOut(duration: 0.12), value: editorIsVisible)
         .animation(.easeInOut(duration: 0.15), value: capturedPreviewHeight)
         .padding(.bottom, 60)
     }
