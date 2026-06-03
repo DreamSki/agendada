@@ -8,6 +8,7 @@ import Observation
 final class ObservableLibraryStore {
     private var store: LibraryStore
     private var revision = 0
+    private var dataRevision = 0
     @ObservationIgnored
     private let repository: FileLibraryRepository
     @ObservationIgnored
@@ -22,7 +23,7 @@ final class ObservableLibraryStore {
     // MARK: - Filtered Notes Cache
 
     /// Cached result of filteredNotes() to avoid recomputing on every view body evaluation.
-    /// Invalidated when revision changes or searchText changes.
+    /// Invalidated when note/filter data changes, not when only the selected note changes.
     @ObservationIgnored
     private var cachedFilteredNotes: [Note]?
     @ObservationIgnored
@@ -70,16 +71,20 @@ final class ObservableLibraryStore {
         return store.searchSummary
     }
 
-    func goToNextSearchOccurrence() {
-        store.goToNextSearchOccurrence()
+    @discardableResult
+    func goToNextSearchOccurrence() -> SearchOccurrence? {
+        let occurrence = store.goToNextSearchOccurrence()
         publishChange()
         persistSoon()
+        return occurrence
     }
 
-    func goToPreviousSearchOccurrence() {
-        store.goToPreviousSearchOccurrence()
+    @discardableResult
+    func goToPreviousSearchOccurrence() -> SearchOccurrence? {
+        let occurrence = store.goToPreviousSearchOccurrence()
         publishChange()
         persistSoon()
+        return occurrence
     }
 
     var sortOrder: NoteSortOrder {
@@ -282,7 +287,7 @@ final class ObservableLibraryStore {
 
     func selectNote(_ noteID: Note.ID) {
         store.selectNote(noteID)
-        publishChange()
+        publishSelectionChange()
         persistSoon()
     }
 
@@ -626,12 +631,12 @@ final class ObservableLibraryStore {
         #if DEBUG
         let start = Date()
         let cacheHit = cachedFilteredNotes != nil &&
-                       cachedFilteredNotesRevision == revision &&
+                       cachedFilteredNotesRevision == dataRevision &&
                        cachedFilteredNotesSearchText == store.searchText
         #endif
         observeRevision()
         if let cached = cachedFilteredNotes,
-           cachedFilteredNotesRevision == revision,
+           cachedFilteredNotesRevision == dataRevision,
            cachedFilteredNotesSearchText == store.searchText {
             #if DEBUG
             if !cacheHit {
@@ -645,7 +650,7 @@ final class ObservableLibraryStore {
         #endif
         let result = store.filteredNotes()
         cachedFilteredNotes = result
-        cachedFilteredNotesRevision = revision
+        cachedFilteredNotesRevision = dataRevision
         cachedFilteredNotesSearchText = store.searchText
         // Invalidate derived caches
         cachedScheduledNotesHash = nil
@@ -715,6 +720,7 @@ final class ObservableLibraryStore {
         appendToLogFile(logLine)
         #endif
         revision &+= 1
+        dataRevision &+= 1
         invalidateFilteredNotesCache()
         #if DEBUG
         let elapsed = Date().timeIntervalSince(start)
@@ -727,6 +733,10 @@ final class ObservableLibraryStore {
 
         // Notify auto monitor
         // Task { await autoMonitor?.logOperation("publishChange") }
+    }
+
+    private func publishSelectionChange() {
+        revision &+= 1
     }
 
     private func persistSoon() {
