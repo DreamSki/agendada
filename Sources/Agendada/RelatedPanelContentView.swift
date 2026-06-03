@@ -118,8 +118,14 @@ struct RelatedPanelContentView: View {
             calendarStore.mergeScheduledNotes(store.filteredNotes())
             refreshCachedNotes()
         }
-        .onChange(of: store.selectedNoteID) { _, _ in
+        .onChange(of: store.selectedNoteID) { _, newID in
             refreshCachedNotes()
+            // Scroll timeline to the selected note's scheduled date
+            guard timelineExpanded,
+                  let noteID = newID,
+                  let note = store.note(withID: noteID),
+                  let scheduledDate = note.scheduledDate else { return }
+            scrollToTimelineDate(Calendar.current.startOfDay(for: scheduledDate))
         }
         .onChange(of: timelineExpanded) { _, expanded in
             if expanded {
@@ -475,17 +481,20 @@ struct RelatedPanelContentView: View {
         return false
     }
 
-    private func scrollToToday() {
+    private func scrollToTimelineDate(_ date: Date) {
         needsInitialScroll = false
         initialScrollDone = true
-        let today = Calendar.current.startOfDay(for: Date())
         programmaticScrollGeneration &+= 1
         let myGen = programmaticScrollGeneration
-        focusedMonthDate = today
-        scrollTarget = today
+        focusedMonthDate = date
+        scrollTarget = date
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
             if programmaticScrollGeneration == myGen { programmaticScrollGeneration = 0 }
         }
+    }
+
+    private func scrollToToday() {
+        scrollToTimelineDate(Calendar.current.startOfDay(for: Date()))
     }
 
     /// Number of `displayDays` entries that roughly fill one viewport.
