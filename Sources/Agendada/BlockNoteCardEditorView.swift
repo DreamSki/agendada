@@ -227,7 +227,7 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
                 self.revealEditorIfCurrent(noteID: noteID, generation: generation, expectedSuperview: expectedSuperview)
             }
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
             self?.revealEditorIfCurrent(noteID: noteID, generation: generation, expectedSuperview: expectedSuperview)
         }
     }
@@ -1136,9 +1136,7 @@ private func blockNoteHTML() -> String {
         }
 
         function signalCardLoaded(cardId, generation) {
-          setTimeout(function() {
-            post("cardLoaded", { cardId: cardId, generation: generation });
-          }, 0);
+          post("cardLoaded", { cardId: cardId, generation: generation });
         }
 
         document.addEventListener("load", function(event) {
@@ -1176,11 +1174,9 @@ private func blockNoteHTML() -> String {
             console.error("Agendada BlockNote loadCard failed", error);
             editor.replaceBlocks(editor.document, emptyBlocks());
           }
-          setTimeout(function() {
-            window.__agendada.suppressChange = false;
-            scheduleHeightChecks();
-            signalCardLoaded(cardId, generation);
-          }, 0);
+          window.__agendada.suppressChange = false;
+          scheduleHeightChecks();
+          signalCardLoaded(cardId, generation);
         };
 
         window.flushCurrentContent = async function() {
