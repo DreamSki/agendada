@@ -107,9 +107,8 @@ struct BlockNotePreviewView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        // 首块顶部偏移：CSS padding-top=3px，但 SwiftUI blockVPadding=6，
-        // 段间叠加需要 2x 但首段顶部只需 1x，故上移 3px 补偿
-        .padding(.top, -(PreviewMetrics.blockVPadding / 2))
+        // 编辑器 CSS .bn-block-content 使用 padding: 6px 0，
+        // 预览 blockVPadding=6 与之匹配，无需补偿偏移
         .padding(.leading, PreviewMetrics.editorLeadingPadding)
         .padding(.trailing, PreviewMetrics.editorTrailingPadding)
     }

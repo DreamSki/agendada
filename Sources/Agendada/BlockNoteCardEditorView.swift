@@ -112,6 +112,11 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
         view.clipsToBounds = false
         view.navigationDelegate = self
         view.allowsBackForwardNavigationGestures = false
+        view.allowsMagnification = false
+        view.magnification = 1.0
+        if #available(macOS 11.0, *) {
+            view.pageZoom = 1.0
+        }
         view.pasteHandler = { [weak self] in self?.handleFinderPaste() ?? false }
         if let bundle = preparedEditorBundle() {
             agdEditorLog("Agendada BlockNote editor loading local bundle: \(bundle.editorURL.path)")
@@ -208,10 +213,10 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
         let generation = loadGeneration
         currentLoadSuperview = expectedSuperview
 
-        // Gate height reports for 250 ms so BlockNote's initial 122→53 px
-        // jitter doesn't resize the card.
+        // Gate height reports briefly so BlockNote's initial 122→53 px
+        // jitter doesn't resize the card. Reduced from 250ms→120ms for snappier feel.
         readyForHeight = false
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
             guard let self, generation == self.loadGeneration else { return }
             self.readyForHeight = true
         }
@@ -227,7 +232,7 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
                 self.revealEditorIfCurrent(noteID: noteID, generation: generation, expectedSuperview: expectedSuperview)
             }
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
             self?.revealEditorIfCurrent(noteID: noteID, generation: generation, expectedSuperview: expectedSuperview)
         }
     }
@@ -472,12 +477,84 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
           var styleEl = document.createElement('style');
           styleEl.id = 'agendada-editor-runtime-styles';
           styleEl.textContent = `
-            html, body, #root, .editor-shell, .bn-editor { overflow: visible !important; }
+            html, body, #root, .editor-shell { overflow: visible !important; }
+            html { font-size: 14px !important; -webkit-text-size-adjust: none !important; }
+
+            /* ── Font baseline: override BlockNote CSS-in-JS ── */
+            /* Target ALL possible text elements so font-size is consistent at every level */
+            .bn-editor, .bn-editor *,
+            .bn-default-styles, .bn-default-styles *,
+            .ProseMirror, .ProseMirror * {
+              font-family: "Avenir Next", -apple-system, sans-serif !important;
+              font-size: 14.12px !important;
+              font-weight: 400 !important;
+              line-height: 1.65 !important;
+              -webkit-font-smoothing: auto !important;
+              font-kerning: normal !important;
+              font-variant-ligatures: normal !important;
+              font-feature-settings: "liga" 1, "kern" 1 !important;
+            }
+            /* ── Zero out all Mantine/BlockNote/ProseMirror container padding ── */
             .mantine-RichTextEditor-root,
             .mantine-RichTextEditor-content,
-            .mantine-RichTextEditor-inner {
+            .mantine-RichTextEditor-inner,
+            .mantine-RichTextEditor-wrapper,
+            .mantine-RichTextEditor-input,
+            .bn-container,
+            .bn-editor,
+            .bn-block-outer, .bn-block, .bn-inline-content,
+            .ProseMirror {
               padding: 0 !important;
+              margin: 0 !important;
             }
+
+            /* Restore intentional vertical block padding */
+            .bn-block-content { padding: 6px 0 !important; }
+            /* Restore intentional editor inline padding (0 left, 8px right) */
+            .bn-editor { padding-left: 0 !important; padding-right: 8px !important; overflow: visible !important; }
+
+            /* ── Block styles matching SwiftUI preview ── */
+            .bn-block-content[data-content-type="codeBlock"],
+            .bn-block-content[data-content-type="codeBlock"] * {
+              font-family: Menlo, monospace !important;
+              font-size: 13px !important;
+              font-weight: 400 !important;
+              color: #2E2E30 !important;
+              background: rgba(0,0,0,0.045) !important;
+              border-radius: 6px !important;
+              padding: 8px 10px !important;
+              line-height: 1.4 !important;
+            }
+            .bn-block-content[data-content-type="quote"] {
+              border-left: 3px solid #F5E5C0 !important;
+              padding-left: 10px !important;
+            }
+            .bn-block-content[data-content-type="divider"] hr {
+              border: none !important;
+              height: 1px !important;
+              background: rgba(0,0,0,0.10) !important;
+              margin: 10px 0 !important;
+            }
+            .bn-block-content[data-content-type="heading"],
+            .bn-block-content[data-content-type="heading"] * {
+              color: #1A1A1A !important;
+              padding-top: 5.5px !important;
+              padding-bottom: 5.5px !important;
+              font-weight: 700 !important;
+              font-size: 17px !important;
+            }
+            .bn-block-content[data-content-type="heading"][data-level="1"],
+            .bn-block-content[data-content-type="heading"][data-level="1"] * {
+              padding-top: 18.3px !important;
+            }
+            .bn-block-content[data-content-type="heading"][data-level="3"],
+            .bn-block-content[data-content-type="heading"][data-level="3"] * {
+              font-size: 15px !important;
+            }
+            .bn-editor img { max-width: 100% !important; max-height: 260px !important; object-fit: contain !important; }
+            .bn-editor table { width: 100% !important; max-width: 100% !important; table-layout: fixed !important; border-collapse: collapse; }
+            .bn-editor td, .bn-editor th { padding: 10px !important; font-size: 14.12px !important; line-height: 1.65 !important; }
+
             .bn-suggestion-menu { max-height: 350px !important; }
           `;
           document.head.appendChild(styleEl);
@@ -582,10 +659,60 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
             } catch(e) {}
           };
 
-          console.log("Agendada: runtime editor helpers + search injected");
+          /* ── Debug layout measurement ── */
+          window.__agdMeasureEditorLayout = function() {
+            var selectors = [
+              "html", "body", "#root", ".editor-shell",
+              ".bn-editor", ".bn-block-group", ".bn-block-outer",
+              ".bn-block", ".bn-block-content", ".bn-inline-content"
+            ];
+            return selectors.map(function(sel) {
+              var el = document.querySelector(sel);
+              if (!el) return { selector: sel, missing: true };
+              var cs = getComputedStyle(el);
+              var rect = el.getBoundingClientRect();
+              return {
+                selector: sel, width: rect.width, clientWidth: el.clientWidth,
+                paddingLeft: cs.paddingLeft, paddingRight: cs.paddingRight,
+                boxSizing: cs.boxSizing, fontSize: cs.fontSize,
+                letterSpacing: cs.letterSpacing, fontWeight: cs.fontWeight
+              };
+            });
+          };
+
+          window.__agdMeasureTextAdvance = function(text) {
+            var host = document.createElement("span");
+            host.style.cssText = 'position:absolute;left:-99999px;top:-99999px;white-space:nowrap;' +
+              'font-family:"Avenir Next",-apple-system,sans-serif;font-size:14px;font-weight:400;' +
+              'line-height:23.1px;letter-spacing:normal;font-kerning:normal;' +
+              'font-variant-ligatures:common-ligatures contextual;';
+            host.textContent = text;
+            document.body.appendChild(host);
+            var w = host.getBoundingClientRect().width;
+            host.remove();
+            return w;
+          };
+
+          console.log("Agendada: runtime editor helpers + search + layout measurement injected");
         })();
         """
         webView.evaluateJavaScript(script)
+
+        // One-time CJK vs Core Text width comparison
+        let testCJK = "你哈哈哈哈哈哈哈哈哈哈哈哈哈" // 12 pure CJK chars
+        let font = NSFont(name: "Avenir Next", size: 14) ?? NSFont.systemFont(ofSize: 14)
+        let ctWidth = (testCJK as NSString).size(withAttributes: [.font: font]).width
+        let safeCJK = testCJK.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "\\'")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            guard let self else { return }
+            self.webView.evaluateJavaScript("window.__agdMeasureTextAdvance && window.__agdMeasureTextAdvance('\(safeCJK)')") { result, _ in
+                let wkWidth = result as? Double ?? 0
+                let diff = wkWidth - ctWidth
+                let chars = testCJK.count
+                let perChar = chars > 1 ? diff / Double(chars - 1) : 0
+                print("=== AGD CJK === CT=\(String(format:"%.2f", ctWidth))px WK=\(String(format:"%.2f", wkWidth))px diff=\(String(format:"%.2f", diff))px perChar=\(String(format:"%.4f", perChar))px (\(chars) chars)")
+            }
+        }
     }
 
     private func handleAssetImport(_ body: Any) {
@@ -884,9 +1011,14 @@ private func blockNoteHTML() -> String {
       <style>
         :root {
           color-scheme: light;
-          --agendada-editor-font-family: "Avenir Next", Avenir, -apple-system, BlinkMacSystemFont, sans-serif;
+          --agendada-editor-font-family: "Avenir Next", -apple-system, sans-serif;
         }
         * { box-sizing: border-box; }
+        html {
+          font-size: 14px !important;
+          -webkit-text-size-adjust: none !important;
+          text-size-adjust: none !important;
+        }
         html, body, #root {
           margin: 0;
           min-height: 100%;
@@ -904,30 +1036,54 @@ private func blockNoteHTML() -> String {
         }
         .mantine-RichTextEditor-root,
         .mantine-RichTextEditor-content,
-        .mantine-RichTextEditor-inner {
+        .mantine-RichTextEditor-inner,
+        .mantine-RichTextEditor-wrapper,
+        .mantine-RichTextEditor-input {
+          padding: 0 !important;
+          margin: 0 !important;
+        }
+        /* ── Zero out all BlockNote / ProseMirror container padding ── */
+        .bn-container {
+          background: transparent !important;
           padding: 0 !important;
         }
-        .bn-container, .bn-editor {
-          background: transparent !important;
-        }
         .bn-editor {
+          background: transparent !important;
           padding-inline: 0 8px !important;
-          font-size: 14px;
+          font-size: 14px !important;
           line-height: 1.65;
-          font-family: var(--agendada-editor-font-family);
+          font-family: var(--agendada-editor-font-family) !important;
+          font-weight: 500 !important;
+          -webkit-font-smoothing: auto !important;
+          -moz-osx-font-smoothing: auto !important;
           overflow: visible !important;
         }
         .bn-default-styles {
           font-family: var(--agendada-editor-font-family) !important;
           font-size: 14px !important;
           line-height: 1.65 !important;
+          font-weight: 500 !important;
         }
+        /* Vertical block padding — must come AFTER .bn-block-outer/.bn-block reset */
         .bn-block-content {
           padding: 6px 0 !important;
         }
-        .bn-block-outer, .bn-block, .bn-block-content {
+        .bn-block-outer, .bn-block {
           max-width: 100% !important;
           overflow: visible !important;
+          padding: 0 !important;
+          margin: 0 !important;
+        }
+        .bn-inline-content {
+          min-width: 2px !important;
+          max-width: 100% !important;
+          overflow-wrap: anywhere;
+          padding: 0 !important;
+        }
+        /* ProseMirror — the underlying contenteditable engine */
+        .ProseMirror {
+          padding: 0 !important;
+          margin: 0 !important;
         }
         .bn-block-content[data-content-type="bulletListItem"]::before,
         .bn-block-content[data-content-type="numberedListItem"]::before {
@@ -943,11 +1099,6 @@ private func blockNoteHTML() -> String {
           accent-color: #F5A623;
           width: 14px;
           height: 14px;
-        }
-        .bn-inline-content {
-          min-width: 2px !important;
-          max-width: 100% !important;
-          overflow-wrap: anywhere;
         }
         .bn-editor img {
           max-width: 100% !important;
@@ -986,6 +1137,28 @@ private func blockNoteHTML() -> String {
         .bn-block-outer[data-prev-type="heading"] > .bn-block > .bn-block-content,
         .bn-block-outer:not([data-prev-type]) > .bn-block > .bn-block-content[data-content-type="heading"] {
           font-size: var(--level) !important;
+        }
+        /* ── Code block ── */
+        .bn-block-content[data-content-type="codeBlock"] {
+          font-family: Menlo, "Courier New", monospace !important;
+          font-size: 13px !important;
+          color: #2E2E30 !important;
+          background: rgba(0, 0, 0, 0.045) !important;
+          border-radius: 6px !important;
+          padding: 8px 10px !important;
+          line-height: 1.4 !important;
+        }
+        /* ── Quote ── */
+        .bn-block-content[data-content-type="quote"] {
+          border-left: 3px solid #F5E5C0 !important;
+          padding-left: 10px !important;
+        }
+        /* ── Divider ── */
+        .bn-block-content[data-content-type="divider"] hr {
+          border: none !important;
+          height: 1px !important;
+          background: rgba(0, 0, 0, 0.10) !important;
+          margin: 10px 0 !important;
         }
         .fallback-editor {
           min-height: 180px;
@@ -1111,8 +1284,11 @@ private func blockNoteHTML() -> String {
           requestHeight();
         }
 
+        var __heightRAF = 0;
         function requestHeight() {
-          requestAnimationFrame(function() {
+          if (__heightRAF) return;          // already scheduled this frame
+          __heightRAF = requestAnimationFrame(function() {
+            __heightRAF = 0;
             const root = document.getElementById("root");
             if (!root) {
               post("editorHeight", 1);
@@ -1128,20 +1304,27 @@ private func blockNoteHTML() -> String {
           });
         }
 
+        var __scheduleHeightTimer = 0;
         function scheduleHeightChecks() {
           requestHeight();
-          [40, 120, 300, 700, 1200].forEach(function(delay) {
-            setTimeout(requestHeight, delay);
-          });
+          // Coalesce rapid-fire calls: clear any pending delayed batch first.
+          clearTimeout(__scheduleHeightTimer);
+          __scheduleHeightTimer = setTimeout(function() {
+            requestHeight();
+            // One final check after images / async layout settle.
+            setTimeout(requestHeight, 500);
+          }, 150);
         }
 
         function signalCardLoaded(cardId, generation) {
           post("cardLoaded", { cardId: cardId, generation: generation });
         }
 
+        var __imgLoadThrottle = 0;
         document.addEventListener("load", function(event) {
           if (event.target && event.target.tagName === "IMG") {
-            scheduleHeightChecks();
+            clearTimeout(__imgLoadThrottle);
+            __imgLoadThrottle = setTimeout(scheduleHeightChecks, 100);
           }
         }, true);
 
@@ -1285,7 +1468,7 @@ private func blockNoteHTML() -> String {
             const mutationObserver = new MutationObserver(scheduleHeightChecks);
             const root = document.getElementById("root");
             observer.observe(root);
-            mutationObserver.observe(root, { subtree: true, childList: true, attributes: true, characterData: true });
+            mutationObserver.observe(root, { subtree: true, childList: true });
             scheduleHeightChecks();
             return function() {
               observer.disconnect();
