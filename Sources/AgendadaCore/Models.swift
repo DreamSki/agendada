@@ -63,7 +63,7 @@ public struct Note: Identifiable, Hashable, Codable, Sendable {
     public var noteColor: NoteColor?
     public var pinState: PinState
     public var isBrief: Bool
-    public var position: Double?
+    public var position: Int64?
     public var createdAt: Date
     public var editedAt: Date
 
@@ -85,7 +85,7 @@ public struct Note: Identifiable, Hashable, Codable, Sendable {
         noteColor: NoteColor? = nil,
         pinState: PinState = .none,
         isBrief: Bool = false,
-        position: Double? = nil,
+        position: Int64? = nil,
         createdAt: Date = Date(),
         editedAt: Date = Date()
     ) {
@@ -179,11 +179,13 @@ public struct Note: Identifiable, Hashable, Codable, Sendable {
         noteColor = try container.decodeIfPresent(NoteColor.self, forKey: .noteColor)
         pinState = try container.decodeIfPresent(PinState.self, forKey: .pinState) ?? .none
         isBrief = try container.decodeIfPresent(Bool.self, forKey: .isBrief) ?? false
-        // Decode from either Double (current) or Int (legacy) for backward compat
-        if let d = try? container.decodeIfPresent(Double.self, forKey: .position) {
-            position = d
+        // Decode from either Int64 (current), Double (legacy), or Int (legacy)
+        if let i64 = try? container.decodeIfPresent(Int64.self, forKey: .position) {
+            position = i64
+        } else if let d = try? container.decodeIfPresent(Double.self, forKey: .position) {
+            position = Int64((d * 1024).rounded())
         } else if let i = try? container.decodeIfPresent(Int.self, forKey: .position) {
-            position = Double(i)
+            position = Int64(i) * 1024
         } else {
             position = nil
         }
@@ -212,25 +214,29 @@ public struct ChecklistSummary: Hashable, Sendable {
         var completedCount = 0
 
         // Count task items by finding all data-checked occurrences
-        let checkedRegex = try! NSRegularExpression(pattern: #"data-checked="true""#)
-        let taskItemRegex = try! NSRegularExpression(pattern: #"data-type="taskItem""#)
         let range = NSRange(html.startIndex..<html.endIndex, in: html)
-        completedCount = checkedRegex.numberOfMatches(in: html, range: range)
-        let totalTaskItems = taskItemRegex.numberOfMatches(in: html, range: range)
+        completedCount = Self.checkedRegex.numberOfMatches(in: html, range: range)
+        let totalTaskItems = Self.taskItemRegex.numberOfMatches(in: html, range: range)
         openCount = totalTaskItems - completedCount
 
-        // Also handle legacy markdown in plain text
-        for line in html.components(separatedBy: .newlines) {
-            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            if trimmed.hasPrefix("- [ ]") || trimmed.hasPrefix("* [ ]") {
-                openCount += 1
-            } else if trimmed.hasPrefix("- [x]") || trimmed.hasPrefix("* [x]") {
-                completedCount += 1
+        // Handle legacy markdown only when no HTML task items were found
+        // to avoid double-counting items that appear in both forms.
+        if completedCount == 0, openCount == 0 {
+            for line in html.components(separatedBy: .newlines) {
+                let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                if trimmed.hasPrefix("- [ ]") || trimmed.hasPrefix("* [ ]") {
+                    openCount += 1
+                } else if trimmed.hasPrefix("- [x]") || trimmed.hasPrefix("* [x]") {
+                    completedCount += 1
+                }
             }
         }
         self.openCount = openCount
         self.completedCount = completedCount
     }
+
+    private static let checkedRegex = try! NSRegularExpression(pattern: #"data-checked="true""#)
+    private static let taskItemRegex = try! NSRegularExpression(pattern: #"data-type="taskItem""#)
 
     public var totalCount: Int { openCount + completedCount }
     public var hasOpenItems: Bool { openCount > 0 }
@@ -407,6 +413,15 @@ public enum PositionMove: Sendable {
     case afterNext
     case toFirst
     case toLast
+}
+
+/// Detected boundary crossing during drag-and-drop reordering.
+public enum PinBoundaryCrossing: Sendable {
+    case none
+    /// A non-pinned note is being dropped onto a pinned-top note.
+    case intoPinnedTop
+    /// A pinned-top note is being dropped onto a non-pinned note.
+    case outOfPinnedTop
 }
 
 // MARK: - NoteTemplate

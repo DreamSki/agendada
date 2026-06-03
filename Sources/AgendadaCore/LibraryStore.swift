@@ -142,8 +142,9 @@ public final class LibraryStore {
 
     public var tagCounts: [(name: String, count: Int)] {
         let all = notes.flatMap(\.tags)
+        let grouped = Dictionary(grouping: all, by: { $0 })
         return uniqueSorted(all).map { tag in
-            (name: tag, count: all.filter { $0 == tag }.count)
+            (name: tag, count: grouped[tag]?.count ?? 0)
         }
     }
 
@@ -327,8 +328,10 @@ public final class LibraryStore {
         // 手动排序模式下给新笔记一个位置编号，排在非置顶笔记的最上面。
         // 这样编辑后 editedAt 变化也不会打乱顺序。
         if sortMode == .manual, let idx = notes.firstIndex(where: { $0.id == note.id }) {
-            let minPos = notes.compactMap(\.position).min() ?? 10.0
-            notes[idx].position = minPos - 10.0
+            let minPos = notes
+                .filter { $0.projectID == note.projectID }
+                .compactMap(\.position).min() ?? Self.positionGap
+            notes[idx].position = minPos - Self.positionGap
         }
 
         selectedProjectID = targetProjectID
@@ -455,6 +458,7 @@ public final class LibraryStore {
         for noteID in noteIDs {
             guard let index = notes.firstIndex(where: { $0.id == noteID }) else { continue }
             notes[index].projectID = projectID
+            notes[index].position = nil  // Reset position so target project assigns a fresh one
             notes[index].editedAt = Date()
         }
         batchSelectedNoteIDs.removeAll()
@@ -826,11 +830,14 @@ public final class LibraryStore {
                     if rhs.pinState == .pinnedBottom { return true }
                 }
                 switch (lhs.position, rhs.position) {
-                case let (l?, r?): return l < r
+                case let (l?, r?) where l != r: return l < r
                 case (_?, nil): return false   // nil (new) notes sort on top
-                case (nil, _?): return true   // nil (new) notes sort on top
-                case (nil, nil): return lhs.editedAt > rhs.editedAt
+                case (nil, _?): return true    // nil (new) notes sort on top
+                default: break                 // equal or both nil — use tie-breaker
                 }
+                // Stable tie-breaker: newer notes first, then by ID for determinism
+                if lhs.createdAt != rhs.createdAt { return lhs.createdAt > rhs.createdAt }
+                return lhs.id.uuidString < rhs.id.uuidString
             }
         }
 
@@ -1009,13 +1016,9 @@ public final class LibraryStore {
     private func checklistItems(in note: Note) -> [(title: String, isCompleted: Bool)] {
         let html = note.body
 
-        // Parse task items from HTML
-        let taskPattern = try! NSRegularExpression(
-            pattern: #"<li data-type="taskItem" data-checked="(true|false)"><label><input type="checkbox"></label><div><p>(.*?)</p></div></li>"#,
-            options: []
-        )
+        // Parse task items from HTML (regex cached as static)
         let nsRange = NSRange(html.startIndex..<html.endIndex, in: html)
-        let matches = taskPattern.matches(in: html, range: nsRange)
+        let matches = Self.taskItemPattern.matches(in: html, range: nsRange)
 
         if !matches.isEmpty {
             return matches.compactMap { match in
@@ -1109,10 +1112,19 @@ public final class LibraryStore {
 
     // MARK: - Position Management
 
+    /// Sparse interval between adjacent positions. Large enough to allow many
+    /// insertions before a rebalance is needed.
+    private static let positionGap: Int64 = 1024
+    /// Minimum allowed difference between two positions. When an insertion
+    /// would produce a gap ≤ this value, the project is rebalanced instead.
+    private static let positionMinGap: Int64 = 1
+
+    // MARK: Position queries (view-scoped — reflect current filteredNotes order)
+
     /// Detect whether a position move would cross a pinned-top boundary.
     /// Returns true if the user should be prompted about pinning the note.
     public func wouldCrossPinnedTopBoundary(_ noteID: Note.ID, move: PositionMove) -> Bool {
-        let currentNotes = filteredNotes()
+        let currentNotes = projectScopedNotes(for: noteID)
         guard let currentIndex = currentNotes.firstIndex(where: { $0.id == noteID }) else { return false }
         let note = currentNotes[currentIndex]
 
@@ -1130,17 +1142,133 @@ public final class LibraryStore {
         }
     }
 
-    /// Move note to the first position among non-pinned notes.
+    /// Detect whether a pinned-top note would leave the pinned group
+    /// via a menu move (`.afterNext` or `.toLast`).
+    /// Used by `moveWithPinCheck` to show a confirmation alert.
+    public func wouldLeavePinnedTopBoundary(_ noteID: Note.ID, move: PositionMove) -> Bool {
+        let currentNotes = projectScopedNotes(for: noteID)
+        guard let currentIndex = currentNotes.firstIndex(where: { $0.id == noteID }) else { return false }
+        let note = currentNotes[currentIndex]
+
+        // Only pinned-top notes have a boundary to leave
+        guard note.pinState == .pinnedTop else { return false }
+
+        switch move {
+        case .afterNext:
+            guard currentIndex < currentNotes.count - 1 else { return false }
+            return currentNotes[currentIndex + 1].pinState != .pinnedTop
+        case .toLast:
+            return currentNotes.last?.pinState != .pinnedTop
+        default:
+            return false
+        }
+    }
+
+    /// Detect whether a drag-and-drop operation crosses a pin boundary.
+    /// Used by `CardInteractionLayer` to decide whether to show a confirmation alert.
+    public func pinBoundaryCrossing(draggedNoteID: Note.ID, targetNoteID: Note.ID) -> PinBoundaryCrossing {
+        guard let dragged = note(withID: draggedNoteID),
+              let target = note(withID: targetNoteID) else { return .none }
+
+        if dragged.pinState != .pinnedTop && target.pinState == .pinnedTop {
+            return .intoPinnedTop
+        }
+        if dragged.pinState == .pinnedTop && target.pinState != .pinnedTop {
+            return .outOfPinnedTop
+        }
+        return .none
+    }
+
+    /// Project-scoped ordered notes for the given note's project.
+    /// Used by move operations so that manual ordering is always
+    /// scoped to a project, matching the drag-and-drop constraint.
+    private func projectScopedNotes(for noteID: Note.ID) -> [Note] {
+        guard let note = notes.first(where: { $0.id == noteID }) else { return [] }
+        return notes
+            .filter { $0.projectID == note.projectID && $0.status != .trashed }
+            .sorted { lhs, rhs in
+                // Pin state first
+                if lhs.pinState != rhs.pinState {
+                    if lhs.pinState == .pinnedTop { return true }
+                    if rhs.pinState == .pinnedTop { return false }
+                    if lhs.pinState == .pinnedBottom { return false }
+                    if rhs.pinState == .pinnedBottom { return true }
+                }
+                // Then by position
+                switch (lhs.position, rhs.position) {
+                case let (l?, r?) where l != r: return l < r
+                case (_?, nil): return false
+                case (nil, _?): return true
+                default: break
+                }
+                // Stable tie-breaker
+                if lhs.createdAt != rhs.createdAt { return lhs.createdAt > rhs.createdAt }
+                return lhs.id.uuidString < rhs.id.uuidString
+            }
+    }
+
+    // MARK: Rank arithmetic
+
+    /// Compute a new position between `before` and `after`.
+    /// Returns `nil` when the gap is too tight and the project needs rebalancing.
+    private func rankBetween(_ before: Int64?, _ after: Int64?) -> Int64? {
+        switch (before, after) {
+        case let (b?, a?) where a - b > Self.positionMinGap:
+            return b + (a - b) / 2
+        case let (b?, nil):
+            return b + Self.positionGap
+        case let (nil, a?):
+            return a - Self.positionGap
+        case (nil, nil):
+            return Self.positionGap
+        default:
+            return nil  // Gap too tight — caller must rebalance
+        }
+    }
+
+    /// Redistribute positions evenly across all notes in a project.
+    /// After rebalancing every adjacent pair has `positionGap` between them.
+    private func rebalancePositions(for projectID: Project.ID) {
+        let projectNotes = notes
+            .filter { $0.projectID == projectID && $0.status != .trashed }
+            .sorted { lhs, rhs in
+                // Pin state first
+                if lhs.pinState != rhs.pinState {
+                    if lhs.pinState == .pinnedTop { return true }
+                    if rhs.pinState == .pinnedTop { return false }
+                    if lhs.pinState == .pinnedBottom { return false }
+                    if rhs.pinState == .pinnedBottom { return true }
+                }
+                switch (lhs.position, rhs.position) {
+                case let (l?, r?) where l != r: return l < r
+                case (_?, nil): return false
+                case (nil, _?): return true
+                default: break
+                }
+                if lhs.createdAt != rhs.createdAt { return lhs.createdAt > rhs.createdAt }
+                return lhs.id.uuidString < rhs.id.uuidString
+            }
+
+        var pos: Int64 = Self.positionGap
+        for note in projectNotes {
+            if let idx = notes.firstIndex(where: { $0.id == note.id }) {
+                notes[idx].position = pos
+                pos += Self.positionGap
+            }
+        }
+    }
+
+    /// Move note to the first position among non-pinned notes (within its project).
     public func moveToFirstNonPinned(_ noteID: Note.ID) {
-        let currentNotes = filteredNotes()
         guard let noteIndex = notes.firstIndex(where: { $0.id == noteID }) else { return }
         if sortMode != .manual { setSortMode(.manual) }
 
-        let nonPinnedNotes = currentNotes.filter { $0.pinState != .pinnedTop }
+        let projectNotes = projectScopedNotes(for: noteID)
+        let nonPinnedNotes = projectNotes.filter { $0.pinState != .pinnedTop }
         if let firstNonPinned = nonPinnedNotes.first {
-            notes[noteIndex].position = (firstNonPinned.position ?? 10.0) - 1.0
+            notes[noteIndex].position = (firstNonPinned.position ?? Self.positionGap) - 1
         } else {
-            notes[noteIndex].position = 1.0
+            notes[noteIndex].position = 1
         }
         notes[noteIndex].editedAt = Date()
     }
@@ -1161,45 +1289,51 @@ public final class LibraryStore {
         }
     }
 
+    // MARK: Move operations (project-scoped)
+
     public func moveNote(_ noteID: Note.ID, to move: PositionMove) {
         guard let noteIndex = notes.firstIndex(where: { $0.id == noteID }) else { return }
+        let note = notes[noteIndex]
 
         // Auto-switch to manual mode
         if sortMode != .manual {
             setSortMode(.manual)
         }
 
-        let currentNotes = filteredNotes()
-        guard let currentIndex = currentNotes.firstIndex(where: { $0.id == noteID }) else { return }
+        // Project-scoped: only consider notes in the same project,
+        // matching the drag-and-drop constraint.
+        let projectNotes = projectScopedNotes(for: noteID)
+        guard let currentIndex = projectNotes.firstIndex(where: { $0.id == noteID }) else { return }
 
         switch move {
         case .beforePrevious:
             guard currentIndex > 0 else { return }
-            let prevNote = currentNotes[currentIndex - 1]
-            insertNote(noteID, before: prevNote.id, in: currentNotes)
+            let prevNote = projectNotes[currentIndex - 1]
+            insertNote(noteID, before: prevNote.id, projectNotes: projectNotes)
         case .afterNext:
-            guard currentIndex < currentNotes.count - 1 else { return }
-            let nextNote = currentNotes[currentIndex + 1]
-            insertNote(noteID, after: nextNote.id, in: currentNotes)
+            guard currentIndex < projectNotes.count - 1 else { return }
+            let nextNote = projectNotes[currentIndex + 1]
+            insertNote(noteID, after: nextNote.id, projectNotes: projectNotes)
         case .toFirst:
-            guard let firstNote = currentNotes.first, firstNote.id != noteID else { return }
-            notes[noteIndex].position = (firstNote.position ?? 1000.0) - 1.0
+            guard let firstNote = projectNotes.first, firstNote.id != noteID else { return }
+            assignToEdge(noteID, noteIndex: noteIndex, before: firstNote.id, projectID: note.projectID)
         case .toLast:
-            guard let lastNote = currentNotes.last, lastNote.id != noteID else { return }
-            notes[noteIndex].position = (lastNote.position ?? 0.0) + 1.0
+            guard let lastNote = projectNotes.last, lastNote.id != noteID else { return }
+            assignToEdge(noteID, noteIndex: noteIndex, after: lastNote.id, projectID: note.projectID)
         }
 
         notes[noteIndex].editedAt = Date()
     }
 
-    // Public wrappers for drag-and-drop reordering
+    // Public wrappers for drag-and-drop reordering (already project-scoped via
+    // the guard in CardInteractionLayer; these methods enforce it as well).
 
     public func insertNoteBefore(_ noteID: Note.ID, targetID: Note.ID) {
         guard noteID != targetID else { return }
         guard let noteIndex = notes.firstIndex(where: { $0.id == noteID }) else { return }
         if sortMode != .manual { setSortMode(.manual) }
-        let currentNotes = filteredNotes()
-        insertNote(noteID, before: targetID, in: currentNotes)
+        let projectNotes = projectScopedNotes(for: noteID)
+        insertNote(noteID, before: targetID, projectNotes: projectNotes)
         notes[noteIndex].editedAt = Date()
     }
 
@@ -1207,58 +1341,108 @@ public final class LibraryStore {
         guard noteID != targetID else { return }
         guard let noteIndex = notes.firstIndex(where: { $0.id == noteID }) else { return }
         if sortMode != .manual { setSortMode(.manual) }
-        let currentNotes = filteredNotes()
-        insertNote(noteID, after: targetID, in: currentNotes)
+        let projectNotes = projectScopedNotes(for: noteID)
+        insertNote(noteID, after: targetID, projectNotes: projectNotes)
         notes[noteIndex].editedAt = Date()
     }
 
-    private func insertNote(_ noteID: Note.ID, before targetID: Note.ID, in currentNotes: [Note]) {
-        guard let targetPosition = notes.first(where: { $0.id == targetID })?.position else { return }
+    // MARK: Private insert helpers
+
+    /// Insert `noteID` immediately before `targetID` in the given project order.
+    private func insertNote(_ noteID: Note.ID, before targetID: Note.ID, projectNotes: [Note]) {
         guard let noteIndex = notes.firstIndex(where: { $0.id == noteID }) else { return }
+        guard let targetIdx = projectNotes.firstIndex(where: { $0.id == targetID }) else { return }
 
-        // Find previous position (or target - 1)
-        let prevPosition: Double? = {
-            let sorted = currentNotes.filter { ($0.position ?? Double.greatestFiniteMagnitude) < targetPosition }
-            return sorted.last?.position
-        }()
+        let targetPosition = projectNotes[targetIdx].position
+        let prevPosition: Int64? = targetIdx > 0 ? projectNotes[targetIdx - 1].position : nil
 
-        if let prev = prevPosition {
-            notes[noteIndex].position = (prev + targetPosition) / 2.0
+        if let newPosition = rankBetween(prevPosition, targetPosition) {
+            notes[noteIndex].position = newPosition
         } else {
-            notes[noteIndex].position = targetPosition - 1.0
+            // Gap too tight — rebalance then recompute
+            let projectID = notes[noteIndex].projectID
+            rebalancePositions(for: projectID)
+            let freshNotes = projectScopedNotes(for: noteID)
+            guard let freshTargetIdx = freshNotes.firstIndex(where: { $0.id == targetID }) else { return }
+            let freshTargetPos = freshNotes[freshTargetIdx].position
+            let freshPrevPos: Int64? = freshTargetIdx > 0 ? freshNotes[freshTargetIdx - 1].position : nil
+            notes[noteIndex].position = rankBetween(freshPrevPos, freshTargetPos)
+                ?? freshTargetPos ?? Self.positionGap
         }
     }
 
-    private func insertNote(_ noteID: Note.ID, after targetID: Note.ID, in currentNotes: [Note]) {
-        guard let targetPosition = notes.first(where: { $0.id == targetID })?.position else { return }
+    /// Insert `noteID` immediately after `targetID` in the given project order.
+    private func insertNote(_ noteID: Note.ID, after targetID: Note.ID, projectNotes: [Note]) {
         guard let noteIndex = notes.firstIndex(where: { $0.id == noteID }) else { return }
+        guard let targetIdx = projectNotes.firstIndex(where: { $0.id == targetID }) else { return }
 
-        // Find next position
-        let nextPosition: Double? = {
-            let sorted = currentNotes.filter { ($0.position ?? -Double.greatestFiniteMagnitude) > targetPosition }
-            return sorted.first?.position
-        }()
+        let targetPosition = projectNotes[targetIdx].position
+        let nextPosition: Int64? = targetIdx < projectNotes.count - 1
+            ? projectNotes[targetIdx + 1].position : nil
 
-        if let next = nextPosition {
-            notes[noteIndex].position = (targetPosition + next) / 2.0
+        if let newPosition = rankBetween(targetPosition, nextPosition) {
+            notes[noteIndex].position = newPosition
         } else {
-            notes[noteIndex].position = targetPosition + 1.0
+            // Gap too tight — rebalance then recompute
+            let projectID = notes[noteIndex].projectID
+            rebalancePositions(for: projectID)
+            let freshNotes = projectScopedNotes(for: noteID)
+            guard let freshTargetIdx = freshNotes.firstIndex(where: { $0.id == targetID }) else { return }
+            let freshTargetPos = freshNotes[freshTargetIdx].position
+            let freshNextPos: Int64? = freshTargetIdx < freshNotes.count - 1
+                ? freshNotes[freshTargetIdx + 1].position : nil
+            notes[noteIndex].position = rankBetween(freshTargetPos, freshNextPos)
+                ?? (freshTargetPos ?? Self.positionGap) + Self.positionGap
         }
     }
+
+    /// Assign a note to the very beginning or end of its project order.
+    private func assignToEdge(_ noteID: Note.ID, noteIndex: Int, before targetID: Note.ID, projectID: Project.ID) {
+        guard let targetPosition = notes.first(where: { $0.id == targetID })?.position else { return }
+        let edgePosition = rankBetween(nil, targetPosition)
+        if let edgePosition {
+            notes[noteIndex].position = edgePosition
+        } else {
+            rebalancePositions(for: projectID)
+            let freshTargetPos = notes.first(where: { $0.id == targetID })?.position
+            notes[noteIndex].position = rankBetween(nil, freshTargetPos)
+                ?? (freshTargetPos ?? Self.positionGap) - Self.positionGap
+        }
+    }
+
+    private func assignToEdge(_ noteID: Note.ID, noteIndex: Int, after targetID: Note.ID, projectID: Project.ID) {
+        guard let targetPosition = notes.first(where: { $0.id == targetID })?.position else { return }
+        let edgePosition = rankBetween(targetPosition, nil)
+        if let edgePosition {
+            notes[noteIndex].position = edgePosition
+        } else {
+            rebalancePositions(for: projectID)
+            let freshTargetPos = notes.first(where: { $0.id == targetID })?.position
+            notes[noteIndex].position = rankBetween(freshTargetPos, nil)
+                ?? (freshTargetPos ?? Self.positionGap) + Self.positionGap
+        }
+    }
+
+    // MARK: Initial position assignment (per-project)
 
     private func assignInitialPositions() {
-        // 给还没编号的笔记补一个位置编号，已有编号的不动。
-        // 新编号从比当前最小编号更小的值开始分配，保证补位的笔记排在顶部。
-        let currentNotes = filteredNotes()
-        let needsPosition = currentNotes.filter { $0.position == nil }
-        guard !needsPosition.isEmpty else { return }
+        // Assign sparse positions to notes that don't have one yet.
+        // This runs per-project so that each project gets its own
+        // independent position space.
+        let allProjectIDs = Set(notes.map(\.projectID))
+        for projectID in allProjectIDs {
+            let projectNotes = notes
+                .filter { $0.projectID == projectID && $0.status != .trashed }
+            let needsPosition = projectNotes.filter { $0.position == nil }
+            guard !needsPosition.isEmpty else { continue }
 
-        let minExisting = currentNotes.compactMap(\.position).min() ?? 10.0
-        var pos = minExisting - Double(needsPosition.count) * 10.0
-        for note in needsPosition {
-            if let noteIndex = notes.firstIndex(where: { $0.id == note.id }) {
-                notes[noteIndex].position = pos
-                pos += 10.0
+            let minExisting = projectNotes.compactMap(\.position).min() ?? Self.positionGap
+            var pos = minExisting - Int64(needsPosition.count) * Self.positionGap
+            for note in needsPosition {
+                if let noteIndex = notes.firstIndex(where: { $0.id == note.id }) {
+                    notes[noteIndex].position = pos
+                    pos += Self.positionGap
+                }
             }
         }
     }
@@ -1501,6 +1685,13 @@ public final class LibraryStore {
         #endif
         return result
     }
+
+    // MARK: - Cached Resources
+
+    private static let taskItemPattern = try! NSRegularExpression(
+        pattern: #"<li data-type="taskItem" data-checked="(true|false)"><label><input type="checkbox"></label><div><p>(.*?)</p></div></li>"#,
+        options: []
+    )
 }
 
 // MARK: - Array Safe Access Extension
