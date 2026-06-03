@@ -323,6 +323,14 @@ public final class LibraryStore {
             isBrief: true  // 新创建的笔记默认是简达
         )
         notes.insert(note, at: 0)
+
+        // 手动排序模式下给新笔记一个位置编号，排在非置顶笔记的最上面。
+        // 这样编辑后 editedAt 变化也不会打乱顺序。
+        if sortMode == .manual, let idx = notes.firstIndex(where: { $0.id == note.id }) {
+            let minPos = notes.compactMap(\.position).min() ?? 10.0
+            notes[idx].position = minPos - 10.0
+        }
+
         selectedProjectID = targetProjectID
         selectedOverview = nil
         selectedSmartOverviewID = nil
@@ -552,14 +560,16 @@ public final class LibraryStore {
         }
     }
 
-    public func updateSelectedNote(title: String, body: String, scheduledDate: Date?, tags: [String], people: [String]) {
+    @discardableResult
+    public func updateSelectedNote(title: String, body: String, scheduledDate: Date?, tags: [String], people: [String]) -> Bool {
         guard let selectedNoteID else {
-            return
+            return false
         }
 
-        updateNote(noteID: selectedNoteID, title: title, body: body, scheduledDate: scheduledDate, tags: tags, people: people)
+        return updateNote(noteID: selectedNoteID, title: title, body: body, scheduledDate: scheduledDate, tags: tags, people: people)
     }
 
+    @discardableResult
     public func updateNote(
         noteID: Note.ID,
         title: String,
@@ -571,12 +581,32 @@ public final class LibraryStore {
         tags: [String],
         people: [String],
         status: NoteStatus? = nil
-    ) {
+    ) -> Bool {
         guard let index = notes.firstIndex(where: { $0.id == noteID }) else {
-            return
+            return false
         }
 
-        notes[index].title = title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "无标题" : title
+        let nextTitle = title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "无标题" : title
+        let nextBlockJSON = blockJSON ?? notes[index].blockJSON
+        let nextPlainTextPreview = plainTextPreview ?? notes[index].plainTextPreview
+        let nextPreviewHTML = (previewHTML != nil || blockJSON != nil) ? previewHTML : notes[index].previewHTML
+        let nextTags = normalizedList(tags)
+        let nextPeople = normalizedList(people)
+        let nextStatus = status ?? notes[index].status
+
+        guard notes[index].title != nextTitle ||
+              notes[index].body != body ||
+              notes[index].blockJSON != nextBlockJSON ||
+              notes[index].plainTextPreview != nextPlainTextPreview ||
+              notes[index].previewHTML != nextPreviewHTML ||
+              notes[index].scheduledDate != scheduledDate ||
+              notes[index].tags != nextTags ||
+              notes[index].people != nextPeople ||
+              notes[index].status != nextStatus else {
+            return false
+        }
+
+        notes[index].title = nextTitle
         notes[index].body = body
         if let blockJSON {
             notes[index].blockJSON = blockJSON
@@ -588,12 +618,13 @@ public final class LibraryStore {
             notes[index].previewHTML = previewHTML
         }
         notes[index].scheduledDate = scheduledDate
-        notes[index].tags = normalizedList(tags)
-        notes[index].people = normalizedList(people)
+        notes[index].tags = nextTags
+        notes[index].people = nextPeople
         if let status {
             notes[index].status = status
         }
         notes[index].editedAt = Date()
+        return true
     }
 
     public func setFocused(_ isFocused: Bool, noteID: Note.ID) {
@@ -1216,16 +1247,18 @@ public final class LibraryStore {
     }
 
     private func assignInitialPositions() {
-        // Only seed positions the first time the user switches to manual mode.
-        // If any note already has a non-nil position, the user has manually
-        // arranged notes before — preserve that work.
-        let hasExistingPositions = notes.contains { $0.position != nil }
-        guard !hasExistingPositions else { return }
-
+        // 给还没编号的笔记补一个位置编号，已有编号的不动。
+        // 新编号从比当前最小编号更小的值开始分配，保证补位的笔记排在顶部。
         let currentNotes = filteredNotes()
-        for (index, note) in currentNotes.enumerated() {
+        let needsPosition = currentNotes.filter { $0.position == nil }
+        guard !needsPosition.isEmpty else { return }
+
+        let minExisting = currentNotes.compactMap(\.position).min() ?? 10.0
+        var pos = minExisting - Double(needsPosition.count) * 10.0
+        for note in needsPosition {
             if let noteIndex = notes.firstIndex(where: { $0.id == note.id }) {
-                notes[noteIndex].position = Double(index + 1) * 10.0
+                notes[noteIndex].position = pos
+                pos += 10.0
             }
         }
     }
@@ -1443,7 +1476,10 @@ public final class LibraryStore {
     }
 
     public func snapshot() -> LibrarySnapshot {
-        LibrarySnapshot(
+        #if DEBUG
+        let start = Date()
+        #endif
+        let result = LibrarySnapshot(
             categories: categories,
             projects: projects,
             notes: notes,
@@ -1457,6 +1493,13 @@ public final class LibraryStore {
             sortMode: sortMode,
             customNoteTemplates: customNoteTemplates
         )
+        #if DEBUG
+        let elapsed = Date().timeIntervalSince(start)
+        if elapsed > 0.010 {  // 只记录超过 10ms 的
+            print("⚠️ [PERF] snapshot() took \(String(format: "%.3f", elapsed))s - notes: \(notes.count)")
+        }
+        #endif
+        return result
     }
 }
 

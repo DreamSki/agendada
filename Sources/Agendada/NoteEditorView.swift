@@ -20,7 +20,9 @@ struct NoteEditor: NSViewRepresentable {
     func makeNSView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
         config.defaultWebpagePreferences.allowsContentJavaScript = true
+#if DEBUG
         config.preferences.setValue(true, forKey: "developerExtrasEnabled")
+#endif
 
         let userContent = config.userContentController
         userContent.add(context.coordinator, name: "onChange")
@@ -45,11 +47,7 @@ struct NoteEditor: NSViewRepresentable {
 
         if context.coordinator.needsContentLoad {
             context.coordinator.needsContentLoad = false
-            let escaped = html
-                .replacingOccurrences(of: "\\", with: "\\\\")
-                .replacingOccurrences(of: "`", with: "\\`")
-                .replacingOccurrences(of: "$", with: "\\$")
-            webView.evaluateJavaScript("window.setContent(`\(escaped)`)")
+            webView.evaluateJavaScript("window.setContent(\(jsString(html)))")
         }
 
         if isEditable != context.coordinator.lastEditable {
@@ -93,11 +91,7 @@ struct NoteEditor: NSViewRepresentable {
                 if !parent.html.isEmpty {
                     needsContentLoad = true
                     DispatchQueue.main.async {
-                        let escaped = self.parent.html
-                            .replacingOccurrences(of: "\\", with: "\\\\")
-                            .replacingOccurrences(of: "`", with: "\\`")
-                            .replacingOccurrences(of: "$", with: "\\$")
-                        self.webView?.evaluateJavaScript("window.setContent(`\(escaped)`)")
+                        self.webView?.evaluateJavaScript("window.setContent(\(jsString(self.parent.html)))")
                     }
                 }
                 webView?.evaluateJavaScript("window.rh()")
@@ -197,6 +191,15 @@ struct EditorToolbar: View {
 }
 
 // MARK: - HTML Template (minimal placeholder)
+
+/// JSON-encode a string for safe use inside `evaluateJavaScript`.
+private func jsString(_ value: String) -> String {
+    guard let data = try? JSONEncoder().encode(value),
+          let encoded = String(data: data, encoding: .utf8) else {
+        return "\"\""
+    }
+    return encoded
+}
 
 func editorHTML(placeholder: String) -> String {
     """

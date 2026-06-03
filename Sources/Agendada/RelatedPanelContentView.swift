@@ -28,11 +28,21 @@ struct RelatedPanelContentView: View {
     @State private var timelineViewHeight: CGFloat = 300
     @State private var initialScrollDone = false
     @State private var savedFocusedDate: Date?
+    /// The selectedNoteID at the moment the timeline was collapsed.
+    /// Used on expand to decide whether to honour a newly selected note's date.
+    @State private var savedSelectedNoteID: UUID?
     @State private var showFilterPopover = false
     @State private var filterMenuPresenter = AgendadaFloatingMenuPresenter()
     @State private var filterMenuDismissedAt = Date.distantPast
     @State private var lastScrollProcessTime: Date = .distantPast
     @State private var pendingScrollWorkItem: DispatchWorkItem?
+    /// True when expanding after collapse — skip animation on scroll restore.
+    @State private var isRestoringOnExpand = false
+    /// Non-zero while a programmatic scroll is in flight.  Incremented on each
+    /// new scroll; `applyTimelinePositions` no-ops while non-zero.  Cleared to
+    /// 0 after the animation settles (~0.8 s).  Replaces the old timer-per-date
+    /// lock with a generation counter so superseded scrolls can't unlock early.
+    @State private var programmaticScrollGeneration: Int = 0
 
     private var focusedMonth: String {
         CalendarStore.formatMonth(focusedMonthDate)
@@ -84,13 +94,20 @@ struct RelatedPanelContentView: View {
         .padding(.top, 28)
         .padding(.bottom, 20)
         .task {
-            if calendarStore.hasAnyPermission {
-                calendarStore.loadSources()
-                await calendarStore.loadInitialData()
-                calendarStore.mergeScheduledNotes(store.filteredNotes())
+            // Initial load — safe to call repeatedly, skips if already loaded.
+            await calendarStore.loadIfNeeded(withNotes: store.filteredNotes())
+        }
+        .onChange(of: calendarStore.hasAnyPermission) { _, hasPermission in
+            if hasPermission {
+                Task {
+                    await calendarStore.loadIfNeeded(withNotes: store.filteredNotes())
+                }
             }
         }
-        .onChange(of: calendarStore.daySchedules.count) { _, _ in
+        .onChange(of: calendarStore.daySchedulesVersion) { _, _ in
+            // Rebuild displayDays cache when source data changes.
+            // Called from onChange, NOT from inside body/computed-property.
+            calendarStore.updateDisplayDaysIfNeeded()
             calendarStore.mergeScheduledNotes(store.filteredNotes())
         }
         .onChange(of: store.scheduledNotesHash) { _, _ in
@@ -98,10 +115,13 @@ struct RelatedPanelContentView: View {
         }
         .onChange(of: timelineExpanded) { _, expanded in
             if expanded {
+                // Determine the right scroll target for expand (see expandScrollTarget).
+                isRestoringOnExpand = true
                 needsInitialScroll = true
                 initialScrollDone = false
             } else {
                 savedFocusedDate = focusedMonthDate
+                savedSelectedNoteID = store.selectedNoteID
             }
         }
         .background(AgendaColor.panelBg)
@@ -133,10 +153,6 @@ struct RelatedPanelContentView: View {
 
     // MARK: - Data
 
-    /// Cached displayDays to avoid filtering 730+ entries on every body evaluation.
-    @State private var cachedDisplayDays: [DaySchedule] = []
-    @State private var cachedDisplayDaysSourceHash: Int = 0
-
     private var todaySchedule: DaySchedule? {
         let today = Calendar.current.startOfDay(for: Date())
         return calendarStore.daySchedules.first {
@@ -144,40 +160,11 @@ struct RelatedPanelContentView: View {
         }
     }
 
+    /// Displayed day schedules — reads the cache maintained by CalendarStore.
+    /// The cache is rebuilt by `onChange(of: daySchedulesVersion)` above,
+    /// NOT inside this computed property.  No side effects during body eval.
     private var displayDays: [DaySchedule] {
-        // Compute a hash of the source data to decide whether we need to rebuild.
-        var h = Hasher()
-        h.combine(calendarStore.daySchedules.count)
-        // Use first/last date as proxy for content changes.
-        if let first = calendarStore.daySchedules.first?.date { h.combine(first) }
-        if let last = calendarStore.daySchedules.last?.date { h.combine(last) }
-        // Include the monotonically-increasing version so that filter/refresh
-        // always invalidates the cache, even when count and date range stay the same.
-        h.combine(calendarStore.daySchedulesVersion)
-        let currentHash = h.finalize()
-
-        if currentHash == cachedDisplayDaysSourceHash, !cachedDisplayDays.isEmpty {
-            return cachedDisplayDays
-        }
-
-        let cal = Calendar.current
-        let today = cal.startOfDay(for: Date())
-        let nonEmpty = calendarStore.daySchedules.filter { !$0.isEmpty }
-
-        var result = nonEmpty
-        if !result.contains(where: { cal.isDate($0.date, inSameDayAs: today) }) {
-            let todaySchedule = DaySchedule(date: today)
-            if let insertIndex = result.firstIndex(where: { $0.date > today }) {
-                result.insert(todaySchedule, at: insertIndex)
-            } else {
-                result.append(todaySchedule)
-            }
-        }
-
-        // Update cache on main thread — body is @MainActor.
-        cachedDisplayDays = result
-        cachedDisplayDaysSourceHash = currentHash
-        return result
+        calendarStore.displayDays
     }
 
     private var recentNotes: [AgendadaCore.Note] {
@@ -199,7 +186,7 @@ struct RelatedPanelContentView: View {
             VStack(spacing: 0) {
                 ScrollViewReader { proxy in
                     ScrollView {
-                        VStack(alignment: .leading, spacing: 0) {
+                        LazyVStack(alignment: .leading, spacing: 0) {
                             ForEach(displayDays) { day in
                                 dayGroup(day)
                                     .id(day.date)
@@ -223,46 +210,17 @@ struct RelatedPanelContentView: View {
                     }
                     .frame(minHeight: 200)
                     .background(GeometryReader { geo in
-                        Color.clear.onAppear { timelineViewHeight = geo.size.height }
-                            .onChange(of: geo.size.height) { _, new in timelineViewHeight = new }
+                        Color.clear
+                            .onAppear { timelineViewHeight = geo.size.height }
+                            .onChange(of: geo.size.height) { _, new in
+                                if abs(timelineViewHeight - new) > 1 {
+                                    timelineViewHeight = new
+                                }
+                            }
                     })
                     .coordinateSpace(name: "timeline")
                     .onPreferenceChange(TimelineRowPositionsKey.self) { positions in
-                        rowPositions = positions
-                        guard initialScrollDone else { return }
-                        let now = Date()
-                        // If enough time has passed, process immediately.
-                        // Otherwise schedule a single deferred work item (cancelling
-                        // the previous one) to avoid per-frame Task creation during
-                        // rapid scrolling.
-                        if now.timeIntervalSince(lastScrollProcessTime) > 0.15 {
-                            lastScrollProcessTime = now
-                            if let topDate = positions.min(by: { abs($0.value) < abs($1.value) })?.key {
-                                focusedMonthDate = topDate
-                                Task {
-                                    await calendarStore.extendRangeIfNeeded(
-                                        visibleStart: topDate,
-                                        visibleEnd: topDate
-                                    )
-                                }
-                            }
-                        } else {
-                            pendingScrollWorkItem?.cancel()
-                            let work = DispatchWorkItem { [self] in
-                                lastScrollProcessTime = Date()
-                                if let topDate = rowPositions.min(by: { abs($0.value) < abs($1.value) })?.key {
-                                    focusedMonthDate = topDate
-                                    Task {
-                                        await calendarStore.extendRangeIfNeeded(
-                                            visibleStart: topDate,
-                                            visibleEnd: topDate
-                                        )
-                                    }
-                                }
-                            }
-                            pendingScrollWorkItem = work
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
-                        }
+                        processTimelinePositions(positions)
                     }
                     .onAppear {
                         needsInitialScroll = true
@@ -273,10 +231,13 @@ struct RelatedPanelContentView: View {
                     }
                     .onChange(of: calendarStore.daySchedules.count) { _, _ in
                         if needsInitialScroll && !calendarStore.daySchedules.isEmpty {
-                            performInitialScroll()
+                            // Preserve scroll position tracking — the user was
+                            // already scrolling when range extension triggered.
+                            performInitialScroll(preserveTracking: true)
                         }
                     }
                     .onChange(of: store.selectedNoteID) { _, newID in
+                        // 切换笔记时，时间轴滚动到笔记的排期日期
                         guard let noteID = newID,
                               let note = store.note(withID: noteID),
                               let scheduledDate = note.scheduledDate else { return }
@@ -288,8 +249,14 @@ struct RelatedPanelContentView: View {
                     }
                     .onChange(of: scrollTarget) { _, target in
                         guard let target else { return }
-                        withAnimation(.easeInOut(duration: 0.3)) {
+                        if isRestoringOnExpand {
+                            // No animation when restoring after collapse→expand.
                             proxy.scrollTo(target, anchor: .top)
+                            isRestoringOnExpand = false
+                        } else {
+                            withAnimation(.easeInOut(duration: 0.3)) {
+                                proxy.scrollTo(target, anchor: .top)
+                            }
                         }
                         DispatchQueue.main.async { scrollTarget = nil }
                     }
@@ -317,6 +284,7 @@ struct RelatedPanelContentView: View {
                 .font(AgendaFont.panelHeader)
                 .foregroundStyle(AgendaColor.panelHeading)
 
+            // 筛选按钮
             Button {
                 toggleFilterMenu()
             } label: {
@@ -336,6 +304,37 @@ struct RelatedPanelContentView: View {
                     filterMenuDismissedAt = Date()
                 }
             }
+
+            // 同步按钮
+            Button {
+                Task {
+                    // Lock timeline position during sync to prevent scrolling.
+                    let savedDate = focusedMonthDate
+                    programmaticScrollGeneration &+= 1
+                    await calendarStore.syncAll(notes: store.filteredNotes())
+                    // Restore to same date the user was looking at.
+                    needsInitialScroll = false
+                    initialScrollDone = true
+                    focusedMonthDate = savedDate
+                    scrollTarget = savedDate
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                        programmaticScrollGeneration = 0
+                    }
+                }
+            } label: {
+                if calendarStore.isSyncing {
+                    ProgressView()
+                        .scaleEffect(0.65)
+                        .frame(width: 14, height: 14)
+                } else {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                        .font(.system(size: 12, weight: .regular))
+                        .foregroundStyle(AgendaColor.panelSub)
+                }
+            }
+            .buttonStyle(.plain)
+            .disabled(calendarStore.isSyncing)
+            .help("同步日历与提醒事项")
 
             Spacer()
 
@@ -382,63 +381,182 @@ struct RelatedPanelContentView: View {
 
     // MARK: - Scroll Actions
 
-    private func performInitialScroll() {
+    private func performInitialScroll(preserveTracking: Bool = false) {
         needsInitialScroll = false
-        initialScrollDone = false
+        if !preserveTracking {
+            initialScrollDone = false
+        }
         let target = expandScrollTarget()
         focusedMonthDate = target
         scrollTarget = target
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            initialScrollDone = true
+        if !preserveTracking {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                initialScrollDone = true
+            }
         }
     }
 
     private func expandScrollTarget() -> Date {
-        if let noteID = store.selectedNoteID,
-           let note = store.note(withID: noteID),
+        // Only honour the currently selected note if it was *changed* while
+        // the timeline was collapsed AND it has a scheduled date.
+        if let currentID = store.selectedNoteID,
+           currentID != savedSelectedNoteID,
+           let note = store.note(withID: currentID),
            let scheduledDate = note.scheduledDate {
             return Calendar.current.startOfDay(for: scheduledDate)
         }
+        // Otherwise restore the position from before the collapse.
         if let saved = savedFocusedDate {
             return saved
         }
         return Calendar.current.startOfDay(for: Date())
     }
 
+    private func processTimelinePositions(_ positions: [Date: CGFloat]) {
+        guard !positions.isEmpty else { return }
+
+        if !initialScrollDone {
+            if rowPositions.isEmpty || shouldUpdateRowPositions(positions) {
+                rowPositions = positions
+            }
+            return
+        }
+
+        let now = Date()
+        if now.timeIntervalSince(lastScrollProcessTime) > 0.15 {
+            pendingScrollWorkItem?.cancel()
+            pendingScrollWorkItem = nil
+            applyTimelinePositions(positions)
+        } else {
+            pendingScrollWorkItem?.cancel()
+            let work = DispatchWorkItem {
+                applyTimelinePositions(positions)
+                pendingScrollWorkItem = nil
+            }
+            pendingScrollWorkItem = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
+        }
+    }
+
+    private func applyTimelinePositions(_ positions: [Date: CGFloat]) {
+        // While a programmatic scroll or data refresh is in flight, do nothing.
+        // Updating rowPositions, focusedMonthDate, or calling extendRangeIfNeeded
+        // can feed back into a scroll/data-load cycle.
+        guard programmaticScrollGeneration == 0 else { return }
+        guard !calendarStore.isSyncing else { return }
+
+        lastScrollProcessTime = Date()
+        if shouldUpdateRowPositions(positions) {
+            rowPositions = positions
+        }
+
+        guard let topDate = positions.min(by: { abs($0.value) < abs($1.value) })?.key else { return }
+        let calendar = Calendar.current
+
+        guard !calendar.isDate(topDate, inSameDayAs: focusedMonthDate) else { return }
+
+        focusedMonthDate = topDate
+        Task {
+            await calendarStore.extendRangeIfNeeded(
+                visibleStart: topDate,
+                visibleEnd: topDate
+            )
+        }
+    }
+
+    private func shouldUpdateRowPositions(_ positions: [Date: CGFloat]) -> Bool {
+        if positions.count != rowPositions.count { return true }
+        for (date, y) in positions {
+            guard let oldY = rowPositions[date] else { return true }
+            if abs(oldY - y) > 1 { return true }
+        }
+        return false
+    }
+
     private func scrollToToday() {
+        needsInitialScroll = false
+        initialScrollDone = true
         let today = Calendar.current.startOfDay(for: Date())
+        programmaticScrollGeneration &+= 1
+        let myGen = programmaticScrollGeneration
         focusedMonthDate = today
         scrollTarget = today
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+            if programmaticScrollGeneration == myGen { programmaticScrollGeneration = 0 }
+        }
+    }
+
+    /// Number of `displayDays` entries that roughly fill one viewport.
+    /// Derived from visible row positions when available, otherwise estimated.
+    /// Capped to avoid overshooting on sparse data or unmeasured heights.
+    private var entriesPerPage: Int {
+        let visibleCount = rowPositions.values.filter { y in
+            y >= -10 && y < timelineViewHeight + 10
+        }.count
+        if visibleCount >= 3 { return min(visibleCount, 8) }
+        // Fallback: estimate from timeline height.  A day group with a few
+        // events is typically 150–220 pt, so use 180 as the divisor.
+        let estimatedRowHeight: CGFloat = 180
+        guard timelineViewHeight > 0 else { return 4 }
+        return max(2, min(8, Int(timelineViewHeight / estimatedRowHeight)))
+    }
+
+    /// Move the scroll target by `offset` entries in `displayDays` relative to
+    /// the date closest to the top of the viewport.
+    private func scrollByDisplayEntries(_ offset: Int) {
+        // Prevent performInitialScroll() from hijacking the scroll when
+        // extendRangeIfNeeded causes daySchedules.count to change.
+        needsInitialScroll = false
+        initialScrollDone = true
+
+        let cal = Calendar.current
+        let days = calendarStore.displayDays
+        guard !days.isEmpty else { return }
+
+        // Anchor on focusedMonthDate (which tracks the month label).
+        // rowPositions is only used as a refinement when available.
+        let anchorDay = cal.startOfDay(for: focusedMonthDate)
+
+        // Find the closest entry in displayDays (exact, then first ≥ anchor,
+        // then first ≤ anchor, then just pick the nearest).
+        let anchorIndex: Int
+        if let exact = days.firstIndex(where: { cal.isDate($0.date, inSameDayAs: anchorDay) }) {
+            anchorIndex = exact
+        } else if let after = days.firstIndex(where: { $0.date >= anchorDay }) {
+            anchorIndex = after
+        } else if let before = days.lastIndex(where: { $0.date <= anchorDay }) {
+            anchorIndex = before
+        } else {
+            anchorIndex = 0
+        }
+
+        let targetIndex = max(0, min(days.count - 1, anchorIndex + offset))
+        let targetDate = days[targetIndex].date
+
+        // Lock everything during the scroll animation — prevent position
+        // callbacks from triggering extendRangeIfNeeded and starting a
+        // feedback loop that accelerates scrolling.
+        pendingScrollWorkItem?.cancel()
+        pendingScrollWorkItem = nil
+        programmaticScrollGeneration &+= 1
+        let myGen = programmaticScrollGeneration
+        focusedMonthDate = cal.startOfDay(for: targetDate)
+        // Release the lock after the animation + data load settle.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+            if programmaticScrollGeneration == myGen { programmaticScrollGeneration = 0 }
+        }
+        Task {
+            await calendarStore.extendRangeIfNeeded(visibleStart: targetDate, visibleEnd: targetDate)
+        }
+        scrollTarget = targetDate
     }
 
     private func scrollEarlier() {
-        guard !rowPositions.isEmpty else { return }
-
-        let currentTopY = rowPositions.min(by: { abs($0.value) < abs($1.value) })?.value ?? 0
-        let targetY = currentTopY - timelineViewHeight
-
-        guard let closest = rowPositions.min(by: { abs($0.value - targetY) < abs($1.value - targetY) }) else { return }
-
-        focusedMonthDate = closest.key
-        Task {
-            await calendarStore.extendRangeIfNeeded(visibleStart: closest.key, visibleEnd: closest.key)
-        }
-        scrollTarget = closest.key
+        scrollByDisplayEntries(-entriesPerPage)
     }
 
     private func scrollLater() {
-        guard !rowPositions.isEmpty else { return }
-
-        let currentTopY = rowPositions.min(by: { abs($0.value) < abs($1.value) })?.value ?? 0
-        let targetY = currentTopY + timelineViewHeight
-
-        guard let closest = rowPositions.min(by: { abs($0.value - targetY) < abs($1.value - targetY) }) else { return }
-
-        focusedMonthDate = closest.key
-        Task {
-            await calendarStore.extendRangeIfNeeded(visibleStart: closest.key, visibleEnd: closest.key)
-        }
-        scrollTarget = closest.key
+        scrollByDisplayEntries(+entriesPerPage)
     }
 
     // MARK: - Day Group
@@ -648,7 +766,11 @@ struct RelatedPanelContentView: View {
                 title: "全部显示",
                 dismissesAfterAction: false
             ) { _ in
+                programmaticScrollGeneration &+= 1
                 calendarStore.toggleAllSources()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                    programmaticScrollGeneration = 0
+                }
             }
         ])
 
@@ -671,111 +793,26 @@ struct RelatedPanelContentView: View {
         return sections
     }
 
-    private func sourceMenuItem(_ source: CalendarSource, fallbackIcon: String) -> AgendadaFloatingMenuItem {
+    private func sourceMenuItem(_ source: CalendarSource, fallbackIcon _: String) -> AgendadaFloatingMenuItem {
         let isEnabled = calendarStore.showAllSources || calendarStore.enabledSourceIDs.contains(source.id)
+        let sourceColor = Color(
+            red: source.color.red,
+            green: source.color.green,
+            blue: source.color.blue,
+            opacity: source.color.alpha
+        )
         return AgendadaFloatingMenuItem(
-            iconSystemName: isEnabled ? "checkmark.square" : fallbackIcon,
+            iconColor: isEnabled ? sourceColor : Color.gray.opacity(0.35),
             title: source.title,
             subtitle: source.accountTitle,
             dismissesAfterAction: false
         ) { _ in
+            programmaticScrollGeneration &+= 1
             calendarStore.toggleSource(source.id)
-        }
-    }
-
-    private var filterPopover: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Button {
-                calendarStore.toggleAllSources()
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: calendarStore.isAllSourcesEnabled ? "checkmark.square" : "square")
-                        .font(.system(size: 13))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 18)
-                    Text("全部显示")
-                        .font(AgendaFont.panelBody)
-                        .foregroundStyle(.primary)
-                    Spacer()
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 7)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .buttonStyle(.plain)
-
-            Divider().padding(.horizontal, 8)
-
-            let eventSources = calendarStore.calendarSources.filter { $0.type == .event }
-            if !eventSources.isEmpty {
-                Text("日历")
-                    .font(AgendaFont.panelMicro)
-                    .foregroundStyle(AgendaColor.textMuted)
-                    .padding(.horizontal, 12)
-                    .padding(.top, 6)
-                    .padding(.bottom, 4)
-                ForEach(eventSources) { source in
-                    sourceToggle(source)
-                }
-                Divider().padding(.horizontal, 8)
-            }
-
-            let reminderSources = calendarStore.calendarSources.filter { $0.type == .reminder }
-            if !reminderSources.isEmpty {
-                Text("提醒事项")
-                    .font(AgendaFont.panelMicro)
-                    .foregroundStyle(AgendaColor.textMuted)
-                    .padding(.horizontal, 12)
-                    .padding(.top, 6)
-                    .padding(.bottom, 4)
-                ForEach(reminderSources) { source in
-                    sourceToggle(source)
-                }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                programmaticScrollGeneration = 0
             }
         }
-        .frame(width: 200)
-        .padding(.vertical, 4)
-    }
-
-    private func sourceToggle(_ source: CalendarSource) -> some View {
-        let isEnabled = calendarStore.showAllSources || calendarStore.enabledSourceIDs.contains(source.id)
-        return Button {
-            calendarStore.toggleSource(source.id)
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: isEnabled ? "checkmark.square" : "square")
-                    .font(.system(size: 13))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 18)
-
-                Circle()
-                    .fill(Color(
-                        red: source.color.red,
-                        green: source.color.green,
-                        blue: source.color.blue,
-                        opacity: source.color.alpha
-                    ))
-                    .frame(width: 8, height: 8)
-
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(source.title)
-                        .font(AgendaFont.panelBody)
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
-
-                    Text(source.accountTitle)
-                        .font(AgendaFont.panelMicro)
-                        .foregroundStyle(AgendaColor.textMuted)
-                        .lineLimit(1)
-                }
-
-                Spacer()
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .buttonStyle(.plain)
     }
 
     // MARK: - Permission / Denied

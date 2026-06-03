@@ -1,6 +1,7 @@
 import AgendadaCore
 import Foundation
 import Observation
+@preconcurrency import AgendadaCore
 
 @Observable
 @MainActor
@@ -15,6 +16,8 @@ final class ObservableLibraryStore {
     private var saveTask: Task<Void, Never>?
     @ObservationIgnored
     private let persistenceEnabled: Bool
+    // @ObservationIgnored
+    // private var autoMonitor: AutoPerformanceMonitor!
 
     // MARK: - Filtered Notes Cache
 
@@ -148,6 +151,7 @@ final class ObservableLibraryStore {
         self.store = seed
         self.repository = repository
         self.persistenceEnabled = persistenceEnabled
+        // self.autoMonitor = AutoPerformanceMonitor()
     }
 
     static func load(repository: FileLibraryRepository = FileLibraryRepository()) async -> ObservableLibraryStore {
@@ -470,7 +474,9 @@ final class ObservableLibraryStore {
     }
 
     func updateSelectedNote(title: String, body: String, scheduledDate: Date?, tags: [String], people: [String]) {
-        store.updateSelectedNote(title: title, body: body, scheduledDate: scheduledDate, tags: tags, people: people)
+        guard store.updateSelectedNote(title: title, body: body, scheduledDate: scheduledDate, tags: tags, people: people) else {
+            return
+        }
         publishChange()
         persistNow()
     }
@@ -487,7 +493,7 @@ final class ObservableLibraryStore {
         people: [String],
         status: NoteStatus? = nil
     ) {
-        store.updateNote(
+        guard store.updateNote(
             noteID: noteID,
             title: title,
             body: body,
@@ -498,7 +504,9 @@ final class ObservableLibraryStore {
             tags: tags,
             people: people,
             status: status
-        )
+        ) else {
+            return
+        }
         publishChange()
         persistNow()
     }
@@ -607,18 +615,38 @@ final class ObservableLibraryStore {
     }
 
     func filteredNotes() -> [Note] {
+        #if DEBUG
+        let start = Date()
+        let cacheHit = cachedFilteredNotes != nil &&
+                       cachedFilteredNotesRevision == revision &&
+                       cachedFilteredNotesSearchText == store.searchText
+        #endif
         observeRevision()
         if let cached = cachedFilteredNotes,
            cachedFilteredNotesRevision == revision,
            cachedFilteredNotesSearchText == store.searchText {
+            #if DEBUG
+            if !cacheHit {
+                print("🔄 [PERF] filteredNotes cache MISS - recalculating")
+            }
+            #endif
             return cached
         }
+        #if DEBUG
+        print("🔄 [PERF] filteredNotes recalculating...")
+        #endif
         let result = store.filteredNotes()
         cachedFilteredNotes = result
         cachedFilteredNotesRevision = revision
         cachedFilteredNotesSearchText = store.searchText
         // Invalidate derived caches
         cachedScheduledNotesHash = nil
+        #if DEBUG
+        let elapsed = Date().timeIntervalSince(start)
+        if elapsed > 0.050 {
+            print("⚠️ [PERF] filteredNotes took \(String(format: "%.3f", elapsed))s - result count: \(result.count)")
+        }
+        #endif
         return result
     }
 
@@ -671,8 +699,26 @@ final class ObservableLibraryStore {
     }
 
     private func publishChange() {
+        #if DEBUG
+        let start = Date()
+        let caller = Thread.callStackSymbols.dropFirst().first?.components(separatedBy: " ").last ?? "unknown"
+        let logLine = "📢 [PERF] publishChange called from: \(caller.prefix(50))\n"
+        print(logLine)
+        appendToLogFile(logLine)
+        #endif
         revision &+= 1
         invalidateFilteredNotesCache()
+        #if DEBUG
+        let elapsed = Date().timeIntervalSince(start)
+        if elapsed > 0.001 {
+            let warnLine = "⚠️ [PERF] publishChange took \(String(format: "%.3f", elapsed))s\n"
+            print(warnLine)
+            appendToLogFile(warnLine)
+        }
+        #endif
+
+        // Notify auto monitor
+        // Task { await autoMonitor?.logOperation("publishChange") }
     }
 
     private func persistSoon() {
@@ -695,9 +741,17 @@ final class ObservableLibraryStore {
 
     private func persist() {
         guard persistenceEnabled else { return }
+        #if DEBUG
+        let start = Date()
+        print("🔖 [PERF] persist() started")
+        #endif
         saveTask?.cancel()
         let snapshot = store.snapshot()
         let repo = repository
+        #if DEBUG
+        let snapshotTime = Date().timeIntervalSince(start)
+        print("⏱️ [PERF] snapshot() took \(String(format: "%.3f", snapshotTime))s")
+        #endif
         saveTask = Task {
             do { try await repo.save(snapshot) }
             catch { assertionFailure("Failed to save Agendada library: \(error)") }
@@ -721,4 +775,23 @@ final class ObservableLibraryStore {
         }
         done.wait()
     }
+
+    #if DEBUG
+    @ObservationIgnored
+    private let logFilePath = "/tmp/agendada-perf.log"
+
+    private func appendToLogFile(_ message: String) {
+        DispatchQueue.main.async {
+            if let data = message.data(using: .utf8) {
+                if let handle = FileHandle(forWritingAtPath: self.logFilePath) {
+                    handle.seekToEndOfFile()
+                    handle.write(data)
+                    handle.closeFile()
+                } else {
+                    FileManager.default.createFile(atPath: self.logFilePath, contents: data, attributes: nil)
+                }
+            }
+        }
+    }
+    #endif
 }

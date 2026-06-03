@@ -37,16 +37,35 @@ public actor FileLibraryRepository {
             withIntermediateDirectories: true
         )
 
-        if fileExists {
-            let backupURL = fileURL.deletingPathExtension().appendingPathExtension("previous.json")
-            try? FileManager.default.removeItem(at: backupURL)
-            try? FileManager.default.copyItem(at: fileURL, to: backupURL)
-        }
-
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         let data = try encoder.encode(snapshot)
-        try data.write(to: fileURL, options: [.atomic])
+
+        // Phase 1: Write new content to a temporary file first.
+        // This ensures we never corrupt the main file on encoding errors.
+        let tempURL = fileURL.appendingPathExtension("tmp")
+        try data.write(to: tempURL, options: [.atomic])
+
+        // Phase 2: Create a backup of the current file before replacing it.
+        // Use copyItem (not replaceItemAt) to avoid deleting the main file.
+        // A crash between Phase 1 and Phase 3 must never leave fileURL missing.
+        if fileExists {
+            let backupURL = fileURL.deletingPathExtension().appendingPathExtension("previous.json")
+            // Remove old backup first (best-effort).
+            try? FileManager.default.removeItem(at: backupURL)
+            do {
+                try FileManager.default.copyItem(at: fileURL, to: backupURL)
+            } catch {
+                // Backup failure is non-fatal — the temp file is valid,
+                // so the save can still succeed.  Log and continue.
+                print("[FileRepository] warning: failed to create backup: \(error.localizedDescription)")
+            }
+        }
+
+        // Phase 3: Atomically replace the main file with the temporary file.
+        // replaceItemAt is safe here because tempURL is the *source* — if it
+        // fails, tempURL still holds the valid data and fileURL is untouched.
+        _ = try FileManager.default.replaceItemAt(fileURL, withItemAt: tempURL)
     }
 
     // MARK: - Asset GC

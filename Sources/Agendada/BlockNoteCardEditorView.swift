@@ -81,7 +81,9 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
     private lazy var webView: WKWebView = {
         let config = WKWebViewConfiguration()
         config.defaultWebpagePreferences.allowsContentJavaScript = true
+#if DEBUG
         config.preferences.setValue(true, forKey: "developerExtrasEnabled")
+#endif
 
         let controller = config.userContentController
         controller.addUserScript(WKUserScript(source: offlineNetworkGuardScript(), injectionTime: .atDocumentStart, forMainFrameOnly: false))

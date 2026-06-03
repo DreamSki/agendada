@@ -9,8 +9,8 @@
     "@blocknote/core": "0.51.0",
     "@blocknote/mantine": "0.51.0",
     "@blocknote/react": "0.51.0",
-    "@vitejs/plugin-react": "latest",
-    "vite": "latest",
+    "@vitejs/plugin-react": "6.0.2",
+    "vite": "8.0.14",
     "react": "19.2.0",
     "react-dom": "19.2.0"
   },

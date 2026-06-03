@@ -322,9 +322,9 @@ struct NoteStreamView: View {
         return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(notes) { note in
+                    ForEach(notes, id: \.id) { note in
                         StreamNoteRow(note: note)
-                            .id(note.id).padding(.bottom, AgendaSpacing.cardGap)
+                            .padding(.bottom, AgendaSpacing.cardGap)
                     }
                 // Bottom terminal drop zone
                 Rectangle()
@@ -519,8 +519,10 @@ private struct StableTextField: NSViewRepresentable {
         tf.textColor = textColor
         tf.placeholderString = placeholder
         tf.lineBreakMode = .byTruncatingTail
-        tf.cell?.isScrollable = true
+        tf.cell?.isScrollable = false  // 禁止滚动，防止推宽布局
         tf.cell?.wraps = false
+        // 降低水平抗压缩优先级，确保长标题不会撑宽卡片（卡片宽度由外层容器决定）
+        tf.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         tf.delegate = context.coordinator
         return tf
     }
@@ -611,6 +613,7 @@ private struct StreamNoteRow: View {
                 Spacer(minLength: 8)
                 dateControl
             }
+            .frame(maxWidth: .infinity)  // 确保整个 HStack 不超过容器宽度
         }
     }
 
@@ -730,17 +733,20 @@ private struct StreamNoteRow: View {
                 .frame(maxWidth: .infinity, alignment: .topLeading)
                 .opacity(isSelected && editorIsVisible ? 0 : (isNoteDimmed ? 0.58 : 1))
                 .allowsHitTesting(false)
-                .overlay(
-                    GeometryReader { geo in
-                        Color.clear
-                            .allowsHitTesting(false)
-                            .preference(key: PreviewHeightKey.self, value: geo.size.height)
-                    }
-                )
-                .onPreferenceChange(PreviewHeightKey.self) { h in
-                    if h > 0, abs(capturedPreviewHeight - h) > 0.5 {
-                        capturedPreviewHeight = h
-                    }
+                .when(isSelected) { view in
+                    view
+                        .overlay(
+                            GeometryReader { geo in
+                                Color.clear
+                                    .allowsHitTesting(false)
+                                    .preference(key: PreviewHeightKey.self, value: geo.size.height)
+                            }
+                        )
+                        .onPreferenceChange(PreviewHeightKey.self) { h in
+                            if h > 0, abs(capturedPreviewHeight - h) > 0.5 {
+                                capturedPreviewHeight = h
+                            }
+                        }
                 }
 
             // Editor — only rendered when selected to skip WKWebView layout.
@@ -1385,6 +1391,9 @@ private struct StreamNoteRow: View {
                          scheduledDate: sd, tags: splitList(draft.tagsText),
                          people: splitList(draft.peopleText), status: draft.status)
         initialDraft = draft
+        initialBlockJSON = draft.blockJSON
+        editorHasUserChanges = false
+        SharedBlockNoteWebView.shared.hasContentChanges = false
     }
 
     private func scheduleSaveDraft() {
