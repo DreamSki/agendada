@@ -142,44 +142,6 @@ struct TimelineDateRow: View {
         ]
     }
 
-    private var notePopover: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("排期笔记")
-                .font(AgendaFont.panelCaption)
-                .foregroundStyle(AgendaColor.textMuted)
-                .padding(.horizontal, 12)
-                .padding(.top, 8)
-                .padding(.bottom, 4)
-
-            ForEach(notes) { note in
-                Button {
-                    onSelectNote?(note.id)
-                    showNotePopover = false
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "doc.text")
-                            .font(.system(size: 12))
-                            .foregroundStyle(AgendaColor.amber)
-                            .frame(width: 16)
-
-                        Text(note.title)
-                            .font(AgendaFont.panelBody)
-                            .foregroundStyle(.primary)
-                            .lineLimit(1)
-
-                        Spacer()
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .frame(width: 200)
-        .padding(.vertical, 4)
-    }
-
     // MARK: - Date Popover
 
     private func toggleDateMenu() {
@@ -245,48 +207,4 @@ struct TimelineDateRow: View {
         return sections
     }
 
-    private var datePopover: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            if !notes.isEmpty {
-                ContextMenuItem(
-                    icon: "arrow.forward.circle",
-                    title: "前往被指定的笔记",
-                    subtitle: "跳转到指定于这天的笔记",
-                    action: {
-                        if let firstNote = notes.first {
-                            onSelectNote?(firstNote.id)
-                        }
-                        showPopover = false
-                    }
-                )
-                ContextMenuDivider()
-            }
-
-            if let onNew = onNewNote {
-                ContextMenuItem(
-                    icon: "doc.badge.plus",
-                    title: "在这一天新建笔记",
-                    subtitle: "新建一条笔记，指定日期 \(fullDateString)",
-                    action: {
-                        onNew()
-                        showPopover = false
-                    }
-                )
-            }
-
-            if let onNew = onNewEvent {
-                ContextMenuItem(
-                    icon: "calendar.badge.plus",
-                    title: "新建日程",
-                    subtitle: "在「日历」App 中添加 \(fullDateString) 的日程",
-                    action: {
-                        onNew()
-                        showPopover = false
-                    }
-                )
-            }
-        }
-        .frame(width: 360)
-        .padding(.vertical, 4)
-    }
 }

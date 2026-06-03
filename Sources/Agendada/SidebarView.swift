@@ -383,12 +383,6 @@ private struct AgendaSidebarRow: View {
         return isHovering ? AgendaColor.sidebarHoverBg : .clear
     }
 
-    private var rowBackground: Color {
-        if isSelected && showsSelectionBackground {
-            return AgendaColor.sidebarSelectedBg
-        }
-        return isHovering ? AgendaColor.sidebarHoverBg : .clear
-    }
 }
 
 // MARK: - Sidebar Icon
@@ -472,81 +466,6 @@ private struct AgendaSidebarSectionLabel: View {
             .foregroundStyle(AgendaColor.textMuted)
             .padding(.horizontal, 16)
             .padding(.vertical, 6)
-    }
-}
-
-// MARK: - Section Header
-
-private struct AgendaSidebarHeader<MenuContent: View>: View {
-    let title: String
-    let onAdd: (() -> Void)?
-    @ViewBuilder let menuItems: MenuContent
-
-    init(title: String, onAdd: (() -> Void)? = nil, @ViewBuilder menuItems: () -> MenuContent) {
-        self.title = title
-        self.onAdd = onAdd
-        self.menuItems = menuItems()
-    }
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Text(title)
-                .font(AgendaFont.sidebarSection)
-                .foregroundStyle(AgendaColor.textMuted)
-
-            Spacer()
-
-            if let onAdd {
-                Button(action: onAdd) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 14, weight: .medium))
-                        .frame(width: 22, height: 22)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(AgendaColor.textMuted)
-                .help("新建")
-            }
-
-            Menu {
-                menuItems
-            } label: {
-                Image(systemName: "ellipsis.circle")
-                    .font(.system(size: 14, weight: .medium))
-                    .frame(width: 22, height: 22)
-            }
-            .menuStyle(.borderlessButton)
-            .foregroundStyle(AgendaColor.textMuted)
-            .help("操作")
-        }
-        .padding(.horizontal, 16)
-        .padding(.top, 16)
-        .padding(.bottom, 5)
-    }
-}
-
-// MARK: - Static Row
-
-private struct AgendaSidebarStaticRow: View {
-    let title: String
-    let systemImage: String
-    let tint: Color
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: systemImage)
-                .font(.system(size: AgendaIcon.sidebar))
-                .foregroundStyle(tint)
-                .frame(width: 24, alignment: .center)
-
-            Text(title)
-                .font(AgendaFont.sidebarItem)
-                .foregroundStyle(AgendaColor.textMuted)
-
-            Spacer(minLength: 0)
-        }
-        .frame(height: AgendaSpacing.sidebarItemH)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
     }
 }
 

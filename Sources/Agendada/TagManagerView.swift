@@ -206,8 +206,10 @@ struct TagManagerView: View {
     private func tagSheet(_ s: TagSheet) -> some View {
         TagEditSheet(sheet: s) { result in
             switch result {
-            case let .create(name):
-                store.renameTag(name, to: name)
+            case .create:
+                // Tags are derived from notes — the tag will appear once applied
+                // to a note via the note editor. Validate and dismiss.
+                break
             case let .rename(oldName, newName):
                 store.renameTag(oldName, to: newName)
             }

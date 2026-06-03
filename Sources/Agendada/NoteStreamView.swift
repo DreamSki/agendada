@@ -139,38 +139,6 @@ struct NoteStreamView: View {
         }
     }
 
-    private var sortButton: some View {
-        HoverableCircleButton(systemName: "line.3.horizontal.decrease", help: "排序方式", action: { showSortPopover = true })
-            .popover(isPresented: $showSortPopover, arrowEdge: .bottom) {
-            VStack(alignment: .leading, spacing: 0) {
-                ForEach(NoteSortOrder.allCases, id: \.self) { order in
-                    Button {
-                        store.sortOrder = order
-                        showSortPopover = false
-                    } label: {
-                        HStack {
-                            Text(order.title)
-                            Spacer()
-                            if store.sortOrder == order {
-                                Image(systemName: "checkmark")
-                                    .font(.system(size: 12, weight: .medium))
-                                    .foregroundStyle(AgendaColor.amber)
-                            }
-                        }
-                        .padding(.horizontal, 12).padding(.vertical, 7)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .font(.custom("Avenir Next", size: 13))
-            .padding(.vertical, 4)
-            .frame(width: 180)
-            .agendadaGlassPopover()
-        }
-    }
-
     private var plusButton: some View {
         Button {
             showTemplatePopover = true
@@ -186,6 +154,7 @@ struct NoteStreamView: View {
         .overlay(Circle().stroke(Color.black.opacity(0.06), lineWidth: 0.5))
         .shadow(color: .black.opacity(0.08), radius: 6, x: 0, y: 2)
         .help("新建笔记")
+        .keyboardShortcut("n", modifiers: [.command])
         .popover(isPresented: $showTemplatePopover, arrowEdge: .bottom) {
             templatePickerContent
         }
@@ -253,26 +222,6 @@ struct NoteStreamView: View {
         }
         .frame(width: 200)
         .agendadaGlassPopover()
-    }
-
-    private func glassIconButton(systemName: String, action: @escaping () -> Void, help: String) -> some View {
-        HoverableCircleButton(systemName: systemName, help: help, action: action)
-    }
-
-    private func glassTextButton(_ label: String, role: ButtonRole? = nil, action: @escaping () -> Void) -> some View {
-        Button(role: role, action: action) {
-            Text(label)
-                .font(.custom("Avenir Next", size: 14))
-                .padding(.horizontal, 14).padding(.vertical, 8)
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(role == .destructive ? .red : Color(red: 0.118, green: 0.118, blue: 0.118))
-        .background(.ultraThinMaterial, in: Capsule())
-        .shadow(color: .black.opacity(0.06), radius: 4, y: 1)
-    }
-
-    private func glassIconCircleButton(systemName: String, help: String, role: ButtonRole? = nil, action: @escaping () -> Void) -> some View {
-        HoverableCircleButton(systemName: systemName, help: help, role: role, action: action)
     }
 
     private var headerGradient: some View {
@@ -344,6 +293,7 @@ struct NoteStreamView: View {
                             return false
                         }
                         guard let draggedNote = store.note(withID: payload.noteID) else { return false }
+                        guard draggedNote.projectID == lastNote.projectID else { return false }
                         guard notes.contains(where: { $0.id == draggedNote.id }) || draggedNote.projectID == (notes.first?.projectID) else { return false }
                         withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
                             store.insertNoteAfter(payload.noteID, targetID: lastNote.id)
@@ -684,7 +634,10 @@ private struct StreamNoteRow: View {
             isSelected: isSelected,
             canDrag: !store.isInBatchMode && store.selectedOverview != .trash,
             onTap: handleCardTap,
-            onBeforeDrop: { flushDraft() }
+            onBeforeDrop: { flushDraft() },
+            onPinBoundaryCrossing: { draggedID, targetID, insertBefore in
+                handlePinBoundaryCrossing(draggedNoteID: draggedID, targetNoteID: targetID, insertBefore: insertBefore)
+            }
         ) {
             cardBase
         }
@@ -1127,7 +1080,7 @@ private struct StreamNoteRow: View {
                     iconSystemName: "arrow.down",
                     title: "下一条笔记后"
                 ) { _ in
-                    store.moveNote(note.id, to: .afterNext)
+                    moveWithPinCheck(.afterNext)
                 }
             ]),
             AgendadaFloatingMenuSection(items: [
@@ -1141,7 +1094,7 @@ private struct StreamNoteRow: View {
                     iconSystemName: "arrow.down.to.line",
                     title: "最后一条笔记后"
                 ) { _ in
-                    store.moveNote(note.id, to: .toLast)
+                    moveWithPinCheck(.toLast)
                 }
             ])
         ]
@@ -1205,36 +1158,6 @@ private struct StreamNoteRow: View {
             title: project.name
         ) { _ in
             store.moveNotes([note.id], toProject: project.id)
-        }
-    }
-
-    private func noteColorValue(_ c: NoteColor?) -> Color {
-        guard let c else { return AgendaColor.amber }
-        return switch c {
-        case .accent: AgendaColor.amber
-        case .red: Color(red: 0.95, green: 0.35, blue: 0.35)
-        case .green: Color(red: 0.28, green: 0.68, blue: 0.45)
-        case .blue: Color(red: 0.26, green: 0.56, blue: 0.95)
-        case .yellow: Color(red: 0.95, green: 0.80, blue: 0.15)
-        case .brown: Color(red: 0.65, green: 0.45, blue: 0.30)
-        case .pink: Color(red: 0.93, green: 0.36, blue: 0.62)
-        case .purple: Color(red: 0.62, green: 0.35, blue: 0.85)
-        case .gray: Color(red: 0.55, green: 0.55, blue: 0.60)
-        }
-    }
-
-    private func projectColorValue(_ color: ProjectColor) -> Color {
-        switch color {
-        case .blue:
-            return Color(red: 0.26, green: 0.74, blue: 0.75)
-        case .green:
-            return Color(red: 0.32, green: 0.72, blue: 0.45)
-        case .orange:
-            return AgendaColor.amber
-        case .pink:
-            return Color(red: 0.93, green: 0.36, blue: 0.62)
-        case .gray:
-            return Color(red: 0.55, green: 0.55, blue: 0.60)
         }
     }
 
@@ -1302,46 +1225,23 @@ private struct StreamNoteRow: View {
         }
     }
 
-    private func printNote() {
-        let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: 400, height: 600))
-        textView.string = "\(note.title)\n\n\(note.bodyPlainText)"
-        let printInfo = NSPrintInfo.shared
-        printInfo.topMargin = 36; printInfo.bottomMargin = 36
-        printInfo.leftMargin = 36; printInfo.rightMargin = 36
-        let printOp = NSPrintOperation(view: textView, printInfo: printInfo)
-        printOp.runModal(for: NSApp.keyWindow ?? NSWindow(), delegate: nil, didRun: nil, contextInfo: nil)
-    }
-
-    private func saveAsTemplate() {
-        let alert = NSAlert()
-        alert.messageText = "存储为模板"
-        alert.informativeText = "保存当前笔记为可复用的模板"
-        alert.alertStyle = .informational
-
-        let textField = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
-        textField.placeholderString = "模板名称"
-        textField.stringValue = note.title
-        alert.accessoryView = textField
-
-        alert.addButton(withTitle: "保存")
-        alert.addButton(withTitle: "取消")
-
-        guard let window = NSApp.keyWindow else { return }
-        alert.beginSheetModal(for: window) { response in
-            if response == .alertFirstButtonReturn {
-                let name = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !name.isEmpty else { return }
-                store.addCustomNoteTemplate(name: name, from: note)
-            }
-        }
-    }
-
     private func moveWithPinCheck(_ move: PositionMove) {
-        guard store.wouldCrossPinnedTopBoundary(note.id, move: move) else {
-            store.moveNote(note.id, to: move)
+        // Check: non-pinned note trying to enter pinned-top territory
+        if store.wouldCrossPinnedTopBoundary(note.id, move: move) {
+            showPinAndMoveAlert(move)
             return
         }
 
+        // Check: pinned-top note trying to leave pinned territory
+        if store.wouldLeavePinnedTopBoundary(note.id, move: move) {
+            showUnpinAndMoveAlert(move)
+            return
+        }
+
+        store.moveNote(note.id, to: move)
+    }
+
+    private func showPinAndMoveAlert(_ move: PositionMove) {
         let alert = NSAlert()
         alert.messageText = "是否要将当前笔记置顶？"
         alert.informativeText = "该笔记上方有置顶笔记，需要先将当前笔记置顶才能移动到此位置。"
@@ -1364,6 +1264,64 @@ private struct StreamNoteRow: View {
                 }
             default:
                 break
+            }
+        }
+    }
+
+    private func showUnpinAndMoveAlert(_ move: PositionMove) {
+        let alert = NSAlert()
+        alert.messageText = "是否取消置顶？"
+        alert.informativeText = "该笔记当前置顶，需要先取消置顶才能移动到此位置。"
+        alert.alertStyle = .informational
+
+        alert.addButton(withTitle: "取消置顶并移动")
+        alert.addButton(withTitle: "取消")
+
+        guard let window = NSApp.keyWindow else { return }
+        alert.beginSheetModal(for: window) { response in
+            guard response == .alertFirstButtonReturn else { return }
+            store.setPinState(.none, noteID: note.id)
+            store.moveNote(note.id, to: move)
+        }
+    }
+
+    /// Handle a pin boundary crossing detected during drag-and-drop.
+    private func handlePinBoundaryCrossing(draggedNoteID: Note.ID, targetNoteID: Note.ID, insertBefore: Bool) {
+        let crossing = store.pinBoundaryCrossing(draggedNoteID: draggedNoteID, targetNoteID: targetNoteID)
+        guard crossing != .none else { return }
+
+        let alert = NSAlert()
+        alert.alertStyle = .informational
+
+        switch crossing {
+        case .intoPinnedTop:
+            alert.messageText = "是否要将当前笔记置顶？"
+            alert.informativeText = "该笔记将被置顶并移动到此位置。"
+            alert.addButton(withTitle: "置顶并移动")
+        case .outOfPinnedTop:
+            alert.messageText = "是否取消置顶？"
+            alert.informativeText = "该笔记将取消置顶并移动到此位置。"
+            alert.addButton(withTitle: "取消置顶并移动")
+        case .none:
+            return
+        }
+        alert.addButton(withTitle: "取消")
+
+        guard let window = NSApp.keyWindow else { return }
+        alert.beginSheetModal(for: window) { response in
+            guard response == .alertFirstButtonReturn else { return }
+            switch crossing {
+            case .intoPinnedTop:
+                store.setPinState(.pinnedTop, noteID: draggedNoteID)
+            case .outOfPinnedTop:
+                store.setPinState(.none, noteID: draggedNoteID)
+            case .none:
+                break
+            }
+            if insertBefore {
+                store.insertNoteBefore(draggedNoteID, targetID: targetNoteID)
+            } else {
+                store.insertNoteAfter(draggedNoteID, targetID: targetNoteID)
             }
         }
     }
@@ -1433,6 +1391,7 @@ private struct StreamNoteRow: View {
         draft.plainTextPreview = content.plainTextPreview
         draft.previewHTML = content.previewHTML
         draft.body = content.previewHTML ?? content.plainTextPreview
+        scheduleSaveDraft()
     }
 
     private func selectNoteAfterSavingActiveEditor() {
@@ -1534,23 +1493,6 @@ private struct HoverableCircleButton: View {
         .shadow(color: .black.opacity(0.08), radius: 6, x: 0, y: 2)
         .help(help)
         .onHover { isHovering = $0 }
-    }
-}
-
-// MARK: - Menu Folder Icon (with hover)
-
-private struct MenuFolderIcon: View {
-    @State private var isHovering = false
-
-    var body: some View {
-        Image(systemName: "folder")
-            .font(.system(size: 16, weight: .medium))
-            .foregroundStyle(isHovering ? AgendaColor.amber : Color(red: 0.118, green: 0.118, blue: 0.118))
-            .frame(width: 36, height: 36)
-            .background(Color.white, in: Circle())
-            .overlay(Circle().stroke(Color.black.opacity(0.06), lineWidth: 0.5))
-            .shadow(color: .black.opacity(0.08), radius: 6, x: 0, y: 2)
-            .onHover { isHovering = $0 }
     }
 }
 
@@ -1788,35 +1730,6 @@ private func batchMoveFloatingMenuSections(
     ]
 }
 
-@MainActor
-private func sortPopoverContent(store: ObservableLibraryStore, showSortPopover: Binding<Bool>) -> some View {
-    VStack(alignment: .leading, spacing: 0) {
-        ForEach(NoteSortOrder.allCases, id: \.self) { order in
-            Button {
-                store.sortOrder = order
-                showSortPopover.wrappedValue = false
-            } label: {
-                HStack {
-                    Text(order.title)
-                    Spacer()
-                    if store.sortOrder == order {
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(AgendaColor.amber)
-                    }
-                }
-                .padding(.horizontal, 12).padding(.vertical, 7)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-        }
-    }
-    .font(.custom("Avenir Next", size: 13))
-    .padding(.vertical, 4)
-    .frame(width: 180)
-}
-
 // MARK: - Enter-intercepting TextField for Search Popover
 
 private struct ReturnKeyTextField: NSViewRepresentable {
@@ -1954,7 +1867,9 @@ private struct SearchPopoverContent: View {
             guard !searchText.isEmpty, newCount > 0 else { return }
             let q = store.library.searchHighlightText
             guard !q.isEmpty else { return }
-            SharedBlockNoteWebView.shared.searchInEditor(query: q) { _ in }
+            SharedBlockNoteWebView.shared.searchInEditor(query: q) { _ in
+                SharedBlockNoteWebView.shared.navigateToMatch(index: 0) { _, _ in }
+            }
         }
     }
 
@@ -1996,6 +1911,8 @@ private struct CardInteractionLayer<Content: View>: View {
     let canDrag: Bool
     let onTap: () -> Void
     let onBeforeDrop: () -> Void
+    /// Called when a drag crosses a pin boundary. Parameters: (draggedNoteID, targetNoteID, insertBefore).
+    let onPinBoundaryCrossing: (Note.ID, Note.ID, Bool) -> Void
     @ViewBuilder let content: Content
 
     @State private var isHovering = false
@@ -2060,9 +1977,17 @@ private struct CardInteractionLayer<Content: View>: View {
         guard let draggedNote = store.note(withID: payload.noteID) else { return false }
         guard draggedNote.projectID == note.projectID else { return false }
 
+        let insertBefore = location.y < cardHeight / 2
+
+        // Detect pin boundary crossing — delegate to parent for alert handling.
+        let crossing = store.pinBoundaryCrossing(draggedNoteID: payload.noteID, targetNoteID: note.id)
+        if crossing != .none {
+            onPinBoundaryCrossing(payload.noteID, note.id, insertBefore)
+            return true  // Accept the drop visually; parent will handle the operation.
+        }
+
         onBeforeDrop()
 
-        let insertBefore = location.y < cardHeight / 2
         withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
             if insertBefore {
                 store.insertNoteBefore(payload.noteID, targetID: note.id)
@@ -2275,7 +2200,7 @@ private struct StreamNoteBulletMenuView: View {
             AgendadaFloatingMenuItem(iconSystemName: "square.and.arrow.up", title: "分享...",
                 showsSubmenuIndicator: true, dismissesAfterAction: false
             ) { presenter in presenter.showSubmenu(sections: shareSections, title: "分享为:") },
-            AgendadaFloatingMenuItem(iconSystemName: "printer", title: "打印...") { _ in printNote() }
+            AgendadaFloatingMenuItem(iconSystemName: "printer", title: "打印...") { _ in printNote(note) }
         ])
         return [
             AgendadaFloatingMenuSection(items: firstSection),
@@ -2288,16 +2213,6 @@ private struct StreamNoteBulletMenuView: View {
 
     private var moveProjectSections: [AgendadaFloatingMenuSection] { buildMoveProjectSections() }
     private var shareSections: [AgendadaFloatingMenuSection] { buildShareSections() }
-
-    private func printNote() {
-        let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: 400, height: 600))
-        textView.string = "\(note.title)\n\n\(note.bodyPlainText)"
-        let printInfo = NSPrintInfo.shared
-        printInfo.topMargin = 36; printInfo.bottomMargin = 36
-        printInfo.leftMargin = 36; printInfo.rightMargin = 36
-        let printOp = NSPrintOperation(view: textView, printInfo: printInfo)
-        printOp.runModal(for: NSApp.keyWindow ?? NSWindow(), delegate: nil, didRun: nil, contextInfo: nil)
-    }
 }
 
 // MARK: - StreamNote Date Control
@@ -2452,9 +2367,9 @@ private struct StreamNoteActionMenuView: View {
                 AgendadaFloatingMenuItem(iconSystemName: "square.and.arrow.up", title: "分享...", showsSubmenuIndicator: true, dismissesAfterAction: false
                 ) { presenter in presenter.showSubmenu(sections: shareSections, title: "分享为:") },
                 AgendadaFloatingMenuItem(iconSystemName: "printer", title: "打印..."
-                ) { _ in printNote() },
+                ) { _ in printNote(note) },
                 AgendadaFloatingMenuItem(iconSystemName: "rectangle.dashed", title: "存储为模板..."
-                ) { _ in saveAsTemplate() }
+                ) { _ in saveAsTemplate(from: note, store: store) }
             ]),
             AgendadaFloatingMenuSection(items: [
                 AgendadaFloatingMenuItem(iconSystemName: "info.circle", title: "显示信息...",
@@ -2556,31 +2471,39 @@ private struct StreamNoteActionMenuView: View {
         let f = DateFormatter(); f.locale = Locale(identifier: "zh_CN"); f.dateFormat = "yyyy年M月d日 HH:mm:ss"
         return f.string(from: note.createdAt)
     }
+}
 
-    private func printNote() {
-        let tv = NSTextView(frame: NSRect(x: 0, y: 0, width: 400, height: 600))
-        tv.string = "\(note.title)\n\n\(note.bodyPlainText)"
-        let pi = NSPrintInfo.shared; pi.topMargin = 36; pi.bottomMargin = 36
-        pi.leftMargin = 36; pi.rightMargin = 36
-        NSPrintOperation(view: tv, printInfo: pi).runModal(for: NSApp.keyWindow ?? NSWindow(), delegate: nil, didRun: nil, contextInfo: nil)
-    }
+// MARK: - Shared Utilities
 
-    private func saveAsTemplate() {
-        let alert = NSAlert()
-        alert.messageText = "存储为模板"
-        alert.informativeText = "保存当前笔记为可复用的模板"
-        alert.alertStyle = .informational
-        let tf = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
-        tf.placeholderString = "模板名称"; tf.stringValue = note.title
-        alert.accessoryView = tf
-        alert.addButton(withTitle: "保存"); alert.addButton(withTitle: "取消")
-        guard let win = NSApp.keyWindow else { return }
-        alert.beginSheetModal(for: win) { resp in
-            if resp == .alertFirstButtonReturn {
-                let name = tf.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !name.isEmpty else { return }
-                store.addCustomNoteTemplate(name: name, from: note)
-            }
+@MainActor
+private func printNote(_ note: Note) {
+    let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: 400, height: 600))
+    textView.string = "\(note.title)\n\n\(note.bodyPlainText)"
+    let printInfo = NSPrintInfo.shared
+    printInfo.topMargin = 36; printInfo.bottomMargin = 36
+    printInfo.leftMargin = 36; printInfo.rightMargin = 36
+    let printOp = NSPrintOperation(view: textView, printInfo: printInfo)
+    printOp.runModal(for: NSApp.keyWindow ?? NSWindow(), delegate: nil, didRun: nil, contextInfo: nil)
+}
+
+@MainActor
+private func saveAsTemplate(from note: Note, store: ObservableLibraryStore) {
+    let alert = NSAlert()
+    alert.messageText = "存储为模板"
+    alert.informativeText = "保存当前笔记为可复用的模板"
+    alert.alertStyle = .informational
+    let textField = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
+    textField.placeholderString = "模板名称"
+    textField.stringValue = note.title
+    alert.accessoryView = textField
+    alert.addButton(withTitle: "保存")
+    alert.addButton(withTitle: "取消")
+    guard let window = NSApp.keyWindow else { return }
+    alert.beginSheetModal(for: window) { response in
+        if response == .alertFirstButtonReturn {
+            let name = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else { return }
+            store.addCustomNoteTemplate(name: name, from: note)
         }
     }
 }
