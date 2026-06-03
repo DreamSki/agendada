@@ -185,8 +185,8 @@ final class CalendarStore {
             end = le
         } else {
             let today = Calendar.current.startOfDay(for: Date())
-            start = Calendar.current.date(byAdding: .day, value: -30, to: today)!
-            end = Calendar.current.date(byAdding: .day, value: 60, to: today)!
+            start = calendarDate(byAdding: .day, value: -30, to: today)
+            end = calendarDate(byAdding: .day, value: 60, to: today)
         }
 
         let t0 = CFAbsoluteTimeGetCurrent()
@@ -226,8 +226,8 @@ final class CalendarStore {
         let cal = Calendar.current
         let today = cal.startOfDay(for: Date())
         // -30/+60 days (~90 day window).  Scrolling to edges triggers on-demand extension.
-        let start = cal.date(byAdding: .day, value: -30, to: today)!
-        let end = cal.date(byAdding: .day, value: 60, to: today)!
+        let start = calendarDate(byAdding: .day, value: -30, to: today)
+        let end = calendarDate(byAdding: .day, value: 60, to: today)
 
         await loadSchedule(from: start, to: end)
         initialLoadDone = true
@@ -258,7 +258,7 @@ final class CalendarStore {
             let t0 = CFAbsoluteTimeGetCurrent()
             events = (try? await repository.fetchEvents(
                 from: startDay,
-                to: cal.date(byAdding: .day, value: 1, to: endDay)!,
+                to: calendarDate(byAdding: .day, value: 1, to: endDay),
                 calendarIDs: eventCalendarIDs
             )) ?? []
             let elapsed = CFAbsoluteTimeGetCurrent() - t0
@@ -283,7 +283,7 @@ final class CalendarStore {
         var currentDay = startDay
         while currentDay <= endDay {
             dayMap[currentDay] = DaySchedule(date: currentDay)
-            currentDay = cal.date(byAdding: .day, value: 1, to: currentDay)!
+            currentDay = calendarDate(byAdding: .day, value: 1, to: currentDay)
         }
 
         for event in events {
@@ -297,10 +297,10 @@ final class CalendarStore {
                 // We handle both by ensuring at least one day is always added,
                 // treating same-day start/end as a 1-day span.
                 var day = eventStartDay
-                let effectiveEnd = max(eventEndDay, cal.date(byAdding: .day, value: 1, to: eventStartDay)!)
+                let effectiveEnd = max(eventEndDay, calendarDate(byAdding: .day, value: 1, to: eventStartDay))
                 while day < effectiveEnd, day <= endDay {
                     dayMap[day]?.allDayEvents.append(event)
-                    day = cal.date(byAdding: .day, value: 1, to: day)!
+                    day = calendarDate(byAdding: .day, value: 1, to: day)
                 }
             } else {
                 dayMap[eventStartDay]?.timedEvents.append(event)
@@ -441,24 +441,24 @@ final class CalendarStore {
         let daysFromStart = cal.dateComponents([.day], from: loadedStart, to: day).day ?? 0
         if daysFromStart <= 30 {
             isExtending = true
-            let newStart = cal.date(byAdding: .day, value: -90, to: loadedStart)!
-            let chunkEnd = cal.date(byAdding: .day, value: -1, to: loadedStart)!
-            loadedStartDate = newStart
+            defer { isExtending = false }
+            let newStart = calendarDate(byAdding: .day, value: -90, to: loadedStart)
+            let chunkEnd = calendarDate(byAdding: .day, value: -1, to: loadedStart)
             let schedules = await fetchSchedules(from: newStart, to: chunkEnd)
+            loadedStartDate = newStart
             mergeSchedules(schedules, updateRange: false)
-            isExtending = false
             return
         }
 
         let daysFromEnd = cal.dateComponents([.day], from: day, to: loadedEnd).day ?? 0
         if daysFromEnd <= 30 {
             isExtending = true
-            let newEnd = cal.date(byAdding: .day, value: 90, to: loadedEnd)!
-            let chunkStart = cal.date(byAdding: .day, value: 1, to: loadedEnd)!
-            loadedEndDate = newEnd
+            defer { isExtending = false }
+            let newEnd = calendarDate(byAdding: .day, value: 90, to: loadedEnd)
+            let chunkStart = calendarDate(byAdding: .day, value: 1, to: loadedEnd)
             let schedules = await fetchSchedules(from: chunkStart, to: newEnd)
+            loadedEndDate = newEnd
             mergeSchedules(schedules, updateRange: false)
-            isExtending = false
         }
     }
 
@@ -523,14 +523,13 @@ final class CalendarStore {
 
         refreshTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            let cal = Calendar.current
             var chunkStart = capturedStart
             var allSchedules: [DaySchedule] = []
             while chunkStart < capturedEnd, !Task.isCancelled {
-                let chunkEnd = min(cal.date(byAdding: .year, value: 3, to: chunkStart)!, capturedEnd)
+                let chunkEnd = min(calendarDate(byAdding: .year, value: 3, to: chunkStart), capturedEnd)
                 let chunk = await self.fetchSchedules(from: chunkStart, to: chunkEnd)
                 allSchedules.append(contentsOf: chunk)
-                chunkStart = cal.date(byAdding: .day, value: 1, to: chunkEnd)!
+                chunkStart = calendarDate(byAdding: .day, value: 1, to: chunkEnd)
             }
             guard !Task.isCancelled, self.refreshGeneration == myGeneration else {
                 // Only clear isSyncing if this is still the latest generation.
@@ -592,6 +591,20 @@ final class CalendarStore {
 
     func openCalendarAtDate(_ date: Date) {
         NSWorkspace.shared.open(URL(string: "x-apple-calendar://")!)
+    }
+
+    // MARK: - Helpers
+
+    /// Safe wrapper around `Calendar.date(byAdding:to:)` that never force-unwraps.
+    /// Falls back to a TimeInterval-based estimate on exotic calendars where
+    /// date arithmetic could theoretically return nil.
+    private func calendarDate(byAdding component: Calendar.Component, value: Int, to date: Date) -> Date {
+        guard let result = Calendar.current.date(byAdding: component, value: value, to: date) else {
+            log.warning("Calendar date(byAdding: \(String(describing: component)), value: \(value)) returned nil — falling back")
+            if component == .day { return date.addingTimeInterval(TimeInterval(value) * 86400) }
+            return date
+        }
+        return result
     }
 
     // MARK: - Formatting
