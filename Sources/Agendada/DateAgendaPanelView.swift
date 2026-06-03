@@ -185,7 +185,7 @@ struct DateAgendaPanelView: View {
                                 .frame(maxWidth: .infinity, minHeight: cellHeight, maxHeight: cellHeight)
                         } else {
                             let day = cellIndex - leadingEmpties + 1
-                            let cellDate = calendar.date(byAdding: .day, value: day - 1, to: startOfMonth)!
+                            let cellDate = calendar.safeDate(byAdding: .day, value: day - 1, to: startOfMonth)
                             let isSelected = hasSelection && calendar.isDate(cellDate, inSameDayAs: selectedDate ?? Date())
                             let isTodayCell = calendar.isDate(cellDate, inSameDayAs: today)
                             let hasNotes = notesOnDates.contains(day)

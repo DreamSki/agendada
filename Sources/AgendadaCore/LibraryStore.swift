@@ -718,8 +718,8 @@ public final class LibraryStore {
     public func timelineCounts(now: Date = Date()) -> TimelineCounts {
         let calendar = Calendar.current
         let startOfToday = calendar.startOfDay(for: now)
-        let startOfTomorrow = calendar.date(byAdding: .day, value: 1, to: startOfToday)!
-        let startOfDayAfter = calendar.date(byAdding: .day, value: 2, to: startOfToday)!
+        let startOfTomorrow = calendar.safeDate(byAdding: .day, value: 1, to: startOfToday)
+        let startOfDayAfter = calendar.safeDate(byAdding: .day, value: 2, to: startOfToday)
 
         let activeNotes = notes.filter { $0.status == .open }
 
@@ -730,7 +730,7 @@ public final class LibraryStore {
         var thisWeekCount = 0
         let weekday = calendar.component(.weekday, from: now)
         let daysUntilEndOfWeek = 7 - weekday
-        let endOfWeek = calendar.date(byAdding: .day, value: daysUntilEndOfWeek, to: startOfToday)!
+        let endOfWeek = calendar.safeDate(byAdding: .day, value: daysUntilEndOfWeek, to: startOfToday)
 
         for note in activeNotes {
             guard let date = note.scheduledDate else { continue }
@@ -739,7 +739,7 @@ public final class LibraryStore {
                 todayCount += 1
             } else if startOfDay == startOfTomorrow {
                 tomorrowCount += 1
-            } else if startOfDay == calendar.date(byAdding: .day, value: -1, to: startOfToday)! {
+            } else if startOfDay == calendar.safeDate(byAdding: .day, value: -1, to: startOfToday) {
                 yesterdayCount += 1
             } else if startOfDay < startOfToday {
                 overdueCount += 1
@@ -819,26 +819,7 @@ public final class LibraryStore {
 
         // Manual sorting mode
         if sortMode == .manual {
-            return matchingNotes.sorted { lhs, rhs in
-                // Pin state still takes priority in manual mode.
-                // To move a note above a pinned note, user must explicitly
-                // pin it via the confirmation prompt.
-                if lhs.pinState != rhs.pinState {
-                    if lhs.pinState == .pinnedTop { return true }
-                    if rhs.pinState == .pinnedTop { return false }
-                    if lhs.pinState == .pinnedBottom { return false }
-                    if rhs.pinState == .pinnedBottom { return true }
-                }
-                switch (lhs.position, rhs.position) {
-                case let (l?, r?) where l != r: return l < r
-                case (_?, nil): return false   // nil (new) notes sort on top
-                case (nil, _?): return true    // nil (new) notes sort on top
-                default: break                 // equal or both nil — use tie-breaker
-                }
-                // Stable tie-breaker: newer notes first, then by ID for determinism
-                if lhs.createdAt != rhs.createdAt { return lhs.createdAt > rhs.createdAt }
-                return lhs.id.uuidString < rhs.id.uuidString
-            }
+            return matchingNotes.sorted(by: Self.projectSortComparator)
         }
 
         return matchingNotes.sorted { lhs, rhs in
@@ -1110,6 +1091,28 @@ public final class LibraryStore {
         return trimmedName.isEmpty ? fallback : trimmedName
     }
 
+    // MARK: - Project-Scoped Sort Comparator
+
+    /// Shared sort comparator used by manual ordering, project-scoped queries,
+    /// and position rebalancing. Pin state first, then position, then stable tie-breaker.
+    private static func projectSortComparator(_ lhs: Note, _ rhs: Note) -> Bool {
+        if lhs.pinState != rhs.pinState {
+            if lhs.pinState == .pinnedTop { return true }
+            if rhs.pinState == .pinnedTop { return false }
+            if lhs.pinState == .pinnedBottom { return false }
+            if rhs.pinState == .pinnedBottom { return true }
+        }
+        switch (lhs.position, rhs.position) {
+        case let (l?, r?) where l != r: return l < r
+        case (_?, nil): return false   // nil (new) notes sort on top
+        case (nil, _?): return true    // nil (new) notes sort on top
+        default: break                 // equal or both nil — use tie-breaker
+        }
+        // Stable tie-breaker: newer notes first, then by ID for determinism
+        if lhs.createdAt != rhs.createdAt { return lhs.createdAt > rhs.createdAt }
+        return lhs.id.uuidString < rhs.id.uuidString
+    }
+
     // MARK: - Position Management
 
     /// Sparse interval between adjacent positions. Large enough to allow many
@@ -1184,27 +1187,13 @@ public final class LibraryStore {
     /// scoped to a project, matching the drag-and-drop constraint.
     private func projectScopedNotes(for noteID: Note.ID) -> [Note] {
         guard let note = notes.first(where: { $0.id == noteID }) else { return [] }
-        return notes
-            .filter { $0.projectID == note.projectID && $0.status != .trashed }
-            .sorted { lhs, rhs in
-                // Pin state first
-                if lhs.pinState != rhs.pinState {
-                    if lhs.pinState == .pinnedTop { return true }
-                    if rhs.pinState == .pinnedTop { return false }
-                    if lhs.pinState == .pinnedBottom { return false }
-                    if rhs.pinState == .pinnedBottom { return true }
-                }
-                // Then by position
-                switch (lhs.position, rhs.position) {
-                case let (l?, r?) where l != r: return l < r
-                case (_?, nil): return false
-                case (nil, _?): return true
-                default: break
-                }
-                // Stable tie-breaker
-                if lhs.createdAt != rhs.createdAt { return lhs.createdAt > rhs.createdAt }
-                return lhs.id.uuidString < rhs.id.uuidString
-            }
+        return projectScopedNotes(forProjectID: note.projectID)
+    }
+
+    private func projectScopedNotes(forProjectID projectID: Project.ID) -> [Note] {
+        notes
+            .filter { $0.projectID == projectID && $0.status != .trashed }
+            .sorted(by: Self.projectSortComparator)
     }
 
     // MARK: Rank arithmetic
@@ -1229,29 +1218,15 @@ public final class LibraryStore {
     /// Redistribute positions evenly across all notes in a project.
     /// After rebalancing every adjacent pair has `positionGap` between them.
     private func rebalancePositions(for projectID: Project.ID) {
-        let projectNotes = notes
-            .filter { $0.projectID == projectID && $0.status != .trashed }
-            .sorted { lhs, rhs in
-                // Pin state first
-                if lhs.pinState != rhs.pinState {
-                    if lhs.pinState == .pinnedTop { return true }
-                    if rhs.pinState == .pinnedTop { return false }
-                    if lhs.pinState == .pinnedBottom { return false }
-                    if rhs.pinState == .pinnedBottom { return true }
-                }
-                switch (lhs.position, rhs.position) {
-                case let (l?, r?) where l != r: return l < r
-                case (_?, nil): return false
-                case (nil, _?): return true
-                default: break
-                }
-                if lhs.createdAt != rhs.createdAt { return lhs.createdAt > rhs.createdAt }
-                return lhs.id.uuidString < rhs.id.uuidString
-            }
+        let projectNotes = projectScopedNotes(forProjectID: projectID)
+        guard !projectNotes.isEmpty else { return }
+
+        // Build an ID→index lookup once to avoid O(n²) scans in the loop.
+        let indexByID = Dictionary(uniqueKeysWithValues: notes.enumerated().map { ($1.id, $0) })
 
         var pos: Int64 = Self.positionGap
         for note in projectNotes {
-            if let idx = notes.firstIndex(where: { $0.id == note.id }) {
+            if let idx = indexByID[note.id] {
                 notes[idx].position = pos
                 pos += Self.positionGap
             }
@@ -1429,17 +1404,17 @@ public final class LibraryStore {
         // Assign sparse positions to notes that don't have one yet.
         // This runs per-project so that each project gets its own
         // independent position space.
+        let indexByID = Dictionary(uniqueKeysWithValues: notes.enumerated().map { ($1.id, $0) })
         let allProjectIDs = Set(notes.map(\.projectID))
         for projectID in allProjectIDs {
-            let projectNotes = notes
-                .filter { $0.projectID == projectID && $0.status != .trashed }
+            let projectNotes = projectScopedNotes(forProjectID: projectID)
             let needsPosition = projectNotes.filter { $0.position == nil }
             guard !needsPosition.isEmpty else { continue }
 
             let minExisting = projectNotes.compactMap(\.position).min() ?? Self.positionGap
             var pos = minExisting - Int64(needsPosition.count) * Self.positionGap
             for note in needsPosition {
-                if let noteIndex = notes.firstIndex(where: { $0.id == note.id }) {
+                if let noteIndex = indexByID[note.id] {
                     notes[noteIndex].position = pos
                     pos += Self.positionGap
                 }

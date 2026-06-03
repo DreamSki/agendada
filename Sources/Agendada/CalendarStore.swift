@@ -595,16 +595,8 @@ final class CalendarStore {
 
     // MARK: - Helpers
 
-    /// Safe wrapper around `Calendar.date(byAdding:to:)` that never force-unwraps.
-    /// Falls back to a TimeInterval-based estimate on exotic calendars where
-    /// date arithmetic could theoretically return nil.
     private func calendarDate(byAdding component: Calendar.Component, value: Int, to date: Date) -> Date {
-        guard let result = Calendar.current.date(byAdding: component, value: value, to: date) else {
-            log.warning("Calendar date(byAdding: \(String(describing: component)), value: \(value)) returned nil — falling back")
-            if component == .day { return date.addingTimeInterval(TimeInterval(value) * 86400) }
-            return date
-        }
-        return result
+        Calendar.current.safeDate(byAdding: component, value: value, to: date)
     }
 
     // MARK: - Formatting

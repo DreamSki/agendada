@@ -579,3 +579,19 @@ private func htmlToPlainText(_ html: String) -> String {
     text = text.replacingOccurrences(of: "&nbsp;", with: " ")
     return text.trimmingCharacters(in: .whitespacesAndNewlines)
 }
+
+// MARK: - Calendar Safe Arithmetic
+
+public extension Calendar {
+    /// Safe wrapper around `date(byAdding:to:)` that never returns nil.
+    /// Falls back to a TimeInterval-based estimate on exotic calendars where
+    /// date arithmetic could theoretically fail.
+    func safeDate(byAdding component: Calendar.Component, value: Int, to date: Date) -> Date {
+        guard let result = self.date(byAdding: component, value: value, to: date) else {
+            print("⚠️ [Agendada] Calendar.date(byAdding: \(component), value: \(value)) returned nil — falling back")
+            if component == .day { return date.addingTimeInterval(TimeInterval(value) * 86400) }
+            return date
+        }
+        return result
+    }
+}
