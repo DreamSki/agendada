@@ -16,6 +16,7 @@ private struct TimelineRowPositionsKey: PreferenceKey {
 struct RelatedPanelContentView: View {
     @Environment(ObservableLibraryStore.self) private var store
     @Environment(CalendarStore.self) private var calendarStore
+    let navigateToNote: (Note.ID) -> Void
 
     @State private var timelineExpanded = true
     @State private var recentExpanded = true
@@ -234,17 +235,6 @@ struct RelatedPanelContentView: View {
                             // Preserve scroll position tracking — the user was
                             // already scrolling when range extension triggered.
                             performInitialScroll(preserveTracking: true)
-                        }
-                    }
-                    .onChange(of: store.selectedNoteID) { _, newID in
-                        // 切换笔记时，时间轴滚动到笔记的排期日期
-                        guard let noteID = newID,
-                              let note = store.note(withID: noteID),
-                              let scheduledDate = note.scheduledDate else { return }
-                        let targetDay = Calendar.current.startOfDay(for: scheduledDate)
-                        focusedMonthDate = targetDay
-                        withAnimation(.easeInOut(duration: 0.3)) {
-                            proxy.scrollTo(targetDay, anchor: .top)
                         }
                     }
                     .onChange(of: scrollTarget) { _, target in
@@ -570,17 +560,17 @@ struct RelatedPanelContentView: View {
                 notes: day.notes,
                 onNewNote: { createNoteOnDate(day.date) },
                 onNewEvent: { calendarStore.openCalendarAtDate(day.date) },
-                onSelectNote: { noteID in store.selectNote(noteID) }
+                onSelectNote: { noteID in navigateToNote(noteID) }
             )
 
             ForEach(day.allDayEvents) { event in
-                TimelineEventRow(event: event) {
+                TimelineEventRow(event: event, onNavigateToNote: navigateToNote) {
                     calendarStore.openEventInCalendar(event.id)
                 }
             }
 
             ForEach(day.timedEvents) { event in
-                TimelineEventRow(event: event) {
+                TimelineEventRow(event: event, onNavigateToNote: navigateToNote) {
                     calendarStore.openEventInCalendar(event.id)
                 }
             }
@@ -631,7 +621,7 @@ struct RelatedPanelContentView: View {
         let isSelected = store.selectedNoteID == note.id
 
         return Button {
-            store.selectNote(note.id)
+            navigateToNote(note.id)
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: "doc.text")
@@ -691,7 +681,7 @@ struct RelatedPanelContentView: View {
                 VStack(spacing: 0) {
                     ForEach(Array(relatedNotes.enumerated()), id: \.element.noteID) { index, relatedNote in
                         Button {
-                            store.selectNote(relatedNote.noteID)
+                            navigateToNote(relatedNote.noteID)
                         } label: {
                             HStack(spacing: 8) {
                                 Circle()

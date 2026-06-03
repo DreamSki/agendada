@@ -4,6 +4,7 @@ import SwiftUI
 
 struct TimelineEventRow: View {
     let event: CalendarEvent
+    let onNavigateToNote: ((Note.ID) -> Void)?
     let onOpenInCalendar: (() -> Void)?
     @Environment(ObservableLibraryStore.self) private var store
 
@@ -164,7 +165,7 @@ struct TimelineEventRow: View {
                     title: "前往已关联的笔记",
                     subtitle: "跳转至与该日程关联的笔记「\(note.title)」"
                 ) { _ in
-                    store.selectNote(note.id)
+                    onNavigateToNote?(note.id)
                 }
             )
         }

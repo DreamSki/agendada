@@ -5,11 +5,17 @@ import SwiftUI
 struct NoteStreamView: View {
     @Environment(ObservableLibraryStore.self) private var store
     @Binding var searchText: String
+    @Binding var navigationTargetNoteID: Note.ID?
     @State private var isSearching = false
     @State private var showSortPopover = false
     @State private var showMoveMenu = false
     @State private var dropAtEndTargeted = false
     @State private var showTemplatePopover = false
+    @State private var navigationScrollWorkItem: DispatchWorkItem?
+    @State private var streamScrollView: NSScrollView?
+    @State private var localSelectionScrollLockOrigin: CGPoint?
+    @State private var localSelectionScrollLockDeadline: Date = .distantPast
+    @State private var localSelectionScrollLockGeneration = 0
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -73,7 +79,7 @@ struct NoteStreamView: View {
                     copyToPasteboard(store.summaryForFilteredNotes())
                 })
                 CapsuleIconPopoverButton(systemName: "magnifyingglass", help: "搜索", isPresented: $isSearching, popoverContent: {
-                    SearchPopoverContent(searchText: $searchText)
+                    SearchPopoverContent(searchText: $searchText, navigationTargetNoteID: $navigationTargetNoteID)
                 })
             }
             .padding(.horizontal, 6)
@@ -272,7 +278,12 @@ struct NoteStreamView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     ForEach(notes, id: \.id) { note in
-                        StreamNoteRow(note: note)
+                        StreamNoteRow(
+                            note: note,
+                            cancelPendingNavigation: cancelPendingNavigation,
+                            performLocalSelection: preserveScrollDuringLocalSelection,
+                            preserveLocalScrollPosition: restoreLocalSelectionScrollPosition
+                        )
                             .padding(.bottom, AgendaSpacing.cardGap)
                     }
                 // Bottom terminal drop zone
@@ -306,6 +317,13 @@ struct NoteStreamView: View {
             .padding(.horizontal, 12).padding(.top, 100).padding(.bottom, 80)
         }
         .background {
+            EnclosingScrollViewResolver { scrollView in
+                if streamScrollView !== scrollView {
+                    streamScrollView = scrollView
+                }
+            }
+        }
+        .background {
             Button("") {
                 if store.isInBatchMode { store.deselectAllNotes() }
             }
@@ -313,12 +331,93 @@ struct NoteStreamView: View {
             .opacity(0)
             .frame(width: 0, height: 0)
         }
-        .onChange(of: store.selectedNoteID) { _, newID in
-            if let id = newID {
-                withAnimation { proxy.scrollTo(id, anchor: .center) }
+        .onChange(of: navigationTargetNoteID) { _, targetID in
+            navigationScrollWorkItem?.cancel()
+            guard let id = targetID else { return }
+            clearLocalSelectionScrollLock()
+            let workItem = DispatchWorkItem {
+                guard store.selectedNoteID == id else { return }
+                proxy.scrollTo(id, anchor: .center)
+                navigationTargetNoteID = nil
+            }
+            navigationScrollWorkItem = workItem
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.06, execute: workItem)
+        }
+    }
+    }
+
+    private func cancelPendingNavigation() {
+        navigationScrollWorkItem?.cancel()
+        navigationTargetNoteID = nil
+    }
+
+    private func preserveScrollDuringLocalSelection(_ update: @escaping () -> Void) {
+        let scrollView = streamScrollView
+        let originalOrigin = scrollView?.contentView.bounds.origin
+
+        guard let scrollView, let originalOrigin else {
+            update()
+            return
+        }
+
+        localSelectionScrollLockGeneration += 1
+        let generation = localSelectionScrollLockGeneration
+        localSelectionScrollLockOrigin = originalOrigin
+        localSelectionScrollLockDeadline = Date().addingTimeInterval(0.8)
+
+        update()
+
+        restoreScrollOrigin(originalOrigin, in: scrollView)
+        for delay in [0.0, 0.016, 0.05, 0.10, 0.18, 0.30, 0.50, 0.80] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                guard generation == localSelectionScrollLockGeneration else { return }
+                restoreLocalSelectionScrollPosition()
+                if delay >= 0.80 {
+                    clearLocalSelectionScrollLock(generation: generation)
+                }
             }
         }
     }
+
+    private func restoreLocalSelectionScrollPosition() {
+        guard Date() <= localSelectionScrollLockDeadline,
+              let origin = localSelectionScrollLockOrigin,
+              let scrollView = streamScrollView else { return }
+        restoreScrollOrigin(origin, in: scrollView)
+    }
+
+    private func clearLocalSelectionScrollLock(generation: Int? = nil) {
+        if let generation, generation != localSelectionScrollLockGeneration { return }
+        localSelectionScrollLockOrigin = nil
+        localSelectionScrollLockDeadline = .distantPast
+    }
+}
+
+@MainActor
+private func restoreScrollOrigin(_ origin: CGPoint, in scrollView: NSScrollView) {
+    scrollView.contentView.scroll(to: origin)
+    scrollView.reflectScrolledClipView(scrollView.contentView)
+}
+
+private struct EnclosingScrollViewResolver: NSViewRepresentable {
+    let onResolve: (NSScrollView) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        resolve(from: view)
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        resolve(from: nsView)
+    }
+
+    private func resolve(from view: NSView) {
+        DispatchQueue.main.async {
+            if let scrollView = view.enclosingScrollView {
+                onResolve(scrollView)
+            }
+        }
     }
 }
 
@@ -516,6 +615,9 @@ private struct StableTextField: NSViewRepresentable {
 private struct StreamNoteRow: View {
     @Environment(ObservableLibraryStore.self) private var store
     let note: Note
+    let cancelPendingNavigation: () -> Void
+    let performLocalSelection: (@escaping () -> Void) -> Void
+    let preserveLocalScrollPosition: () -> Void
 
     @State private var draft: StreamNoteDraft
     @State private var initialDraft: StreamNoteDraft
@@ -527,8 +629,16 @@ private struct StreamNoteRow: View {
     @State private var initialBlockJSON: Data?
     @State private var skipNextCardTap = false
 
-    init(note: Note) {
+    init(
+        note: Note,
+        cancelPendingNavigation: @escaping () -> Void = {},
+        performLocalSelection: @escaping (@escaping () -> Void) -> Void = { update in update() },
+        preserveLocalScrollPosition: @escaping () -> Void = {}
+    ) {
         self.note = note
+        self.cancelPendingNavigation = cancelPendingNavigation
+        self.performLocalSelection = performLocalSelection
+        self.preserveLocalScrollPosition = preserveLocalScrollPosition
         let d = StreamNoteDraft(note: note)
         _draft = State(initialValue: d)
         _initialDraft = State(initialValue: d)
@@ -644,15 +754,15 @@ private struct StreamNoteRow: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
             // Subviews (bullet menu, action menu) handle their own dismiss on resign.
         }
-        .onTapGesture {
-            handleCardTap()
-        }
         .onChange(of: draft.title) { scheduleSaveDraft() }
         .onChange(of: draft.hasScheduledDate) { scheduleSaveDraft() }
         .onChange(of: draft.scheduledDate) { scheduleSaveDraft() }
         .onChange(of: draft.tagsText) { scheduleSaveDraft() }
         .onChange(of: draft.peopleText) { scheduleSaveDraft() }
         .onChange(of: draft.status) { scheduleSaveDraft() }
+        .onChange(of: editorHeight) { _, _ in
+            if isSelected { preserveLocalScrollPosition() }
+        }
         .onChange(of: store.selectedNoteID) { oldValue, newValue in
             if oldValue == note.id && newValue != note.id {
                 flushDraft()
@@ -661,12 +771,15 @@ private struct StreamNoteRow: View {
             } else if newValue == note.id {
                 resetDraft()
                 prepareEditorOverlayForSelection()
+                preserveLocalScrollPosition()
             }
         }
         .onChange(of: note.id) {
             resetDraft()
         }
-        .onDisappear { flushDraft() }
+        .onDisappear {
+            flushDraft()
+        }
     }
 
     // MARK: - Body
@@ -715,16 +828,12 @@ private struct StreamNoteRow: View {
                     },
                     onReady: {
                         editorIsVisible = true
-                        let q = store.library.searchHighlightText
-                        if !q.isEmpty {
-                            SharedBlockNoteWebView.shared.searchInEditor(query: q) { _ in
-                                if let occ = store.currentOccurrence,
-                                   occ.field == .body,
-                                   occ.noteID == note.id {
-                                    SharedBlockNoteWebView.shared.navigateToMatch(
-                                        index: occ.bodyIndexInNote
-                                    ) { _, _ in }
-                                }
+                        preserveLocalScrollPosition()
+                        SharedBlockNoteWebView.shared.focusEditor()
+                        if let pending = SharedBlockNoteWebView.shared.consumeSearchNavigation(for: note.id),
+                           !pending.query.isEmpty {
+                            SharedBlockNoteWebView.shared.searchInEditor(query: pending.query) { _ in
+                                SharedBlockNoteWebView.shared.navigateToMatch(index: pending.bodyIndex) { _, _ in }
                             }
                         }
                     }
@@ -752,6 +861,9 @@ private struct StreamNoteRow: View {
 
 
     func handleCardTap() {
+        cancelPendingNavigation()
+        SharedBlockNoteWebView.shared.clearPendingSearchNavigation()
+
         if skipNextCardTap {
             skipNextCardTap = false
             return
@@ -1397,9 +1509,23 @@ private struct StreamNoteRow: View {
     private func selectNoteAfterSavingActiveEditor() {
         guard store.selectedNoteID != note.id else { return }
 
-        let hadChanges = SharedBlockNoteWebView.shared.hasContentChanges
+        let selectionGeneration = SharedBlockNoteWebView.shared.beginSelectionRequest()
+        let commitSelection = {
+            guard SharedBlockNoteWebView.shared.isCurrentSelectionRequest(selectionGeneration) else { return }
+            cancelPendingNavigation()
+            performLocalSelection {
+                prepareEditorOverlayForSelection()
+                store.selectNote(note.id)
+            }
+        }
+
+        guard SharedBlockNoteWebView.shared.hasContentChanges else {
+            commitSelection()
+            return
+        }
+
         SharedBlockNoteWebView.shared.saveCurrentContentNow { content in
-            if hadChanges, let content, let activeNote = store.note(withID: content.noteID) {
+            if let content, let activeNote = store.note(withID: content.noteID) {
                 store.updateNote(
                     noteID: activeNote.id,
                     title: activeNote.title,
@@ -1414,10 +1540,7 @@ private struct StreamNoteRow: View {
                 )
             }
 
-            withAnimation(.easeInOut(duration: 0.12)) {
-                prepareEditorOverlayForSelection()
-                store.selectNote(note.id)
-            }
+            commitSelection()
         }
     }
 
@@ -1788,6 +1911,7 @@ private struct ReturnKeyTextField: NSViewRepresentable {
 
 private struct SearchPopoverContent: View {
     @Binding var searchText: String
+    @Binding var navigationTargetNoteID: Note.ID?
     @Environment(ObservableLibraryStore.self) private var store
 
     private var summary: SearchSummary {
@@ -1876,24 +2000,45 @@ private struct SearchPopoverContent: View {
     // MARK: - Navigation helpers
 
     private func handleNext() {
-        store.goToNextSearchOccurrence()
-        syncEditorHighlight()
+        let previousNoteID = store.selectedNoteID
+        guard let occurrence = store.goToNextSearchOccurrence() else { return }
+        if occurrence.noteID == previousNoteID {
+            syncEditorHighlight(occurrence)
+        } else {
+            prepareEditorSearchNavigation(for: occurrence)
+        }
     }
 
     private func handlePrevious() {
-        store.goToPreviousSearchOccurrence()
-        syncEditorHighlight()
+        let previousNoteID = store.selectedNoteID
+        guard let occurrence = store.goToPreviousSearchOccurrence() else { return }
+        if occurrence.noteID == previousNoteID {
+            syncEditorHighlight(occurrence)
+        } else {
+            prepareEditorSearchNavigation(for: occurrence)
+        }
     }
 
     /// 引擎跳转后，同步编辑器的橙色高亮到当前 occurrence。
     /// - 同笔记 body：直接 navigateToMatch
-    /// - 跨笔记：新编辑器的 onReady 会在 searchInEditor 完成后 navigateToMatch
+    /// - 跨笔记：handleNext/handlePrevious 会登记 pending，新编辑器的 onReady 再处理
     /// - title：编辑器里没有对应 DOM 高亮，回退到本条笔记的第一个 body 匹配
     ///   作为视觉锚点（navigateToMatch JS 会做边界检查，无 body 匹配时安全跳过）
-    private func syncEditorHighlight() {
-        guard let occ = store.currentOccurrence else { return }
+    private func syncEditorHighlight(_ occ: SearchOccurrence? = nil) {
+        guard let occ = occ ?? store.currentOccurrence else { return }
         let index: Int = occ.field == .body ? occ.bodyIndexInNote : 0
         SharedBlockNoteWebView.shared.navigateToMatch(index: index) { _, _ in }
+    }
+
+    private func prepareEditorSearchNavigation(for occ: SearchOccurrence) {
+        let query = store.library.searchHighlightText
+        guard !query.isEmpty else { return }
+        navigationTargetNoteID = occ.noteID
+        SharedBlockNoteWebView.shared.prepareSearchNavigation(
+            noteID: occ.noteID,
+            query: query,
+            bodyIndex: occ.field == .body ? occ.bodyIndexInNote : 0
+        )
     }
 }
 
@@ -1932,10 +2077,20 @@ private struct CardInteractionLayer<Content: View>: View {
             }
             .overlay(alignment: .top) {
                 if isSelected || isHovering {
-                    RoundedRectangle(cornerRadius: 1)
-                        .fill(AgendaColor.cardDragHandle)
-                        .frame(width: 24, height: 3)
-                        .padding(.top, 6)
+                    ZStack(alignment: .top) {
+                        Color.clear
+                            .frame(width: 80, height: 24)
+                        RoundedRectangle(cornerRadius: 1)
+                            .fill(AgendaColor.cardDragHandle)
+                            .frame(width: 24, height: 3)
+                            .padding(.top, 6)
+                    }
+                    .contentShape(Rectangle())
+                    .when(canDrag) { view in
+                        view.draggable(DragPayload(noteID: note.id)) {
+                            CardDragPreview(note: note)
+                        }
+                    }
                 }
             }
             .overlay(alignment: .top) {
@@ -1953,9 +2108,6 @@ private struct CardInteractionLayer<Content: View>: View {
             )
             .when(canDrag) { view in
                 view
-                    .draggable(DragPayload(noteID: note.id)) {
-                        CardDragPreview(note: note)
-                    }
                     .dropDestination(for: DragPayload.self) { items, location in
                         handleDrop(items: items, location: location)
                     } isTargeted: { targeted in
@@ -1963,7 +2115,11 @@ private struct CardInteractionLayer<Content: View>: View {
                     }
             }
             .onHover { isHovering = $0 }
-            .onTapGesture { onTap() }
+            .onTapGesture {
+                if !isSelected || store.isInBatchMode {
+                    onTap()
+                }
+            }
             .background(
                 GeometryReader { geo in
                     Color.clear.onAppear { cardHeight = geo.size.height }
