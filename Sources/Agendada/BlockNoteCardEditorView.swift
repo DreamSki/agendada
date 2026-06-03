@@ -43,6 +43,16 @@ struct BlockNoteCardEditor: NSViewRepresentable {
     }
 }
 
+private let agdEditorVerboseLoggingEnabled = false
+
+private func agdEditorLog(_ message: @autoclosure () -> String) {
+    #if DEBUG
+    if agdEditorVerboseLoggingEnabled {
+        print(message())
+    }
+    #endif
+}
+
 @MainActor
 final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
     static let shared = SharedBlockNoteWebView()
@@ -62,6 +72,11 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
     private var lastLoadedBlockJSON: Data?
     private var pendingLoad: (noteID: Note.ID, blockJSON: Data)?
     private var isReady = false
+    private var loadGeneration = 0
+    private var selectionRequestGeneration = 0
+    private weak var attachedContainer: NSView?
+    private weak var currentLoadSuperview: NSView?
+    private var pendingSearchNavigation: (noteID: Note.ID, query: String, bodyIndex: Int)?
 
     private struct PreparedEditorBundle {
         let editorURL: URL
@@ -87,7 +102,7 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
 
         let controller = config.userContentController
         controller.addUserScript(WKUserScript(source: offlineNetworkGuardScript(), injectionTime: .atDocumentStart, forMainFrameOnly: false))
-        ["cardChanged", "cardSaved", "editorFocused", "editorBlurred", "requestAssetImport", "editorHeight", "editorReady"].forEach {
+        ["cardChanged", "cardSaved", "editorFocused", "editorBlurred", "requestAssetImport", "editorHeight", "editorReady", "cardLoaded"].forEach {
             controller.add(self, name: $0)
         }
 
@@ -99,7 +114,7 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
         view.allowsBackForwardNavigationGestures = false
         view.pasteHandler = { [weak self] in self?.handleFinderPaste() ?? false }
         if let bundle = preparedEditorBundle() {
-            print("Agendada BlockNote editor loading local bundle: \(bundle.editorURL.path)")
+            agdEditorLog("Agendada BlockNote editor loading local bundle: \(bundle.editorURL.path)")
             view.loadFileURL(bundle.editorURL, allowingReadAccessTo: bundle.readAccessURL)
         } else {
             assertionFailure("Missing bundled BlockNote editor resources")
@@ -110,8 +125,13 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
 
     @discardableResult
     func attach(to container: NSView) -> Bool {
-        guard webView.superview !== container else { print("[AGD] 🔗 attach SKIP (same container)"); return false }
-        print("[AGD] 🔗 attach webView to new container, wasHidden=\(webView.isHidden)")
+        guard webView.superview !== container else {
+            agdEditorLog("[AGD] attach SKIP (same container)")
+            return false
+        }
+        loadGeneration += 1
+        attachedContainer = container
+        agdEditorLog("[AGD] attach webView to new container, wasHidden=\(webView.isHidden)")
         webView.isHidden = true
         webView.alphaValue = 0
         webView.removeFromSuperview()
@@ -151,7 +171,11 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
 
     func detach(from container: NSView) {
         if webView.superview === container {
-            print("[AGD] 🔌 detach webView, removing cover")
+            loadGeneration += 1
+            if attachedContainer === container {
+                attachedContainer = nil
+            }
+            agdEditorLog("[AGD] detach webView, removing cover")
             webView.isHidden = true
             webView.alphaValue = 0
             blockingCover?.removeFromSuperview()
@@ -161,47 +185,92 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
     }
 
     func loadCard(noteID: Note.ID, blockJSON: Data, didAttach: Bool = false) {
-        print("[AGD] 📄 loadCard note=\(noteID.uuidString.prefix(8)) didAttach=\(didAttach) isReady=\(isReady) loadedNoteID=\(loadedNoteID?.uuidString.prefix(8) ?? "nil")")
+        let expectedSuperview = webView.superview
+        agdEditorLog("[AGD] loadCard note=\(noteID.uuidString.prefix(8)) didAttach=\(didAttach) isReady=\(isReady) loadedNoteID=\(loadedNoteID?.uuidString.prefix(8) ?? "nil")")
         guard isReady else {
-            print("[AGD] 📄 NOT ready, storing pendingLoad")
+            agdEditorLog("[AGD] NOT ready, storing pendingLoad")
             pendingLoad = (noteID, blockJSON)
             return
         }
 
         guard loadedNoteID != noteID || lastLoadedBlockJSON != blockJSON else {
+            currentLoadSuperview = expectedSuperview
             if didAttach {
-                blockingCover?.removeFromSuperview()
-                blockingCover = nil
-                webView.isHidden = false
-                webView.alphaValue = 1
+                let generation = loadGeneration
                 DispatchQueue.main.async { [weak self] in
-                    self?.onReady?()
+                    self?.revealEditorIfCurrent(noteID: noteID, generation: generation, expectedSuperview: expectedSuperview)
                 }
             }
             return
         }
 
+        loadGeneration += 1
+        let generation = loadGeneration
+        currentLoadSuperview = expectedSuperview
+
         // Gate height reports for 250 ms so BlockNote's initial 122→53 px
         // jitter doesn't resize the card.
         readyForHeight = false
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
-            self?.readyForHeight = true
+            guard let self, generation == self.loadGeneration else { return }
+            self.readyForHeight = true
         }
 
         loadedNoteID = noteID
         lastLoadedBlockJSON = blockJSON
         hasContentChanges = false
         let blockJSONString = String(data: blockJSON, encoding: .utf8) ?? Note.emptyBlockJSONString
-        let script = "window.loadCard(\(jsString(noteID.uuidString)), \(jsString(blockJSONString))); setTimeout(function(){ window.focusEditor && window.focusEditor(); }, 40);"
-        webView.evaluateJavaScript(script) { [weak self] _, _ in
+        let script = "window.loadCard(\(jsString(noteID.uuidString)), \(jsString(blockJSONString)), \(generation));"
+        webView.evaluateJavaScript(script) { [weak self] _, error in
             guard let self else { return }
-            self.blockingCover?.removeFromSuperview()
-            self.blockingCover = nil
-            self.webView.isHidden = false
-            self.webView.alphaValue = 1
-            self.webView.needsDisplay = true
-            self.onReady?()
+            if error != nil {
+                self.revealEditorIfCurrent(noteID: noteID, generation: generation, expectedSuperview: expectedSuperview)
+            }
         }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+            self?.revealEditorIfCurrent(noteID: noteID, generation: generation, expectedSuperview: expectedSuperview)
+        }
+    }
+
+    private func revealEditorIfCurrent(noteID: Note.ID, generation: Int, expectedSuperview: NSView?) {
+        guard let expectedSuperview else { return }
+        guard generation == loadGeneration else { return }
+        guard loadedNoteID == noteID else { return }
+        guard webView.superview === expectedSuperview else { return }
+        guard expectedSuperview === attachedContainer else { return }
+
+        let shouldNotifyReady = blockingCover != nil || webView.isHidden || webView.alphaValue < 1
+        blockingCover?.removeFromSuperview()
+        blockingCover = nil
+        webView.isHidden = false
+        webView.alphaValue = 1
+        webView.needsDisplay = true
+        if shouldNotifyReady {
+            onReady?()
+        }
+    }
+
+    func beginSelectionRequest() -> Int {
+        selectionRequestGeneration += 1
+        return selectionRequestGeneration
+    }
+
+    func isCurrentSelectionRequest(_ generation: Int) -> Bool {
+        generation == selectionRequestGeneration
+    }
+
+    func prepareSearchNavigation(noteID: Note.ID, query: String, bodyIndex: Int) {
+        pendingSearchNavigation = (noteID, query, bodyIndex)
+    }
+
+    func clearPendingSearchNavigation() {
+        pendingSearchNavigation = nil
+    }
+
+    func consumeSearchNavigation(for noteID: Note.ID) -> (query: String, bodyIndex: Int)? {
+        guard let pending = pendingSearchNavigation, pending.noteID == noteID else { return nil }
+        pendingSearchNavigation = nil
+        return (pending.query, pending.bodyIndex)
     }
 
     func focusEditor() {
@@ -227,8 +296,9 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
         }
     }
 
-    func navigateMatch(direction: Int, completion: @escaping (_ current: Int, _ total: Int, _ atBoundary: Bool) -> Void) {
-        webView.evaluateJavaScript("window.navigateMatch && window.navigateMatch(\(direction))") { result, _ in
+    func navigateMatch(direction: Int, scroll: Bool = true, completion: @escaping (_ current: Int, _ total: Int, _ atBoundary: Bool) -> Void) {
+        let shouldScroll = scroll ? "true" : "false"
+        webView.evaluateJavaScript("window.navigateMatch && window.navigateMatch(\(direction), \(shouldScroll))") { result, _ in
             if let dict = result as? [String: Any],
                let c = dict["current"] as? Int,
                let t = dict["total"] as? Int {
@@ -240,8 +310,9 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
         }
     }
 
-    func navigateToMatch(index: Int, completion: @escaping (_ current: Int, _ total: Int) -> Void) {
-        webView.evaluateJavaScript("window.navigateToMatch && window.navigateToMatch(\(index))") { result, _ in
+    func navigateToMatch(index: Int, scroll: Bool = true, completion: @escaping (_ current: Int, _ total: Int) -> Void) {
+        let shouldScroll = scroll ? "true" : "false"
+        webView.evaluateJavaScript("window.navigateToMatch && window.navigateToMatch(\(index), \(shouldScroll))") { result, _ in
             if let dict = result as? [String: Any],
                let c = dict["current"] as? Int,
                let t = dict["total"] as? Int {
@@ -268,14 +339,14 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
     }
 
     func saveCurrentContentNow(completion: @escaping (BlockNoteEditorContent?) -> Void) {
-        print("[AGD] 💾 saveCurrentContentNow isReady=\(isReady) loadedNoteID=\(loadedNoteID?.uuidString.prefix(8) ?? "nil")")
+        agdEditorLog("[AGD] saveCurrentContentNow isReady=\(isReady) loadedNoteID=\(loadedNoteID?.uuidString.prefix(8) ?? "nil")")
         guard isReady, loadedNoteID != nil else {
-            print("[AGD] 💾 NOT ready, returning nil")
+            agdEditorLog("[AGD] NOT ready, returning nil")
             completion(nil)
             return
         }
 
-        print("[AGD] 💾 evaluating flushCurrentContent JS…")
+        agdEditorLog("[AGD] evaluating flushCurrentContent JS")
         webView.evaluateJavaScript("window.flushCurrentContent && window.flushCurrentContent();") { [weak self] result, _ in
             Task { @MainActor in
                 completion(self?.content(from: result as Any))
@@ -286,7 +357,7 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         switch message.name {
         case "editorReady":
-            print("[AGD] 🚀 editorReady isReady→true, pendingLoad=\(pendingLoad != nil ? "yes" : "no")")
+            agdEditorLog("[AGD] editorReady isReady->true, pendingLoad=\(pendingLoad != nil ? "yes" : "no")")
             isReady = true
             injectMeasurementFunction()
             if let pendingLoad {
@@ -302,6 +373,15 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
                     cb((result as? Int) ?? 0)
                 }
             }
+
+        case "cardLoaded":
+            guard let dictionary = message.body as? [String: Any],
+                  let cardIDString = dictionary["cardId"] as? String,
+                  let noteID = UUID(uuidString: cardIDString),
+                  let generation = integerValue(from: dictionary["generation"]) else {
+                return
+            }
+            revealEditorIfCurrent(noteID: noteID, generation: generation, expectedSuperview: currentLoadSuperview)
 
         case "cardChanged":
             guard let content = content(from: message.body), content.noteID == loadedNoteID else { return }
@@ -452,7 +532,7 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
             return ranges.length;
           };
 
-          window.navigateMatch = function(direction) {
+          window.navigateMatch = function(direction, shouldScroll) {
             var s = window.__agendadaSearch;
             if (!s || s.matches.length === 0) return { current: 0, total: 0 };
             var nextIdx = s.currentIdx + direction;
@@ -467,11 +547,13 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
               if (!ah) { ah = new Highlight(); CSS.highlights.set('agendada-search-active', ah); }
               ah.clear(); ah.add(range);
             } catch(e) {}
-            try { range.startContainer.parentElement.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch(e) {}
+            if (shouldScroll !== false) {
+              try { range.startContainer.parentElement.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch(e) {}
+            }
             return { current: s.currentIdx + 1, total: s.matches.length, atBoundary: false };
           };
 
-          window.navigateToMatch = function(index) {
+          window.navigateToMatch = function(index, shouldScroll) {
             var s = window.__agendadaSearch;
             if (!s || s.matches.length === 0) return { current: 0, total: 0 };
             if (index < 0) index = 0;
@@ -483,7 +565,9 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
               if (!ah) { ah = new Highlight(); CSS.highlights.set('agendada-search-active', ah); }
               ah.clear(); ah.add(range);
             } catch(e) {}
-            try { range.startContainer.parentElement.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch(e) {}
+            if (shouldScroll !== false) {
+              try { range.startContainer.parentElement.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch(e) {}
+            }
             return { current: index + 1, total: s.matches.length };
           };
 
@@ -640,6 +724,13 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
             plainTextPreview: plainTextPreview,
             previewHTML: previewHTML
         )
+    }
+
+    private func integerValue(from value: Any?) -> Int? {
+        if let value = value as? Int { return value }
+        if let value = value as? Double { return Int(value) }
+        if let value = value as? NSNumber { return value.intValue }
+        return nil
     }
 
     private func handleFinderPaste() -> Bool {
@@ -1044,13 +1135,19 @@ private func blockNoteHTML() -> String {
           });
         }
 
+        function signalCardLoaded(cardId, generation) {
+          setTimeout(function() {
+            post("cardLoaded", { cardId: cardId, generation: generation });
+          }, 0);
+        }
+
         document.addEventListener("load", function(event) {
           if (event.target && event.target.tagName === "IMG") {
             scheduleHeightChecks();
           }
         }, true);
 
-        window.loadCard = function(cardId, blockJSONText) {
+        window.loadCard = function(cardId, blockJSONText, generation) {
           clearTimeout(window.__agendada.saveTimer);
           window.clearSearch && window.clearSearch();
           window.__agendada.currentCardId = cardId;
@@ -1058,7 +1155,7 @@ private func blockNoteHTML() -> String {
           try { blocks = normalizeBlocks(JSON.parse(blockJSONText)); } catch (error) {}
 
           if (!window.__agendada.editor && !window.__agendada.fallback) {
-            window.__agendada.pendingLoad = { cardId: cardId, blockJSONText: blockJSONText };
+            window.__agendada.pendingLoad = { cardId: cardId, blockJSONText: blockJSONText, generation: generation };
             return;
           }
 
@@ -1067,6 +1164,7 @@ private func blockNoteHTML() -> String {
             const fallback = document.querySelector(".fallback-editor");
             if (fallback) { fallback.innerText = blocksToPlainText(blocks); }
             requestHeight();
+            signalCardLoaded(cardId, generation);
             return;
           }
 
@@ -1078,7 +1176,11 @@ private func blockNoteHTML() -> String {
             console.error("Agendada BlockNote loadCard failed", error);
             editor.replaceBlocks(editor.document, emptyBlocks());
           }
-          setTimeout(function() { window.__agendada.suppressChange = false; scheduleHeightChecks(); }, 0);
+          setTimeout(function() {
+            window.__agendada.suppressChange = false;
+            scheduleHeightChecks();
+            signalCardLoaded(cardId, generation);
+          }, 0);
         };
 
         window.flushCurrentContent = async function() {
@@ -1145,7 +1247,7 @@ private func blockNoteHTML() -> String {
           if (window.__agendada.pendingLoad) {
             const pending = window.__agendada.pendingLoad;
             window.__agendada.pendingLoad = null;
-            window.loadCard(pending.cardId, pending.blockJSONText);
+            window.loadCard(pending.cardId, pending.blockJSONText, pending.generation);
           }
           requestHeight();
         }
@@ -1181,7 +1283,7 @@ private func blockNoteHTML() -> String {
             if (window.__agendada.pendingLoad) {
               const pending = window.__agendada.pendingLoad;
               window.__agendada.pendingLoad = null;
-              window.loadCard(pending.cardId, pending.blockJSONText);
+              window.loadCard(pending.cardId, pending.blockJSONText, pending.generation);
             }
             const observer = new ResizeObserver(requestHeight);
             const mutationObserver = new MutationObserver(scheduleHeightChecks);
