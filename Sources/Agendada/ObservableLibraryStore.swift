@@ -135,6 +135,14 @@ final class ObservableLibraryStore {
         persistSoon()
     }
 
+    func pinBoundaryCrossing(draggedNoteID: Note.ID, targetNoteID: Note.ID) -> PinBoundaryCrossing {
+        store.pinBoundaryCrossing(draggedNoteID: draggedNoteID, targetNoteID: targetNoteID)
+    }
+
+    func wouldLeavePinnedTopBoundary(_ noteID: Note.ID, move: PositionMove) -> Bool {
+        store.wouldLeavePinnedTopBoundary(noteID, move: move)
+    }
+
     func insertNoteBefore(_ noteID: Note.ID, targetID: Note.ID) {
         store.insertNoteBefore(noteID, targetID: targetID)
         publishChange()
@@ -764,6 +772,42 @@ final class ObservableLibraryStore {
         guard persistenceEnabled else { return }
         persistTask?.cancel()
         persistTask = nil
+
+        // Flush any pending WKWebView editor content before snapshotting.
+        // WKWebView JS callbacks are delivered on the main run loop, so we
+        // spin the run loop (with a timeout) rather than blocking with
+        // DispatchGroup.wait(), which would deadlock the callback.
+        if SharedBlockNoteWebView.shared.hasContentChanges {
+            let sema = DispatchSemaphore(value: 0)
+            SharedBlockNoteWebView.shared.saveCurrentContentNow { [weak self] content in
+                guard let self, let content,
+                      let activeNote = store.note(withID: content.noteID) else {
+                    sema.signal()
+                    return
+                }
+                store.updateNote(
+                    noteID: activeNote.id,
+                    title: activeNote.title,
+                    body: content.previewHTML ?? content.plainTextPreview,
+                    blockJSON: content.blockJSON,
+                    plainTextPreview: content.plainTextPreview,
+                    previewHTML: content.previewHTML,
+                    scheduledDate: activeNote.scheduledDate,
+                    tags: activeNote.tags,
+                    people: activeNote.people,
+                    status: activeNote.status
+                )
+                sema.signal()
+            }
+            let deadline = Date().addingTimeInterval(3.0)
+            while sema.wait(timeout: .now()) == .timedOut, Date() < deadline {
+                RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.05))
+            }
+            if Date() >= deadline {
+                print("⚠️ [Agendada] flushPendingSaveSync: editor flush timed out after 3s — snapshotting without latest editor content")
+            }
+        }
+
         let snapshot = store.snapshot()
         let repo = repository
         let done = DispatchGroup()
@@ -773,7 +817,9 @@ final class ObservableLibraryStore {
             catch { assertionFailure("Failed to save Agendada library on terminate: \(error)") }
             done.leave()
         }
-        done.wait()
+        if done.wait(timeout: .now() + 5.0) == .timedOut {
+            print("⚠️ [Agendada] flushPendingSaveSync: save timed out after 5s — proceeding with termination")
+        }
     }
 
     #if DEBUG
