@@ -3,6 +3,11 @@ import SwiftUI
 
 struct SidebarView: View {
     @Environment(ObservableLibraryStore.self) private var store
+    @State private var sidebarModal: SidebarModal?
+    @State private var createProjectAfterCategoryCreation = false
+    @State private var createMenuPresenter = AgendadaFloatingMenuPresenter()
+    @State private var menuDismissedAt: Date = .distantPast
+    // 保留项目/智能概览操作
     @State private var nameSheet: NameSheet?
     @State private var deletion: DeletionTarget?
 
@@ -14,9 +19,12 @@ struct SidebarView: View {
                         .padding(.top, 2)
                         .padding(.bottom, 16)
 
-                    ForEach(store.categories) { category in
-                        categorySection(category)
+                    ForEach(store.topLevelCategories) { category in
+                        categoryRecursiveSection(category, depth: 0)
                     }
+
+                    // Uncategorized projects section
+                    uncategorizedSection
                 }
                 .padding(.top, 46)
                 .padding(.bottom, 18)
@@ -30,11 +38,67 @@ struct SidebarView: View {
                 .fill(AgendaColor.sidebarBorder)
                 .frame(width: 1)
         }
+        // ── ProjectTargetPicker sheet ──
+        .sheet(item: projectTargetPickerItem) { _ in
+            ProjectTargetPickerView(
+                store: store,
+                onSelect: { sidebarModal = .projectNaming($0) },
+                onCreateNewCategory: {
+                    createProjectAfterCategoryCreation = true
+                    sidebarModal = .categoryEditor(.create)
+                },
+                onDismiss: { sidebarModal = nil }
+            )
+        }
+        // ── CategoryEditor sheet ──
+        .sheet(item: categoryEditorItem) { modal in
+            if case let .categoryEditor(mode) = modal {
+                CategoryEditorSheet(
+                    mode: mode,
+                    onSave: { name, color in
+                        handleCategoryEditorSave(mode: mode, name: name, color: color)
+                    },
+                    onCancel: { sidebarModal = nil }
+                )
+            }
+        }
+        // ── ProjectNaming sheet ──
+        .sheet(item: projectNamingItem) { modal in
+            if case let .projectNaming(category) = modal {
+                NamePromptSheet(
+                    sheet: .newProject(category),
+                    onSave: { name, _ in
+                        store.addProject(name: name, categoryID: category?.id)
+                        sidebarModal = nil
+                    }
+                )
+            }
+        }
+        // ── Category Delete confirmation ──
+        .confirmationDialog(
+            "删除分类？",
+            isPresented: isDeleteConfirmationShown,
+            titleVisibility: .visible
+        ) {
+            Button("删除分类", role: .destructive) {
+                if case let .categoryDeleteConfirmation(category) = sidebarModal {
+                    store.deleteCategory(category.id)
+                    sidebarModal = nil
+                }
+            }
+            Button("取消", role: .cancel) { sidebarModal = nil }
+        } message: {
+            if case let .categoryDeleteConfirmation(category) = sidebarModal {
+                Text("会删除\u{201C}\(category.name)\u{201D}。其中的项目会移动到\u{201C}其他项目\u{201D}，笔记不会被删除。此操作不可撤销。")
+            }
+        }
+        // ── 保留：项目/智能概览的 sheet ──
         .sheet(item: $nameSheet) { sheet in
             NamePromptSheet(sheet: sheet) { name, query in
                 applyNameSheet(sheet, name: name, query: query)
             }
         }
+        // ── 保留：项目/智能概览的 confirmationDialog ──
         .confirmationDialog(
             deletion?.title ?? "",
             isPresented: Binding(
@@ -89,16 +153,18 @@ struct SidebarView: View {
         }
     }
 
-    // MARK: - Category Section
+    // MARK: - Category Sections
 
-    private func categorySection(_ category: ProjectCategory) -> some View {
+    private func categoryRecursiveSection(_ category: ProjectCategory, depth: Int) -> some View {
         CategorySectionView(
             category: category,
             currentSelection: currentSelection,
-            projects: store.projects(in: category.id),
+            projects: store.orderedProjects(in: category.id),
+            depth: depth,
             onSelectProject: { select(.project($0)) },
             onRenameProject: { nameSheet = .renameProject($0) },
-            onDeleteProject: { deletion = .project($0) }
+            onDeleteProject: { deletion = .project($0) },
+            onSetSidebarModal: { sidebarModal = $0 }
         )
     }
 
@@ -106,20 +172,35 @@ struct SidebarView: View {
 
     private var bottomToolbar: some View {
         HStack(spacing: 0) {
-            Menu {
-                Button("新建项目") {
-                    nameSheet = .newProject(defaultCategory)
-                }
-                Button("新建分类") {
-                    nameSheet = .newCategory
+            Button {
+                if sidebarModal == .createMenu {
+                    sidebarModal = nil
+                } else {
+                    guard Date().timeIntervalSince(menuDismissedAt) > 0.18 else { return }
+                    createMenuPresenter = AgendadaFloatingMenuPresenter()
+                    createMenuPresenter.configure(
+                        dismiss: { sidebarModal = nil },
+                        showSubmenu: { _ in }
+                    )
+                    sidebarModal = .createMenu
                 }
             } label: {
                 Image(systemName: "plus")
                     .font(.system(size: 16, weight: .heavy))
                     .frame(width: 32, height: 32)
             }
-            .menuStyle(.borderlessButton)
+            .buttonStyle(.plain)
             .help("新建项目或分类")
+            .popover(isPresented: isCreateMenuShown, attachmentAnchor: .rect(.rect(CGRect(x: 24, y: -50, width: 1, height: 1))), arrowEdge: .trailing) {
+                AgendadaFloatingMenuView(
+                    sections: createMenuSections(),
+                    presenter: createMenuPresenter,
+                    width: 220
+                )
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
+                if sidebarModal == .createMenu { sidebarModal = nil }
+            }
 
             Spacer()
 
@@ -155,6 +236,102 @@ struct SidebarView: View {
         .shadow(color: .black.opacity(0.04), radius: 2, y: 1)
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
+    }
+
+    // MARK: - Modal State
+
+    fileprivate typealias CategoryEditorMode = CategoryEditorSheet.Mode
+
+    fileprivate enum SidebarModal: Identifiable, Equatable {
+        case createMenu
+        case projectTargetPicker
+        case categoryEditor(CategoryEditorMode)
+        case projectNaming(ProjectCategory?)
+        case categoryDeleteConfirmation(ProjectCategory)
+
+        var id: String {
+            switch self {
+            case .createMenu:                        "createMenu"
+            case .projectTargetPicker:               "projectTargetPicker"
+            case .categoryEditor(.create):           "catEditor-create"
+            case .categoryEditor(.edit(let c)):      "catEditor-\(c.id.uuidString)"
+            case .categoryEditor(.createSubcategory(let c)): "catSubEditor-\(c.id.uuidString)"
+            case .projectNaming(let c?):             "projNaming-\(c.id.uuidString)"
+            case .projectNaming(nil):                "projNaming-none"
+            case .categoryDeleteConfirmation(let c): "catDelete-\(c.id.uuidString)"
+            }
+        }
+    }
+
+    // MARK: - Modal Bindings
+
+    private var isCreateMenuShown: Binding<Bool> {
+        Binding(get: { sidebarModal == .createMenu },
+                set: { if !$0, sidebarModal == .createMenu { sidebarModal = nil } })
+    }
+
+    private var projectTargetPickerItem: Binding<SidebarModal?> {
+        Binding(get: { sidebarModal == .projectTargetPicker ? sidebarModal : nil },
+                set: { if $0 == nil, sidebarModal == .projectTargetPicker { sidebarModal = nil } })
+    }
+
+    private var categoryEditorItem: Binding<SidebarModal?> {
+        Binding(get: { if case .categoryEditor = sidebarModal { return sidebarModal } else { return nil } },
+                set: { if $0 == nil, case .categoryEditor = sidebarModal { sidebarModal = nil } })
+    }
+
+    private var projectNamingItem: Binding<SidebarModal?> {
+        Binding(get: { if case .projectNaming = sidebarModal { return sidebarModal } else { return nil } },
+                set: { if $0 == nil, case .projectNaming = sidebarModal { sidebarModal = nil } })
+    }
+
+    private var isDeleteConfirmationShown: Binding<Bool> {
+        Binding(get: { if case .categoryDeleteConfirmation = sidebarModal { return true } else { return false } },
+                set: { if !$0 { sidebarModal = nil } })
+    }
+
+    // MARK: - Modal Content Helpers
+
+    private func createMenuSections() -> [AgendadaFloatingMenuSection] {
+        [
+            .init(items: [
+                AgendadaFloatingMenuItem(
+                    iconSystemName: "doc.badge.plus",
+                    title: "新建项目",
+                    subtitle: "创建一个项目来记录会议或规划日程。"
+                ) { [self = self] _ in
+                    self.sidebarModal = .projectTargetPicker
+                },
+            ]),
+            .init(items: [
+                AgendadaFloatingMenuItem(
+                    iconSystemName: "bookmark",
+                    title: "新建分类",
+                    subtitle: "为相关的项目创建分类，例如\u{201C}工作\u{201D}或\u{201C}家庭\u{201D}。"
+                ) { [self = self] _ in
+                    self.sidebarModal = .categoryEditor(.create)
+                },
+            ]),
+        ]
+    }
+
+    private func handleCategoryEditorSave(mode: CategoryEditorMode, name: String, color: CategoryColor) {
+        switch mode {
+        case .create:
+            let category = store.addCategory(name: name, color: color)
+            if createProjectAfterCategoryCreation {
+                createProjectAfterCategoryCreation = false
+                sidebarModal = .projectNaming(category)
+            } else {
+                sidebarModal = nil
+            }
+        case .edit(let category):
+            store.updateCategory(category.id, name: name, color: color)
+            sidebarModal = nil
+        case .createSubcategory(let parentCategory):
+            _ = store.addCategory(name: name, color: color, parentID: parentCategory.id)
+            sidebarModal = nil
+        }
     }
 
     // MARK: - Selection
@@ -240,6 +417,42 @@ struct SidebarView: View {
             }
         )
     }
+
+    private var uncategorizedSection: some View {
+        let uncategorized = store.uncategorizedProjects
+        guard !uncategorized.isEmpty else { return AnyView(EmptyView()) }
+        return AnyView(
+            VStack(alignment: .leading, spacing: 0) {
+                Text("其他项目")
+                    .font(AgendaFont.sidebarItem)
+                    .foregroundStyle(AgendaColor.textMuted)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 4)
+
+                ForEach(uncategorized) { project in
+                    uncategorizedRow(project)
+                }
+            }
+            .padding(.bottom, 16)
+        )
+    }
+
+    private func uncategorizedRow(_ project: Project) -> some View {
+        AgendaSidebarRow(
+            title: project.name,
+            systemImage: "agenda.note.stack",
+            isSelected: currentSelection == .project(project.id),
+            tint: project.color.sidebarTint,
+            selectedTextColor: AgendaColor.amber,
+            showsSelectionBackground: true,
+            action: { select(.project(project.id)) },
+            dropAction: nil
+        )
+        .contextMenu {
+            Button("重命名") { nameSheet = .renameProject(project) }
+            Button("删除", role: .destructive) { deletion = .project(project) }
+        }
+    }
 }
 
 // MARK: - Category Section (with hover controls)
@@ -249,41 +462,192 @@ private struct CategorySectionView: View {
     let category: ProjectCategory
     let currentSelection: SidebarSelection?
     let projects: [Project]
+    let depth: Int
     let onSelectProject: (Project.ID) -> Void
     let onRenameProject: (Project) -> Void
     let onDeleteProject: (Project) -> Void
+    /// 从父层传递的状态控制回调（分类编辑/删除等需要顶层 state machine）
+    let onSetSidebarModal: (SidebarView.SidebarModal) -> Void
+
+    @State private var isExpanded = true
+    @State private var isHovering = false
+    @State private var showCategoryAction = false
+    @State private var actionPresenter = AgendadaFloatingMenuPresenter()
+
+    private var subcategories: [ProjectCategory] {
+        store.subcategories(of: category.id)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text(category.name)
-                .font(AgendaFont.sidebarItem)
-                .foregroundStyle(AgendaColor.textMuted)
-                .padding(.horizontal, 16)
-                .padding(.bottom, 6)
-
-            ForEach(projects) { project in
-                AgendaSidebarRow(
-                    title: project.name,
-                    systemImage: "agenda.note.stack",
-                    isSelected: currentSelection == .project(project.id),
-                    tint: project.color.sidebarTint,
-                    selectedTextColor: AgendaColor.amber,
-                    showsSelectionBackground: true,
-                    action: { onSelectProject(project.id) },
-                    dropAction: { payload in
-                        guard let note = store.note(withID: payload.noteID),
-                              note.projectID != project.id else { return false }
-                        store.moveNotes([payload.noteID], toProject: project.id)
-                        return true
+            // Category header
+            HStack(spacing: 6) {
+                if !subcategories.isEmpty {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.15)) { isExpanded.toggle() }
+                    } label: {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(AgendaColor.textMuted)
+                            .rotationEffect(isExpanded ? .degrees(90) : .zero)
+                            .frame(width: 12, height: 12)
                     }
-                )
-                .contextMenu {
-                    Button("重命名") { onRenameProject(project) }
-                    Button("删除", role: .destructive) { onDeleteProject(project) }
+                    .buttonStyle(.plain)
+                }
+                CategoryBookmarkIcon(color: category.color.sidebarTint)
+                Text(category.name)
+                    .font(AgendaFont.sidebarItem)
+                    .foregroundStyle(AgendaColor.textMuted)
+                Spacer()
+                // ... 按钮：始终占位，opacity 控制显隐
+                Button {
+                    if showCategoryAction {
+                        showCategoryAction = false
+                    } else {
+                        actionPresenter.configure(
+                            dismiss: { showCategoryAction = false },
+                            showSubmenu: { _ in }
+                        )
+                        showCategoryAction = true
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(AgendaColor.textMuted)
+                        .frame(width: 20, height: 20)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .opacity(isHovering ? 1 : 0)
+                .disabled(!isHovering)
+                .popover(isPresented: $showCategoryAction, arrowEdge: .trailing) {
+                    AgendadaFloatingMenuView(
+                        sections: actionSections,
+                        presenter: actionPresenter,
+                        width: 280
+                    )
+                }
+                .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
+                    showCategoryAction = false
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 6)
+            .contentShape(Rectangle())
+            .onHover { isHovering = $0 }
+
+            if isExpanded {
+                // Projects
+                ForEach(projects) { project in
+                    AgendaSidebarRow(
+                        title: project.name,
+                        systemImage: "agenda.note.stack",
+                        isSelected: currentSelection == .project(project.id),
+                        tint: project.color.sidebarTint,
+                        selectedTextColor: AgendaColor.amber,
+                        showsSelectionBackground: true,
+                        action: { onSelectProject(project.id) },
+                        dropAction: { payload in
+                            guard let note = store.note(withID: payload.noteID),
+                                  note.projectID != project.id else { return false }
+                            store.moveNotes([payload.noteID], toProject: project.id)
+                            return true
+                        }
+                    )
+                    .contextMenu {
+                        Button("重命名") { onRenameProject(project) }
+                        Button("删除", role: .destructive) { onDeleteProject(project) }
+                    }
+                    .padding(.leading, CGFloat(depth) * 12)
+                }
+
+                // Subcategories
+                ForEach(subcategories) { sub in
+                    CategorySectionView(
+                        category: sub,
+                        currentSelection: currentSelection,
+                        projects: store.orderedProjects(in: sub.id),
+                        depth: depth + 1,
+                        onSelectProject: onSelectProject,
+                        onRenameProject: onRenameProject,
+                        onDeleteProject: onDeleteProject,
+                        onSetSidebarModal: onSetSidebarModal
+                    )
                 }
             }
         }
         .padding(.bottom, 16)
+    }
+
+    // MARK: - Category Action Menu
+
+    private var actionSections: [AgendadaFloatingMenuSection] {
+        let projectCount = store.orderedProjects(in: category.id).count
+        let subCount = store.subcategories(of: category.id).count
+        return [
+            .init(items: [
+                AgendadaFloatingMenuItem(
+                    iconSystemName: "doc.badge.plus",
+                    title: "在分类中新建项目",
+                    subtitle: "当前共 \(projectCount) 个项目"
+                ) { [self = self] _ in
+                    self.showCategoryAction = false
+                    self.onSetSidebarModal(.projectNaming(category))
+                },
+                AgendadaFloatingMenuItem(
+                    iconSystemName: "bookmark.badge.plus",
+                    title: "新建子分类\u{2026}",
+                    subtitle: subCount > 0 ? "当前共 \(subCount) 个子分类" : nil
+                ) { [self = self] _ in
+                    self.showCategoryAction = false
+                    self.onSetSidebarModal(.categoryEditor(.createSubcategory(parentCategory: category)))
+                },
+            ]),
+            .init(items: [
+                AgendadaFloatingMenuItem(
+                    iconSystemName: "pencil",
+                    title: "编辑分类\u{2026}"
+                ) { [self = self] _ in
+                    self.showCategoryAction = false
+                    self.onSetSidebarModal(.categoryEditor(.edit(category)))
+                },
+                AgendadaFloatingMenuItem(
+                    iconSystemName: "arrow.up.arrow.down",
+                    title: "按字母顺序对项目进行排序"
+                ) { [self = self] _ in
+                    self.showCategoryAction = false
+                    self.store.sortProjectsAlphabetically(in: category.id)
+                },
+            ]),
+            .init(items: [
+                AgendadaFloatingMenuItem(
+                    iconSystemName: "square.and.arrow.up",
+                    title: "分享\u{2026}"
+                ) { [self = self] _ in
+                    self.showCategoryAction = false
+                    let text = CategoryShareHelper.shareText(for: category, projects: self.store.projects)
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(text, forType: .string)
+                },
+                AgendadaFloatingMenuItem(
+                    iconSystemName: "macwindow",
+                    title: "在单独的窗口中打开"
+                ) { [self = self] _ in
+                    self.showCategoryAction = false
+                    CategoryWindowManager.shared.openWindow(for: category, store: self.store)
+                },
+            ]),
+            .init(items: [
+                AgendadaFloatingMenuItem(
+                    iconSystemName: "xmark",
+                    title: "删除分类",
+                    role: .destructive
+                ) { [self = self] _ in
+                    self.showCategoryAction = false
+                    self.onSetSidebarModal(.categoryDeleteConfirmation(category))
+                },
+            ]),
+        ]
     }
 }
 
@@ -493,12 +857,8 @@ private extension ProjectColor {
 private extension SidebarView {
     func applyNameSheet(_ sheet: NameSheet, name: String, query: String?) {
         switch sheet.mode {
-        case .newCategory:
-            store.addCategory(name: name)
         case let .newProject(category):
             store.addProject(name: name, categoryID: category?.id)
-        case let .renameCategory(category):
-            store.renameCategory(category.id, name: name)
         case let .renameProject(project):
             store.renameProject(project.id, name: name)
         case let .renameSmartOverview(smartOverview):
@@ -510,8 +870,6 @@ private extension SidebarView {
 
     func applyDeletion(_ deletion: DeletionTarget) {
         switch deletion {
-        case let .category(category):
-            store.deleteCategory(category.id)
         case let .project(project):
             store.deleteProject(project.id)
         case let .smartOverview(smartOverview):
@@ -578,16 +936,8 @@ private struct NameSheet: Identifiable {
     let initialName: String
     let initialQuery: String?
 
-    static var newCategory: NameSheet {
-        NameSheet(mode: .newCategory, title: "新建分类", placeholder: "分类名称", initialName: "", initialQuery: nil)
-    }
-
     static func newProject(_ category: ProjectCategory?) -> NameSheet {
         NameSheet(mode: .newProject(category), title: "新建项目", placeholder: "项目名称", initialName: "", initialQuery: nil)
-    }
-
-    static func renameCategory(_ category: ProjectCategory) -> NameSheet {
-        NameSheet(mode: .renameCategory(category), title: "重命名分类", placeholder: "分类名称", initialName: category.name, initialQuery: nil)
     }
 
     static func renameProject(_ project: Project) -> NameSheet {
@@ -599,9 +949,7 @@ private struct NameSheet: Identifiable {
     }
 
     enum Mode {
-        case newCategory
         case newProject(ProjectCategory?)
-        case renameCategory(ProjectCategory)
         case renameProject(Project)
         case renameSmartOverview(SmartOverview)
     }
@@ -610,13 +958,11 @@ private struct NameSheet: Identifiable {
 // MARK: - Deletion Target
 
 private enum DeletionTarget: Identifiable {
-    case category(ProjectCategory)
     case project(Project)
     case smartOverview(SmartOverview)
 
     var id: UUID {
         switch self {
-        case let .category(category): category.id
         case let .project(project): project.id
         case let .smartOverview(smartOverview): smartOverview.id
         }
@@ -624,7 +970,6 @@ private enum DeletionTarget: Identifiable {
 
     var title: String {
         switch self {
-        case .category: "删除分类？"
         case .project: "删除项目？"
         case .smartOverview: "删除智能概览？"
         }
@@ -632,7 +977,6 @@ private enum DeletionTarget: Identifiable {
 
     var message: String {
         switch self {
-        case let .category(category): "会删除\u{201C}\(category.name)\u{201D}以及其中的项目和笔记。"
         case let .project(project): "会删除\u{201C}\(project.name)\u{201D}以及其中的笔记。"
         case let .smartOverview(smartOverview): "会删除\u{201C}\(smartOverview.name)\u{201D}这个动态视图，不会删除任何笔记。"
         }
@@ -640,7 +984,6 @@ private enum DeletionTarget: Identifiable {
 
     var buttonTitle: String {
         switch self {
-        case .category: "删除分类"
         case .project: "删除项目"
         case .smartOverview: "删除智能概览"
         }
