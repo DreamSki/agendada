@@ -158,3 +158,27 @@ enum AgendaShadow {
     static let toolbarY: CGFloat = 4
     static let toolbarRadius: CGFloat = 10
 }
+
+// MARK: - Category Color → SwiftUI Color
+
+import AgendadaCore
+
+extension CategoryColor {
+    var sidebarTint: Color {
+        switch self {
+        case .orange:   Color(red: 1.0, green: 0.42, blue: 0.0)
+        case .tan:      Color(red: 0.85, green: 0.62, blue: 0.38)
+        case .purple:   Color(red: 0.65, green: 0.43, blue: 0.83)
+        case .green:    Color(red: 0.42, green: 0.80, blue: 0.44)
+        case .pink:     Color(red: 0.92, green: 0.36, blue: 0.82)
+        case .gray:     Color(red: 0.67, green: 0.71, blue: 0.75)
+        case .red:      Color(red: 1.0, green: 0.42, blue: 0.42)
+        case .blue:     Color(red: 0.49, green: 0.72, blue: 1.0)
+        case .olive:    Color(red: 0.61, green: 0.68, blue: 0.48)
+        case .gold:     Color(red: 0.76, green: 0.65, blue: 0.26)
+        case .teal:     Color(red: 0.26, green: 0.74, blue: 0.74)
+        case .indigo:   Color(red: 0.45, green: 0.47, blue: 0.60)
+        case .burgundy: Color(red: 0.54, green: 0.21, blue: 0.17)
+        }
+    }
+}

@@ -3,12 +3,51 @@ import Foundation
 public struct ProjectCategory: Identifiable, Hashable, Codable, Sendable {
     public let id: UUID
     public var name: String
+    public var color: CategoryColor
+    public var parentID: ProjectCategory.ID?
     public var projectIDs: [Project.ID]
 
-    public init(id: UUID = UUID(), name: String, projectIDs: [Project.ID] = []) {
+    public init(
+        id: UUID = UUID(),
+        name: String,
+        color: CategoryColor = .orange,
+        parentID: ProjectCategory.ID? = nil,
+        projectIDs: [Project.ID] = []
+    ) {
         self.id = id
         self.name = name
+        self.color = color
+        self.parentID = parentID
         self.projectIDs = projectIDs
+    }
+
+    // MARK: - Codable backward compatibility
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, color, parentID, projectIDs
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        color = try container.decodeIfPresent(CategoryColor.self, forKey: .color) ?? .orange
+        parentID = try container.decodeIfPresent(ProjectCategory.ID.self, forKey: .parentID)
+        projectIDs = try container.decodeIfPresent([Project.ID].self, forKey: .projectIDs) ?? []
+    }
+}
+
+public enum CategoryColor: String, CaseIterable, Codable, Hashable, Sendable {
+    case orange, tan, purple, green, pink, gray, red, blue, olive, gold, teal, indigo, burgundy
+
+    public var title: String {
+        switch self {
+        case .orange: "橙色"; case .tan: "浅棕"; case .purple: "紫色"
+        case .green: "绿色"; case .pink: "粉色"; case .gray: "灰色"
+        case .red: "红色"; case .blue: "蓝色"; case .olive: "橄榄绿"
+        case .gold: "金色"; case .teal: "青色"; case .indigo: "靛灰"
+        case .burgundy: "深红"
+        }
     }
 }
 
