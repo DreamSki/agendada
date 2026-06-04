@@ -5,7 +5,6 @@ struct SidebarView: View {
     @Environment(ObservableLibraryStore.self) private var store
     @State private var sidebarModal: SidebarModal?
     @State private var createProjectAfterCategoryCreation = false
-    @State private var createMenuPresenter = AgendadaFloatingMenuPresenter()
     @State private var menuDismissedAt: Date = .distantPast
     // 保留项目/智能概览操作
     @State private var nameSheet: NameSheet?
@@ -177,11 +176,6 @@ struct SidebarView: View {
                     sidebarModal = nil
                 } else {
                     guard Date().timeIntervalSince(menuDismissedAt) > 0.18 else { return }
-                    createMenuPresenter = AgendadaFloatingMenuPresenter()
-                    createMenuPresenter.configure(
-                        dismiss: { sidebarModal = nil },
-                        showSubmenu: { _ in }
-                    )
                     sidebarModal = .createMenu
                 }
             } label: {
@@ -191,15 +185,17 @@ struct SidebarView: View {
             }
             .buttonStyle(.plain)
             .help("新建项目或分类")
-            .popover(isPresented: isCreateMenuShown, attachmentAnchor: .rect(.rect(CGRect(x: 24, y: -50, width: 1, height: 1))), arrowEdge: .trailing) {
-                AgendadaFloatingMenuView(
-                    sections: createMenuSections(),
-                    presenter: createMenuPresenter,
-                    width: 220
-                )
-            }
-            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
-                if sidebarModal == .createMenu { sidebarModal = nil }
+            .background {
+                NSPopoverPresenter(
+                    isPresented: isCreateMenuShown,
+                    preferredEdge: .maxX,
+                    contentSize: CGSize(width: 220, height: 110)
+                ) {
+                    CreateMenuContent(
+                        onNewProject: { sidebarModal = .projectTargetPicker },
+                        onNewCategory: { sidebarModal = .categoryEditor(.create) }
+                    )
+                }
             }
 
             Spacer()
@@ -267,7 +263,14 @@ struct SidebarView: View {
 
     private var isCreateMenuShown: Binding<Bool> {
         Binding(get: { sidebarModal == .createMenu },
-                set: { if !$0, sidebarModal == .createMenu { sidebarModal = nil } })
+                set: {
+                    if $0 {
+                        sidebarModal = .createMenu
+                    } else if sidebarModal == .createMenu {
+                        menuDismissedAt = Date()
+                        sidebarModal = nil
+                    }
+                })
     }
 
     private var projectTargetPickerItem: Binding<SidebarModal?> {
@@ -290,29 +293,80 @@ struct SidebarView: View {
                 set: { if !$0 { sidebarModal = nil } })
     }
 
-    // MARK: - Modal Content Helpers
+    // MARK: - Create Menu Content (NSPopover)
 
-    private func createMenuSections() -> [AgendadaFloatingMenuSection] {
-        [
-            .init(items: [
-                AgendadaFloatingMenuItem(
-                    iconSystemName: "doc.badge.plus",
+    private struct CreateMenuContent: View {
+        let onNewProject: () -> Void
+        let onNewCategory: () -> Void
+        @State private var hoveredRow: Int?
+
+        var body: some View {
+            VStack(spacing: 0) {
+                CreateMenuRow(
+                    icon: "doc.badge.plus",
                     title: "新建项目",
-                    subtitle: "创建一个项目来记录会议或规划日程。"
-                ) { [self = self] _ in
-                    self.sidebarModal = .projectTargetPicker
-                },
-            ]),
-            .init(items: [
-                AgendadaFloatingMenuItem(
-                    iconSystemName: "bookmark",
+                    isHovered: hoveredRow == 0,
+                    action: onNewProject
+                )
+                .onHover { hoveredRow = $0 ? 0 : nil }
+
+                Divider().padding(.leading, 40)
+
+                CreateMenuRow(
+                    icon: "bookmark",
                     title: "新建分类",
-                    subtitle: "为相关的项目创建分类，例如\u{201C}工作\u{201D}或\u{201C}家庭\u{201D}。"
-                ) { [self = self] _ in
-                    self.sidebarModal = .categoryEditor(.create)
-                },
-            ]),
-        ]
+                    isHovered: hoveredRow == 1,
+                    action: onNewCategory
+                )
+                .onHover { hoveredRow = $0 ? 1 : nil }
+            }
+            .padding(.vertical, 6)
+        }
+    }
+
+    private struct CreateMenuRow: View {
+        let icon: String
+        let title: String
+        let isHovered: Bool
+        let action: () -> Void
+
+        var body: some View {
+            Button(action: action) {
+                HStack(spacing: 8) {
+                    Image(systemName: icon)
+                        .font(.system(size: 13, weight: .semibold))
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(AgendaColor.amber)
+                        .frame(width: 18, height: 18)
+
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(title)
+                            .font(.custom("Avenir Next", size: 13))
+                            .foregroundStyle(Color(nsColor: .labelColor))
+
+                        Text(subtitle)
+                            .font(.custom("Avenir Next", size: 11))
+                            .foregroundStyle(AgendaColor.textMuted)
+                            .lineLimit(1)
+                    }
+
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(isHovered ? Color.accentColor.opacity(0.08) : .clear)
+                )
+            }
+            .buttonStyle(.plain)
+        }
+
+        private var subtitle: String {
+            title == "新建项目"
+                ? "记录会议、规划日程、整理生活"
+                : "例如\u{201C}工作\u{201D}或\u{201C}家庭\u{201D}"
+        }
     }
 
     private func handleCategoryEditorSave(mode: CategoryEditorMode, name: String, color: CategoryColor) {

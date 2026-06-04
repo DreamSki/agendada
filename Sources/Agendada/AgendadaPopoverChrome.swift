@@ -109,3 +109,80 @@ private struct AgendadaPopoverWindowBackdrop: NSViewRepresentable {
         }
     }
 }
+
+// MARK: - Native NSPopover Bridge
+
+struct NSPopoverPresenter<PopoverContent: View>: NSViewRepresentable {
+    @Binding var isPresented: Bool
+    let preferredEdge: NSRectEdge
+    let contentSize: CGSize
+    let content: () -> PopoverContent
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(parent: self)
+    }
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        view.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        view.setContentHuggingPriority(.defaultLow, for: .vertical)
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        context.coordinator.parent = self
+
+        if isPresented {
+            context.coordinator.show(from: nsView)
+        } else {
+            context.coordinator.close()
+        }
+    }
+
+    @MainActor
+    final class Coordinator: NSObject, NSPopoverDelegate {
+        var parent: NSPopoverPresenter
+        var popover: NSPopover?
+
+        init(parent: NSPopoverPresenter) {
+            self.parent = parent
+        }
+
+        func show(from view: NSView) {
+            if popover?.isShown == true { return }
+
+            let p = NSPopover()
+            p.behavior = .transient
+            p.animates = true
+            p.contentSize = parent.contentSize
+            p.delegate = self
+
+            let hosting = NSHostingController(rootView: parent.content())
+            hosting.view.wantsLayer = true
+
+            p.contentViewController = hosting
+
+            let anchorRect = NSRect(
+                x: view.bounds.midX - 1,
+                y: view.bounds.midY - 1,
+                width: 2,
+                height: 2
+            )
+
+            p.show(relativeTo: anchorRect, of: view, preferredEdge: parent.preferredEdge)
+            popover = p
+        }
+
+        func close() {
+            popover?.performClose(nil)
+            popover = nil
+        }
+
+        func popoverDidClose(_ notification: Notification) {
+            popover = nil
+            if parent.isPresented {
+                parent.isPresented = false
+            }
+        }
+    }
+}
