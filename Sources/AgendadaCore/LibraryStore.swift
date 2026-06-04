@@ -66,8 +66,8 @@ public final class LibraryStore {
     }
 
     public static func sample(today: Date = Date()) -> LibraryStore {
-        let work = ProjectCategory(name: "工作")
-        let personal = ProjectCategory(name: "个人")
+        let work = ProjectCategory(name: "工作", color: .teal)
+        let personal = ProjectCategory(name: "个人", color: .orange)
         let launch = Project(name: "Agendada MVP", categoryID: work.id, color: .blue)
         let research = Project(name: "产品调研", categoryID: work.id, color: .green)
         let life = Project(name: "生活安排", categoryID: personal.id, color: .orange)
@@ -513,15 +513,33 @@ public final class LibraryStore {
     }
 
     @discardableResult
-    public func addCategory(name: String = "新分类") -> ProjectCategory {
-        let category = ProjectCategory(name: normalizedName(name, fallback: "新分类"))
+    public func addCategory(
+        name: String = "未命名分类",
+        color: CategoryColor = .orange,
+        parentID: ProjectCategory.ID? = nil
+    ) -> ProjectCategory {
+        let category = ProjectCategory(
+            name: normalizedName(name, fallback: "未命名分类"),
+            color: color,
+            parentID: parentID
+        )
         categories.append(category)
         return category
     }
 
-    public func renameCategory(_ categoryID: ProjectCategory.ID, name: String) {
+    public func updateCategory(
+        _ categoryID: ProjectCategory.ID,
+        name: String,
+        color: CategoryColor
+    ) {
         guard let index = categories.firstIndex(where: { $0.id == categoryID }) else { return }
         categories[index].name = normalizedName(name, fallback: categories[index].name)
+        categories[index].color = color
+    }
+
+    public func renameCategory(_ categoryID: ProjectCategory.ID, name: String) {
+        guard let category = category(withID: categoryID) else { return }
+        updateCategory(categoryID, name: name, color: category.color)
     }
 
     public func renameProject(_ projectID: Project.ID, name: String) {
@@ -547,13 +565,38 @@ public final class LibraryStore {
         }
     }
 
-    public func deleteCategory(_ categoryID: ProjectCategory.ID) {
-        let projectIDs = Set(projects.filter { $0.categoryID == categoryID }.map(\.id))
-        categories.removeAll { $0.id == categoryID }
-        projects.removeAll { projectIDs.contains($0.id) }
-        notes.removeAll { projectIDs.contains($0.projectID) }
+    public func deleteCategory(
+        _ categoryID: ProjectCategory.ID,
+        keepProjects: Bool = true
+    ) {
+        let affectedProjectIDs = Set(
+            projects.filter { $0.categoryID == categoryID }.map(\.id)
+        )
+        // Also collect subcategories
+        let subcategoryIDs = Set(categories.filter { $0.parentID == categoryID }.map(\.id))
 
-        if let selectedProjectID, projectIDs.contains(selectedProjectID) {
+        categories.removeAll { $0.id == categoryID }
+
+        if keepProjects {
+            // Projects become uncategorized
+            for index in projects.indices where affectedProjectIDs.contains(projects[index].id) {
+                projects[index].categoryID = nil
+            }
+            // Remove from all categories' projectIDs
+            for catIndex in categories.indices {
+                categories[catIndex].projectIDs.removeAll { affectedProjectIDs.contains($0) }
+            }
+            // Subcategories become top-level (parentID = nil)
+            for catIndex in categories.indices where subcategoryIDs.contains(categories[catIndex].id) {
+                categories[catIndex].parentID = nil
+            }
+        } else {
+            // Legacy cascade behavior
+            projects.removeAll { affectedProjectIDs.contains($0.id) }
+            notes.removeAll { affectedProjectIDs.contains($0.projectID) }
+        }
+
+        if !keepProjects, let selectedProjectID, affectedProjectIDs.contains(selectedProjectID) {
             self.selectedProjectID = nil
             selectedOverview = .all
             selectedSmartOverviewID = nil
@@ -562,6 +605,46 @@ public final class LibraryStore {
         if selectedNoteID.map({ noteID in !notes.contains { $0.id == noteID } }) == true {
             selectedNoteID = nil
         }
+    }
+
+    // MARK: - Category Queries
+
+    public var uncategorizedProjects: [Project] {
+        projects.filter { $0.categoryID == nil && !$0.isArchived }
+    }
+
+    public func subcategories(of categoryID: ProjectCategory.ID) -> [ProjectCategory] {
+        categories.filter { $0.parentID == categoryID }
+    }
+
+    public var topLevelCategories: [ProjectCategory] {
+        categories.filter { $0.parentID == nil }
+    }
+
+    /// Projects ordered by category.projectIDs (for sidebar display).
+    /// Falls back to simple filter if no ordering info.
+    public func orderedProjects(in categoryID: ProjectCategory.ID) -> [Project] {
+        let activeProjects = projects.filter { $0.categoryID == categoryID && !$0.isArchived }
+        guard let category = category(withID: categoryID) else { return activeProjects }
+
+        let byID = Dictionary(uniqueKeysWithValues: activeProjects.map { ($0.id, $0) })
+        var ordered = category.projectIDs.compactMap { byID[$0] }
+
+        let accountedFor = Set(ordered.map(\.id))
+        let missing = activeProjects.filter { !accountedFor.contains($0.id) }
+        ordered.append(contentsOf: missing)
+
+        return ordered
+    }
+
+    public func sortProjectsAlphabetically(in categoryID: ProjectCategory.ID) {
+        guard let categoryIndex = categories.firstIndex(where: { $0.id == categoryID }) else { return }
+
+        let sortedIDs = orderedProjects(in: categoryID)
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            .map(\.id)
+
+        categories[categoryIndex].projectIDs = sortedIDs
     }
 
     @discardableResult

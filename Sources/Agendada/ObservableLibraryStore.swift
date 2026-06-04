@@ -439,6 +439,20 @@ final class ObservableLibraryStore {
         persistNow()
     }
 
+    @discardableResult
+    func addCategory(name: String, color: CategoryColor, parentID: ProjectCategory.ID? = nil) -> ProjectCategory {
+        let category = store.addCategory(name: name, color: color, parentID: parentID)
+        publishChange()
+        persistNow()
+        return category
+    }
+
+    func updateCategory(_ categoryID: ProjectCategory.ID, name: String, color: CategoryColor) {
+        store.updateCategory(categoryID, name: name, color: color)
+        publishChange()
+        persistNow()
+    }
+
     func addProject(name: String, categoryID: ProjectCategory.ID?) {
         _ = store.addProject(name: name, categoryID: categoryID)
         publishChange()
@@ -459,6 +473,34 @@ final class ObservableLibraryStore {
 
     func deleteCategory(_ categoryID: ProjectCategory.ID) {
         store.deleteCategory(categoryID)
+        publishChange()
+        persistNow()
+    }
+
+    // MARK: - Category Queries
+
+    var uncategorizedProjects: [Project] {
+        observeRevision()
+        return store.uncategorizedProjects
+    }
+
+    var topLevelCategories: [ProjectCategory] {
+        observeRevision()
+        return store.topLevelCategories
+    }
+
+    func subcategories(of categoryID: ProjectCategory.ID) -> [ProjectCategory] {
+        observeRevision()
+        return store.subcategories(of: categoryID)
+    }
+
+    func orderedProjects(in categoryID: ProjectCategory.ID) -> [Project] {
+        observeRevision()
+        return store.orderedProjects(in: categoryID)
+    }
+
+    func sortProjectsAlphabetically(in categoryID: ProjectCategory.ID) {
+        store.sortProjectsAlphabetically(in: categoryID)
         publishChange()
         persistNow()
     }
