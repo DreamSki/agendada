@@ -338,17 +338,77 @@ import Testing
     #expect(store.filteredNotes().contains { $0.id == copy.id } == false)
 }
 
-@Test func deletingCategoryAlsoDeletesContainedProjectsAndNotes() async throws {
+@Test func deletingCategoryKeepsProjectsAndNotes() async throws {
     let store = LibraryStore()
     let category = store.addCategory(name: "工作")
     let project = store.addProject(name: "项目", categoryID: category.id)
-    let note = store.addNote(title: "要被删除")
+    let note = store.addNote(title: "笔记")
+
+    #expect(note.projectID == project.id)
+    #expect(project.categoryID == category.id)
 
     store.deleteCategory(category.id)
 
+    // Category is removed
     #expect(store.category(withID: category.id) == nil)
-    #expect(store.project(withID: project.id) == nil)
-    #expect(store.filteredNotes().contains { $0.id == note.id } == false)
+    // Project still exists, now uncategorized
+    #expect(store.project(withID: project.id) != nil)
+    #expect(store.project(withID: project.id)?.categoryID == nil)
+    // Note still exists
+    #expect(store.note(withID: note.id) != nil)
+}
+
+// MARK: - Category Model Tests
+
+@Test func legacyCategoryWithoutColorDecodes() async throws {
+    let json = """
+    {"id":"12345678-1234-1234-1234-123456789012","name":"旧分类","projectIDs":[]}
+    """
+    let category = try JSONDecoder().decode(ProjectCategory.self, from: Data(json.utf8))
+    #expect(category.name == "旧分类")
+    #expect(category.color == .orange)
+    #expect(category.parentID == nil)
+    #expect(category.projectIDs.isEmpty)
+}
+
+@Test func updateCategoryChangesNameAndColor() async throws {
+    let store = LibraryStore()
+    let category = store.addCategory(name: "旧名称", color: .orange)
+
+    store.updateCategory(category.id, name: "新名称", color: .teal)
+
+    let updated = try #require(store.category(withID: category.id))
+    #expect(updated.name == "新名称")
+    #expect(updated.color == .teal)
+}
+
+@Test func categoryProjectsSortAlphabetically() async throws {
+    let store = LibraryStore()
+    let category = store.addCategory(name: "测试")
+    _ = store.addProject(name: "B项目", categoryID: category.id)
+    _ = store.addProject(name: "A项目", categoryID: category.id)
+    _ = store.addProject(name: "项目10", categoryID: category.id)
+    _ = store.addProject(name: "项目2", categoryID: category.id)
+
+    store.sortProjectsAlphabetically(in: category.id)
+
+    let names = store.orderedProjects(in: category.id).map(\.name)
+    // localizedStandardCompare: numbers < letters
+    #expect(names.firstIndex(of: "项目2")! < names.firstIndex(of: "项目10")!)
+    #expect(names.firstIndex(of: "项目10")! < names.firstIndex(of: "A项目")!)
+    #expect(names.firstIndex(of: "A项目")! < names.firstIndex(of: "B项目")!)
+}
+
+@Test func subcategoryBelongsToParent() async throws {
+    let store = LibraryStore()
+    let parent = store.addCategory(name: "工作", color: .teal)
+    let child = store.addCategory(name: "设计组", color: .purple, parentID: parent.id)
+
+    #expect(child.parentID == parent.id)
+
+    let children = store.subcategories(of: parent.id)
+    #expect(children.count == 1)
+    #expect(children.first?.name == "设计组")
 }
 
 // MARK: - Batch Selection Tests
