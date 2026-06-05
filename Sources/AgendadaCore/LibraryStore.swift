@@ -242,7 +242,16 @@ public final class LibraryStore {
     }
 
     public func selectNote(_ noteID: Note.ID) {
+        guard let note = notes.first(where: { $0.id == noteID && $0.status != .trashed }) else { return }
         selectedNoteID = noteID
+
+        // If the note is not visible in the current view, switch to its project
+        if !filteredNotes().contains(where: { $0.id == noteID }) {
+            selectedProjectID = note.projectID
+            selectedOverview = nil
+            selectedSmartOverviewID = nil
+            searchText = ""
+        }
     }
 
     // MARK: - Batch Selection
@@ -279,10 +288,14 @@ public final class LibraryStore {
     public func relatedNotes(for noteID: Note.ID, limit: Int = 6) -> [RelatedNote] {
         guard let note = notes.first(where: { $0.id == noteID }) else { return [] }
 
+        // Pre-build lookup map to avoid O(n) searches during sort
+        let notesByID = Dictionary(uniqueKeysWithValues: notes.map { ($0.id, $0) })
+
         return notes
-            .filter { $0.id != noteID }
+            .lazy
+            .filter { $0.id != noteID && $0.status != .trashed }
             .compactMap { candidate -> (RelatedNote, Int)? in
-                let reasons = relatedReasons(between: note, and: candidate)
+                let reasons = self.relatedReasons(between: note, and: candidate)
                 guard !reasons.isEmpty else { return nil }
                 return (
                     RelatedNote(noteID: candidate.id, title: candidate.title, reasons: reasons),
@@ -293,9 +306,8 @@ public final class LibraryStore {
                 if lhs.1 != rhs.1 {
                     return lhs.1 > rhs.1
                 }
-
-                let lhsEditedAt = notes.first { $0.id == lhs.0.noteID }?.editedAt ?? .distantPast
-                let rhsEditedAt = notes.first { $0.id == rhs.0.noteID }?.editedAt ?? .distantPast
+                let lhsEditedAt = notesByID[lhs.0.noteID]?.editedAt ?? .distantPast
+                let rhsEditedAt = notesByID[rhs.0.noteID]?.editedAt ?? .distantPast
                 return lhsEditedAt > rhsEditedAt
             }
             .prefix(limit)
@@ -341,15 +353,92 @@ public final class LibraryStore {
         return note
     }
 
+    @discardableResult
+    public func addNote(customTemplate templateID: CustomNoteTemplate.ID, date: Date? = Date()) -> Note? {
+        guard let template = customNoteTemplate(withID: templateID) else { return nil }
+        let targetProjectID = selectedProjectID ?? projects.first?.id ?? addProject(name: "默认项目").id
+        let note = Note(
+            projectID: targetProjectID,
+            title: normalizedName(template.title, fallback: template.name),
+            body: template.body,
+            scheduledDate: date,
+            tags: template.tags,
+            isBrief: true
+        )
+        notes.insert(note, at: 0)
+
+        if sortMode == .manual, let idx = notes.firstIndex(where: { $0.id == note.id }) {
+            let minPos = notes
+                .filter { $0.projectID == note.projectID }
+                .compactMap(\.position).min() ?? Self.positionGap
+            notes[idx].position = minPos - Self.positionGap
+        }
+
+        selectedProjectID = targetProjectID
+        selectedOverview = nil
+        selectedSmartOverviewID = nil
+        selectedNoteID = note.id
+        return note
+    }
+
+    @discardableResult
+    public func addNoteForCalendarEvent(id eventID: String, title: String, startDate: Date) -> Note {
+        let note = addNote(title: title, date: startDate)
+        _ = associateCalendarEvent(id: eventID, title: title, startDate: startDate, to: note.id)
+        return self.note(withID: note.id) ?? note
+    }
+
+    @discardableResult
+    public func addNoteForReminder(id reminderID: String, title: String, dueDate: Date?) -> Note {
+        let note = addNote(title: title, date: dueDate)
+        _ = associateReminder(id: reminderID, title: title, dueDate: dueDate, to: note.id)
+        return self.note(withID: note.id) ?? note
+    }
+
+    @discardableResult
+    public func associateCalendarEvent(id eventID: String, title: String, startDate: Date, to noteID: Note.ID) -> Bool {
+        associateExternalObject(
+            kind: Self.calendarEventLinkKind,
+            id: eventID,
+            title: title,
+            labelPrefix: "日程",
+            date: startDate,
+            to: noteID
+        )
+    }
+
+    @discardableResult
+    public func unassociateCalendarEvent(id eventID: String, from noteID: Note.ID) -> Bool {
+        unassociateExternalObject(kind: Self.calendarEventLinkKind, id: eventID, from: noteID)
+    }
+
+    @discardableResult
+    public func associateReminder(id reminderID: String, title: String, dueDate: Date?, to noteID: Note.ID) -> Bool {
+        associateExternalObject(
+            kind: Self.reminderLinkKind,
+            id: reminderID,
+            title: title,
+            labelPrefix: "提醒",
+            date: dueDate,
+            to: noteID
+        )
+    }
+
+    @discardableResult
+    public func unassociateReminder(id reminderID: String, from noteID: Note.ID) -> Bool {
+        unassociateExternalObject(kind: Self.reminderLinkKind, id: reminderID, from: noteID)
+    }
+
     // MARK: - Custom Note Templates
 
     @discardableResult
     public func addCustomNoteTemplate(name: String, from note: Note) -> CustomNoteTemplate {
+        let source = self.note(withID: note.id) ?? note
         let template = CustomNoteTemplate(
             name: name,
-            title: note.title,
-            body: note.body,
-            tags: note.tags
+            title: source.title,
+            body: source.body,
+            tags: source.tags
         )
         customNoteTemplates.append(template)
         return template
@@ -357,6 +446,11 @@ public final class LibraryStore {
 
     public func deleteCustomNoteTemplate(_ templateID: CustomNoteTemplate.ID) {
         customNoteTemplates.removeAll { $0.id == templateID }
+    }
+
+    public func renameCustomNoteTemplate(_ templateID: CustomNoteTemplate.ID, name: String) {
+        guard let idx = customNoteTemplates.firstIndex(where: { $0.id == templateID }) else { return }
+        customNoteTemplates[idx].name = name
     }
 
     public func customNoteTemplate(withID templateID: CustomNoteTemplate.ID) -> CustomNoteTemplate? {
@@ -843,11 +937,19 @@ public final class LibraryStore {
     public func filteredNotes(now: Date = Date()) -> [Note] {
         var baseNotes: [Note]
         let savedSearchText: String
+        let trimmedCurrentSearch = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
 
         if let selectedSmartOverviewID,
            let smartOverview = smartOverview(withID: selectedSmartOverviewID) {
             baseNotes = notes
             savedSearchText = smartOverview.query
+        } else if !trimmedCurrentSearch.isEmpty {
+            if selectedOverview == .trash {
+                baseNotes = notes.filter { $0.status == .trashed }
+            } else {
+                baseNotes = notes.filter { $0.status != .trashed }
+            }
+            savedSearchText = ""
         } else if let selectedProjectID {
             baseNotes = notes.filter { $0.projectID == selectedProjectID }
             savedSearchText = ""
@@ -891,8 +993,7 @@ public final class LibraryStore {
         }
 
         let trimmedSavedSearch = savedSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedSearchText = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let queryParts = [trimmedSavedSearch, trimmedSearchText].filter { !$0.isEmpty }
+        let queryParts = [trimmedSavedSearch, trimmedCurrentSearch].filter { !$0.isEmpty }
         let trimmedSearch = queryParts.joined(separator: " ").lowercased()
         let matchingNotes = trimmedSearch.isEmpty
             ? baseNotes
@@ -900,6 +1001,52 @@ public final class LibraryStore {
                 matchesSearch(trimmedSearch, note: note, now: now)
             }
 
+        return sortedNotesForCurrentMode(matchingNotes)
+    }
+
+    public func globalSearchNotes(for query: String, includeTrash: Bool = false, now: Date = Date()) -> [Note] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !trimmed.isEmpty else { return [] }
+
+        let baseNotes = notes.filter { note in
+            includeTrash ? note.status == .trashed : note.status != .trashed
+        }
+        let matchingNotes = baseNotes.filter { note in
+            matchesSearch(trimmed, note: note, now: now)
+        }
+        return sortedNotesForCurrentMode(matchingNotes)
+    }
+
+    public func globalSearchOccurrences(for query: String, includeTrash: Bool = false, now: Date = Date()) -> [SearchOccurrence] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !trimmed.isEmpty else { return [] }
+
+        let keywords = plainKeywords(from: trimmed)
+        guard !keywords.isEmpty else { return [] }
+
+        let notes = globalSearchNotes(for: query, includeTrash: includeTrash, now: now)
+        return occurrences(in: notes, keywords: keywords)
+    }
+
+    public func commitGlobalSearchText(_ newText: String) {
+        searchText = newText
+        currentOccurrenceIndex = nil
+
+        let trimmed = newText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            clearSearchOccurrences()
+            return
+        }
+
+        if selectedOverview != .trash {
+            selectedOverview = .all
+        }
+        selectedProjectID = nil
+        selectedSmartOverviewID = nil
+        calculateSearchOccurrences()
+    }
+
+    private func sortedNotesForCurrentMode(_ matchingNotes: [Note]) -> [Note] {
         // Manual sorting mode
         if sortMode == .manual {
             return matchingNotes.sorted(by: Self.projectSortComparator)
@@ -938,14 +1085,16 @@ public final class LibraryStore {
     }
 
     private func normalizedList(_ values: [String]) -> [String] {
-        values
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-            .reduce(into: []) { result, value in
-                if !result.contains(value) {
-                    result.append(value)
-                }
+        var seen = Set<String>()
+        var result: [String] = []
+        result.reserveCapacity(values.count)
+        for value in values {
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty && seen.insert(trimmed).inserted {
+                result.append(trimmed)
             }
+        }
+        return result
     }
 
     private func matchesSearch(_ searchText: String, note: Note, now: Date) -> Bool {
@@ -979,6 +1128,10 @@ public final class LibraryStore {
 
             if term == "is:starred" {
                 return note.isStarred
+            }
+
+            if term == "is:brief" {
+                return note.isBrief
             }
 
             if term == "date:today" {
@@ -1154,7 +1307,213 @@ public final class LibraryStore {
             reasons.append("都有未完成待办")
         }
 
+        // Note links: note links to candidate, or candidate links to note
+        if noteLinksTo(noteID: note.id, targetID: candidate.id)
+            || noteLinksTo(noteID: candidate.id, targetID: note.id) {
+            reasons.append("链接")
+        }
+
         return reasons
+    }
+
+    /// Check if a note's content contains a link to the target note.
+    private func noteLinksTo(noteID: Note.ID, targetID: Note.ID) -> Bool {
+        guard let note = notes.first(where: { $0.id == noteID }) else { return false }
+        return linkedNoteIDs(from: note).contains(targetID)
+    }
+
+    /// Extract all note IDs linked from a note's content.
+    public func linkedNoteIDs(from noteID: Note.ID) -> [Note.ID] {
+        guard let note = notes.first(where: { $0.id == noteID }) else { return [] }
+        return linkedNoteIDs(from: note)
+    }
+
+    /// Extract all note IDs linked from a note's content.
+    public func linkedNoteIDs(from note: Note) -> [Note.ID] {
+        let content = note.body + note.blockJSONString
+        var ids: [Note.ID] = []
+        var seen = Set<Note.ID>()
+        let pattern = "agendada://note/"
+        var searchStart = content.startIndex
+        while let range = content.range(of: pattern, range: searchStart..<content.endIndex) {
+            let afterPrefix = content[range.upperBound...]
+            let uuidStr = String(afterPrefix.prefix(36))
+            if let uuid = UUID(uuidString: uuidStr), seen.insert(uuid).inserted {
+                ids.append(uuid)
+            }
+            searchStart = range.upperBound
+        }
+        return ids
+    }
+
+    public func backlinkedNotes(to noteID: Note.ID) -> [Note] {
+        notes
+            .lazy
+            .filter { $0.id != noteID && $0.status != .trashed }
+            .filter { self.linkedNoteIDs(from: $0).contains(noteID) }
+            .sorted { $0.editedAt > $1.editedAt }
+    }
+
+    public func linkedCalendarEventIDs(from noteID: Note.ID) -> [String] {
+        guard let note = notes.first(where: { $0.id == noteID }) else { return [] }
+        return linkedCalendarEventIDs(from: note)
+    }
+
+    public func linkedCalendarEventIDs(from note: Note) -> [String] {
+        linkedExternalIDs(kind: Self.calendarEventLinkKind, from: note)
+    }
+
+    public func linkedReminderIDs(from noteID: Note.ID) -> [String] {
+        guard let note = notes.first(where: { $0.id == noteID }) else { return [] }
+        return linkedReminderIDs(from: note)
+    }
+
+    public func linkedReminderIDs(from note: Note) -> [String] {
+        linkedExternalIDs(kind: Self.reminderLinkKind, from: note)
+    }
+
+    public func notesLinked(toCalendarEventID eventID: String) -> [Note] {
+        notesLinked(toExternalID: eventID, kind: Self.calendarEventLinkKind)
+    }
+
+    public func noteLinked(toCalendarEventID eventID: String) -> Note? {
+        notesLinked(toCalendarEventID: eventID).first
+    }
+
+    public func notesLinked(toReminderID reminderID: String) -> [Note] {
+        notesLinked(toExternalID: reminderID, kind: Self.reminderLinkKind)
+    }
+
+    public func noteLinked(toReminderID reminderID: String) -> Note? {
+        notesLinked(toReminderID: reminderID).first
+    }
+
+    private func linkedExternalIDs(kind: String, from note: Note) -> [String] {
+        let content = note.body + note.blockJSONString
+        let pattern = "agendada://\(kind)/"
+        var ids: [String] = []
+        var seen = Set<String>()
+        var searchStart = content.startIndex
+
+        while let range = content.range(of: pattern, range: searchStart..<content.endIndex) {
+            let afterPrefix = content[range.upperBound...]
+            let encoded = String(afterPrefix.prefix { !Self.externalLinkTerminators.contains($0) })
+            let decoded = encoded.removingPercentEncoding ?? encoded
+            if !decoded.isEmpty, seen.insert(decoded).inserted {
+                ids.append(decoded)
+            }
+            searchStart = range.upperBound
+        }
+
+        return ids
+    }
+
+    private func notesLinked(toExternalID externalID: String, kind: String) -> [Note] {
+        notes
+            .filter { $0.status != .trashed }
+            .filter { linkedExternalIDs(kind: kind, from: $0).contains(externalID) }
+            .sorted { lhs, rhs in lhs.editedAt > rhs.editedAt }
+    }
+
+    private func associateExternalObject(
+        kind: String,
+        id externalID: String,
+        title: String,
+        labelPrefix: String,
+        date: Date?,
+        to noteID: Note.ID
+    ) -> Bool {
+        let normalizedID = externalID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedID.isEmpty,
+              let index = notes.firstIndex(where: { $0.id == noteID && $0.status != .trashed }) else {
+            return false
+        }
+
+        guard !linkedExternalIDs(kind: kind, from: notes[index]).contains(normalizedID) else {
+            return false
+        }
+
+        let anchor = externalAssociationAnchor(
+            kind: kind,
+            id: normalizedID,
+            label: "\(labelPrefix)：\(normalizedName(title, fallback: labelPrefix))"
+        )
+        let body = notes[index].body.trimmingCharacters(in: .whitespacesAndNewlines)
+        let nextBody = body.isEmpty ? anchor : "\(body)\n\(anchor)"
+        updateBodyOnly(nextBody, noteIndex: index)
+
+        if notes[index].scheduledDate == nil, let date {
+            notes[index].scheduledDate = date
+        }
+        notes[index].editedAt = Date()
+        return true
+    }
+
+    private func unassociateExternalObject(kind: String, id externalID: String, from noteID: Note.ID) -> Bool {
+        guard let index = notes.firstIndex(where: { $0.id == noteID }) else { return false }
+        let nextBody = removingExternalAssociation(kind: kind, id: externalID, from: notes[index].body)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard nextBody != notes[index].body.trimmingCharacters(in: .whitespacesAndNewlines) else {
+            return false
+        }
+
+        updateBodyOnly(nextBody, noteIndex: index)
+        notes[index].editedAt = Date()
+        return true
+    }
+
+    private func updateBodyOnly(_ body: String, noteIndex index: Int) {
+        notes[index].body = body
+        let previewNote = Note(projectID: notes[index].projectID, title: notes[index].title, body: body)
+        notes[index].plainTextPreview = previewNote.plainTextPreview
+        notes[index].previewHTML = nil
+    }
+
+    private func externalAssociationAnchor(kind: String, id: String, label: String) -> String {
+        let encodedID = Self.encodeExternalID(id)
+        return "<p><a href=\"agendada://\(kind)/\(encodedID)\">\(Self.escapeHTML(label))</a></p>"
+    }
+
+    private func removingExternalAssociation(kind: String, id externalID: String, from body: String) -> String {
+        let pattern = #"<p><a href="agendada://\#(kind)/([^"]+)">[^<]*</a></p>"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return body }
+
+        var result = body
+        let matches = regex.matches(in: body, range: NSRange(body.startIndex..<body.endIndex, in: body))
+        for match in matches.reversed() {
+            guard match.numberOfRanges >= 2,
+                  let idRange = Range(match.range(at: 1), in: body),
+                  let fullRange = Range(match.range(at: 0), in: result) else {
+                continue
+            }
+            let encodedID = String(body[idRange])
+            let decodedID = encodedID.removingPercentEncoding ?? encodedID
+            if decodedID == externalID {
+                result.removeSubrange(fullRange)
+            }
+        }
+        return result
+    }
+
+    private static let calendarEventLinkKind = "calendar-event"
+    private static let reminderLinkKind = "reminder"
+    private static let externalLinkTerminators = Set<Character>(["\"", "'", "<", ">", " ", "\n", "\r", "\t", ")", "]", "}"])
+    private static let externalIDAllowedCharacters: CharacterSet = {
+        var allowed = CharacterSet.urlPathAllowed
+        allowed.remove(charactersIn: "/?#[]@!$&'()*+,;=\"<>%")
+        return allowed
+    }()
+
+    private static func encodeExternalID(_ id: String) -> String {
+        id.addingPercentEncoding(withAllowedCharacters: externalIDAllowedCharacters) ?? id
+    }
+
+    private static func escapeHTML(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
     }
 
     private func prefixedValue(_ prefix: String, in term: String) -> String? {
@@ -1546,7 +1905,15 @@ public final class LibraryStore {
         // 获取过滤后的笔记列表（应用全部搜索语法）
         let notes = filteredNotes()
 
-        // 收集所有出现位置
+        searchOccurrences = occurrences(in: notes, keywords: keywords)
+        currentOccurrenceIndex = nil
+        // Leave currentOccurrenceIndex as nil so the first Enter/next press
+        // lands on the first match (goToNextSearchOccurrence resolves
+        // (nil ?? -1) + 1 = 0 → index 0). Do NOT auto-select the first note
+        // here — that would trigger an onChange storm across all StreamNoteRow views.
+    }
+
+    private func occurrences(in notes: [Note], keywords: [String]) -> [SearchOccurrence] {
         var occurrences: [SearchOccurrence] = []
         var globalIdx = 0
 
@@ -1577,12 +1944,7 @@ public final class LibraryStore {
             }
         }
 
-        searchOccurrences = occurrences
-        currentOccurrenceIndex = nil
-        // Leave currentOccurrenceIndex as nil so the first Enter/next press
-        // lands on the first match (goToNextSearchOccurrence resolves
-        // (nil ?? -1) + 1 = 0 → index 0). Do NOT auto-select the first note
-        // here — that would trigger an onChange storm across all StreamNoteRow views.
+        return occurrences
     }
 
     /// 在给定文本中查找关键词的所有出现位置。
