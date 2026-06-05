@@ -10,6 +10,12 @@ struct BlockNoteEditorContent: Equatable {
     var previewHTML: String?
 }
 
+struct NoteLinkSearchResult {
+    let id: Note.ID
+    let title: String
+    let project: String
+}
+
 @MainActor
 struct BlockNoteCardEditor: NSViewRepresentable {
     let noteID: Note.ID
@@ -18,6 +24,8 @@ struct BlockNoteCardEditor: NSViewRepresentable {
     var onChange: (BlockNoteEditorContent) -> Void
     var onDebouncedSave: (BlockNoteEditorContent) -> Void
     var onReady: (() -> Void)?
+    var onNoteLinkSearch: ((String, Note.ID?) -> [NoteLinkSearchResult])?
+    var onNoteLinkNavigate: ((Note.ID) -> Void)?
 
     func makeNSView(context: Context) -> NSView {
         return NSView()
@@ -29,6 +37,8 @@ struct BlockNoteCardEditor: NSViewRepresentable {
         bridge.onChange = onChange
         bridge.onDebouncedSave = onDebouncedSave
         bridge.onReady = onReady
+        bridge.onNoteLinkSearch = onNoteLinkSearch
+        bridge.onNoteLinkNavigate = onNoteLinkNavigate
         bridge.onHeightChange = { height in
             guard bridge.readyForHeight else { return }
             let h = max(1, height)
@@ -61,6 +71,8 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
     var onDebouncedSave: ((BlockNoteEditorContent) -> Void)?
     var onHeightChange: ((CGFloat) -> Void)?
     var onReady: (() -> Void)?
+    var onNoteLinkSearch: ((String, Note.ID?) -> [NoteLinkSearchResult])?
+    var onNoteLinkNavigate: ((Note.ID) -> Void)?
     var hasContentChanges = false
     var readyForHeight = false
 
@@ -83,6 +95,9 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
         let readAccessURL: URL
     }
 
+    /// Cached prepared bundle to avoid redundant file copies on every launch
+    private var cachedPreparedBundle: PreparedEditorBundle?
+
     private struct AssetImportResponse: Encodable {
         var ok: Bool
         var assetId: String?
@@ -102,7 +117,7 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
 
         let controller = config.userContentController
         controller.addUserScript(WKUserScript(source: offlineNetworkGuardScript(), injectionTime: .atDocumentStart, forMainFrameOnly: false))
-        ["cardChanged", "cardSaved", "editorFocused", "editorBlurred", "requestAssetImport", "editorHeight", "editorReady", "cardLoaded"].forEach {
+        ["cardChanged", "cardSaved", "editorFocused", "editorBlurred", "requestAssetImport", "editorHeight", "editorReady", "cardLoaded", "noteLinkSearch", "noteLinkNavigate"].forEach {
             controller.add(self, name: $0)
         }
 
@@ -335,10 +350,23 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
-        if let scheme = navigationAction.request.url?.scheme?.lowercased(),
-           scheme == "http" || scheme == "https" {
-            decisionHandler(.cancel)
-            return
+        if let url = navigationAction.request.url {
+            let scheme = url.scheme?.lowercased() ?? ""
+
+            // Handle agendada://note/ links for note navigation
+            if scheme == "agendada", url.host == "note" {
+                let path = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+                if let noteID = UUID(uuidString: path) {
+                    onNoteLinkNavigate?(noteID)
+                }
+                decisionHandler(.cancel)
+                return
+            }
+
+            if scheme == "http" || scheme == "https" {
+                decisionHandler(.cancel)
+                return
+            }
         }
         decisionHandler(.allow)
     }
@@ -410,12 +438,26 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
         case "requestAssetImport":
             handleAssetImport(message.body)
 
+        case "noteLinkSearch":
+            handleNoteLinkSearch(message.body)
+
+        case "noteLinkNavigate":
+            if let noteIDString = message.body as? String,
+               let noteID = UUID(uuidString: noteIDString) {
+                onNoteLinkNavigate?(noteID)
+            }
+
         default:
             break
         }
     }
 
     private func preparedEditorBundle() -> PreparedEditorBundle? {
+        // Return cached bundle if available
+        if let cached = cachedPreparedBundle {
+            return cached
+        }
+
         guard let resourceURL = blockNoteResourceBundleURL() else {
             return nil
         }
@@ -429,18 +471,35 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
         let appSupportURL = appSupportDirectory()
         let localEditorURL = appSupportURL.appending(path: "BlockNoteEditor", directoryHint: .isDirectory)
         let localIndexURL = localEditorURL.appending(path: "index.html")
+        let versionFile = localEditorURL.appending(path: ".bundle-version")
 
-        do {
-            try FileManager.default.createDirectory(at: appSupportURL, withIntermediateDirectories: true)
-            if FileManager.default.fileExists(atPath: localEditorURL.path) {
-                try FileManager.default.removeItem(at: localEditorURL)
+        // Check if we can skip copying by comparing bundle modification dates
+        let fm = FileManager.default
+        let bundledModDate = (try? fm.attributesOfItem(atPath: bundledIndexURL.path)[.modificationDate] as? Date) ?? .distantPast
+        let localVersionDate = (try? String(contentsOf: versionFile, encoding: .utf8)).flatMap { Double($0) }.map { Date(timeIntervalSince1970: $0) }
+
+        let needsCopy = localVersionDate == nil || bundledModDate > (localVersionDate ?? .distantPast) || !fm.fileExists(atPath: localIndexURL.path)
+
+        if needsCopy {
+            do {
+                try fm.createDirectory(at: appSupportURL, withIntermediateDirectories: true)
+                if fm.fileExists(atPath: localEditorURL.path) {
+                    try fm.removeItem(at: localEditorURL)
+                }
+                try fm.copyItem(at: bundledEditorURL, to: localEditorURL)
+                // Write version marker
+                try String(bundledModDate.timeIntervalSince1970).write(to: versionFile, atomically: true, encoding: .utf8)
+            } catch {
+                print("Agendada failed to prepare writable BlockNote editor bundle: \(error)")
+                let fallback = PreparedEditorBundle(editorURL: bundledIndexURL, readAccessURL: bundledEditorURL)
+                cachedPreparedBundle = fallback
+                return fallback
             }
-            try FileManager.default.copyItem(at: bundledEditorURL, to: localEditorURL)
-            return PreparedEditorBundle(editorURL: localIndexURL, readAccessURL: appSupportURL)
-        } catch {
-            print("Agendada failed to prepare writable BlockNote editor bundle: \(error)")
-            return PreparedEditorBundle(editorURL: bundledIndexURL, readAccessURL: bundledEditorURL)
         }
+
+        let bundle = PreparedEditorBundle(editorURL: localIndexURL, readAccessURL: appSupportURL)
+        cachedPreparedBundle = bundle
+        return bundle
     }
 
     private func blockNoteResourceBundleURL() -> URL? {
@@ -792,6 +851,36 @@ final class SharedBlockNoteWebView: NSObject, WKScriptMessageHandler, WKNavigati
         }
 
         let script = "window.__agendadaAssetImported && window.__agendadaAssetImported(\(jsString(requestID)), \(json));"
+        webView.evaluateJavaScript(script)
+    }
+
+    private func handleNoteLinkSearch(_ body: Any) {
+        guard let dictionary = body as? [String: Any],
+              let requestID = dictionary["requestId"] as? String,
+              let query = dictionary["query"] as? String else {
+            return
+        }
+
+        let currentNoteId = dictionary["currentNoteId"] as? String
+        let currentNoteUUID = currentNoteId.flatMap { UUID(uuidString: $0) }
+
+        let results = onNoteLinkSearch?(query, currentNoteUUID) ?? []
+
+        var jsonArray: [[String: String]] = []
+        for result in results {
+            jsonArray.append([
+                "id": result.id.uuidString,
+                "title": result.title,
+                "project": result.project
+            ])
+        }
+
+        guard let data = try? JSONSerialization.data(withJSONObject: jsonArray),
+              let json = String(data: data, encoding: .utf8) else {
+            return
+        }
+
+        let script = "window.__agendadaNoteLinkResults && window.__agendadaNoteLinkResults(\(jsString(requestID)), \(json));"
         webView.evaluateJavaScript(script)
     }
 
