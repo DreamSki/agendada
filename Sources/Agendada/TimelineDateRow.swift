@@ -134,7 +134,7 @@ struct TimelineDateRow: View {
             AgendadaFloatingMenuSection(items: notes.map { note in
                 AgendadaFloatingMenuItem(
                     iconSystemName: "doc.text",
-                    title: note.title
+                    title: displayTitle(for: note)
                 ) { _ in
                     onSelectNote?(note.id)
                 }
@@ -162,17 +162,21 @@ struct TimelineDateRow: View {
         var sections: [AgendadaFloatingMenuSection] = []
 
         if !notes.isEmpty {
-            sections.append(AgendadaFloatingMenuSection(items: [
+            let noteItems = notes.map { note in
                 AgendadaFloatingMenuItem(
-                    iconSystemName: "arrow.forward.circle",
-                    title: "前往被指定的笔记",
-                    subtitle: "跳转到指定于这天的笔记"
+                    iconSystemName: notes.count == 1 ? "arrow.forward.circle" : "doc.text",
+                    title: notes.count == 1 ? "前往“\(displayTitle(for: note))”" : displayTitle(for: note),
+                    subtitle: notes.count == 1 ? "跳转到指定于这天的笔记" : "指定于 \(fullDateString)"
                 ) { _ in
-                    if let firstNote = notes.first {
-                        onSelectNote?(firstNote.id)
-                    }
+                    onSelectNote?(note.id)
                 }
-            ]))
+            }
+
+            sections.append(
+                AgendadaFloatingMenuSection(
+                    items: noteItems
+                )
+            )
         }
 
         var createItems: [AgendadaFloatingMenuItem] = []
@@ -188,14 +192,14 @@ struct TimelineDateRow: View {
             )
         }
 
-        if let onNew = onNewEvent {
+        if let onEvent = onNewEvent {
             createItems.append(
                 AgendadaFloatingMenuItem(
                     iconSystemName: "calendar.badge.plus",
-                    title: "新建日程",
-                    subtitle: "在「日历」App 中添加 \(fullDateString) 的日程"
+                    title: "在日历中打开这一天",
+                    subtitle: fullDateString
                 ) { _ in
-                    onNew()
+                    onEvent()
                 }
             )
         }
@@ -205,6 +209,11 @@ struct TimelineDateRow: View {
         }
 
         return sections
+    }
+
+    private func displayTitle(for note: ScheduledNoteInfo) -> String {
+        let trimmed = note.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "无标题笔记" : trimmed
     }
 
 }

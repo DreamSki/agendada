@@ -29,6 +29,10 @@ struct TimelineReminderRow: View {
         store.selectedNoteID.flatMap { store.note(withID: $0) }
     }
 
+    private var associatedNote: AgendadaCore.Note? {
+        store.noteLinked(toReminderID: reminder.id)
+    }
+
     var body: some View {
         HStack(spacing: 8) {
             // Spine dot — calendar color
@@ -68,6 +72,12 @@ struct TimelineReminderRow: View {
                 .onTapGesture { toggleMenu() }
 
             Spacer()
+
+            if associatedNote != nil {
+                Image(systemName: "link")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(AgendaColor.panelHint)
+            }
         }
         .padding(.vertical, 5)
         .padding(.leading, AgendaSpacing.timelineRowIndent)
@@ -120,15 +130,36 @@ struct TimelineReminderRow: View {
     }
 
     private func reminderMenuSections() -> [AgendadaFloatingMenuSection] {
-        var firstItems = [
+        var firstItems: [AgendadaFloatingMenuItem] = []
+
+        if let note = associatedNote {
+            firstItems.append(
+                AgendadaFloatingMenuItem(
+                    iconSystemName: "arrow.forward.circle",
+                    title: "前往已关联的笔记",
+                    subtitle: "跳转至与该提醒事项关联的笔记「\(note.title)」"
+                ) { _ in
+                    navigateToNote(note)
+                }
+            )
+        }
+
+        firstItems.append(
             AgendadaFloatingMenuItem(
                 iconSystemName: "doc.badge.plus",
                 title: "新建带有提醒事项的笔记",
                 subtitle: "在项目中新建包含此提醒事项的笔记"
             ) { _ in
-                _ = store.addNoteReturningID()
+                let noteID = store.addNoteReturningID(
+                    reminderID: reminder.id,
+                    title: reminder.title,
+                    dueDate: reminder.dueDate
+                )
+                if let note = store.note(withID: noteID) {
+                    navigateToNote(note)
+                }
             }
-        ]
+        )
 
         if let note = selectedNote {
             firstItems.append(
@@ -136,7 +167,27 @@ struct TimelineReminderRow: View {
                     iconSystemName: "plus.circle",
                     title: "添加至所选笔记",
                     subtitle: "将该提醒事项添加至所选笔记「\(note.title)」"
-                ) { _ in }
+                ) { _ in
+                    store.associateReminder(
+                        id: reminder.id,
+                        title: reminder.title,
+                        dueDate: reminder.dueDate,
+                        to: note.id
+                    )
+                    navigateToNote(note)
+                }
+            )
+        }
+
+        if let note = associatedNote {
+            firstItems.append(
+                AgendadaFloatingMenuItem(
+                    iconSystemName: "link.badge.minus",
+                    title: "取消关联笔记",
+                    subtitle: "移除该提醒事项与笔记的关联"
+                ) { _ in
+                    store.unassociateReminder(id: reminder.id, from: note.id)
+                }
             )
         }
 
@@ -170,4 +221,8 @@ struct TimelineReminderRow: View {
         ]
     }
 
+    private func navigateToNote(_ note: AgendadaCore.Note) {
+        store.selectProject(note.projectID)
+        store.selectNote(note.id)
+    }
 }

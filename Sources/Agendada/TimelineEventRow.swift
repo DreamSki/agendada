@@ -100,6 +100,12 @@ struct TimelineEventRow: View {
 
                 Spacer()
 
+                if findAssociatedNote() != nil {
+                    Image(systemName: "link")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(AgendaColor.panelHint)
+                }
+
                 if !event.isAllDay && isCurrentlyActive {
                     Text("现在")
                         .font(AgendaFont.panelCaption)
@@ -213,7 +219,11 @@ struct TimelineEventRow: View {
                     iconSystemName: "link.badge.minus",
                     title: "取消关联笔记",
                     subtitle: "移除该日程与笔记的关联"
-                ) { _ in }
+                ) { _ in
+                    if let note = associatedNote {
+                        store.unassociateCalendarEvent(id: event.id, from: note.id)
+                    }
+                }
             )
         }
 
@@ -233,6 +243,10 @@ struct TimelineEventRow: View {
     }
 
     private func findAssociatedNote() -> AgendadaCore.Note? {
+        if let note = store.noteLinked(toCalendarEventID: event.id) {
+            return note
+        }
+
         let cal = Calendar.current
         let eventDay = cal.startOfDay(for: event.startDate)
         return store.filteredNotes().first { note in
@@ -243,10 +257,21 @@ struct TimelineEventRow: View {
     }
 
     private func createNoteWithEvent() {
-        _ = store.note(withID: store.addNoteReturningID())
+        let noteID = store.addNoteReturningID(
+            calendarEventID: event.id,
+            title: event.title,
+            startDate: event.startDate
+        )
+        onNavigateToNote?(noteID)
     }
 
     private func associateNoteToEvent(_ note: AgendadaCore.Note) {
-        // TODO
+        store.associateCalendarEvent(
+            id: event.id,
+            title: event.title,
+            startDate: event.startDate,
+            to: note.id
+        )
+        onNavigateToNote?(note.id)
     }
 }
