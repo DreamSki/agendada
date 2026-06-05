@@ -79,7 +79,11 @@ struct NoteStreamView: View {
                     copyToPasteboard(store.summaryForFilteredNotes())
                 })
                 CapsuleIconPopoverButton(systemName: "magnifyingglass", help: "搜索", isPresented: $isSearching, popoverContent: {
-                    SearchPopoverContent(searchText: $searchText, navigationTargetNoteID: $navigationTargetNoteID)
+                    SearchPopoverContent(
+                        committedSearchText: searchText,
+                        clearCommittedSearch: { searchText = "" },
+                        navigationTargetNoteID: $navigationTargetNoteID
+                    )
                 })
             }
             .padding(.horizontal, 6)
@@ -2046,7 +2050,8 @@ private struct SearchPopoverResult: Identifiable {
 }
 
 private struct SearchPopoverContent: View {
-    @Binding var searchText: String
+    let committedSearchText: String
+    let clearCommittedSearch: () -> Void
     @Binding var navigationTargetNoteID: Note.ID?
     @Environment(ObservableLibraryStore.self) private var store
     @State private var showSaveSheet = false
@@ -2156,9 +2161,9 @@ private struct SearchPopoverContent: View {
         .padding(.horizontal, 10).padding(.vertical, 8)
         .frame(width: 390)
         .onAppear {
-            draftSearchText = searchText
+            draftSearchText = committedSearchText
         }
-        .onChange(of: searchText) { _, newValue in
+        .onChange(of: committedSearchText) { _, newValue in
             if draftSearchText != newValue {
                 draftSearchText = newValue
             }
@@ -2171,7 +2176,7 @@ private struct SearchPopoverContent: View {
             // completes (180ms debounced in ObservableLibraryStore).
             // This avoids the double-debounce race where the old 250ms
             // timer could fire before occurrences were ready.
-            guard !searchText.isEmpty, newCount > 0 else { return }
+            guard !committedSearchText.isEmpty, newCount > 0 else { return }
             let q = store.library.searchHighlightText
             guard !q.isEmpty else { return }
             SharedBlockNoteWebView.shared.searchInEditor(query: q) { _ in
@@ -2398,8 +2403,8 @@ private struct SearchPopoverContent: View {
     }
 
     private var isCommittedDraft: Bool {
-        !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && searchText.trimmingCharacters(in: .whitespacesAndNewlines) == trimmedSearchText
+        !committedSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && committedSearchText.trimmingCharacters(in: .whitespacesAndNewlines) == trimmedSearchText
     }
 
     private var searchScopeTitle: String {
@@ -2491,7 +2496,7 @@ private struct SearchPopoverContent: View {
 
     private func clearSearch() {
         draftSearchText = ""
-        searchText = ""
+        clearCommittedSearch()
     }
 
     private func commitDraftSearch() {
