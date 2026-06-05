@@ -41,6 +41,7 @@ struct RelatedPanelContentView: View {
     // Cache computed data to avoid calling store.filteredNotes() during body rendering
     @State private var cachedRecentNotes: [AgendadaCore.Note] = []
     @State private var cachedRelatedNotes: [RelatedNote] = []
+    @State private var cachedBacklinkedNotes: [AgendadaCore.Note] = []
     /// True when expanding after collapse — skip animation on scroll restore.
     @State private var isRestoringOnExpand = false
     /// Non-zero while a programmatic scroll is in flight.  Incremented on each
@@ -161,8 +162,8 @@ struct RelatedPanelContentView: View {
 
     private var relatedSummary: String? {
         guard store.selectedNoteID != nil else { return nil }
-        let related = relatedNotes
-        return related.isEmpty ? "无关联" : "\(related.count)条相关"
+        let count = relatedNotes.count + backlinkedNotes.count
+        return count == 0 ? "无关联" : "\(count)条相关"
     }
 
     // MARK: - Data
@@ -185,15 +186,22 @@ struct RelatedPanelContentView: View {
     // (which triggers observeRevision → AttributeGraph dependency → cycle risk)
     private var recentNotes: [AgendadaCore.Note] { cachedRecentNotes }
     private var relatedNotes: [RelatedNote] { cachedRelatedNotes }
+    private var backlinkedNotes: [AgendadaCore.Note] { cachedBacklinkedNotes }
 
     private func refreshCachedNotes() {
         cachedRecentNotes = Array(store.filteredNotes()
             .sorted { $0.editedAt > $1.editedAt }
             .prefix(3))
         if let sid = store.selectedNoteID {
-            cachedRelatedNotes = Array(store.relatedNotes(for: sid).prefix(3))
+            let backlinks = Array(store.backlinkedNotes(to: sid).prefix(3))
+            let backlinkIDs = Set(backlinks.map(\.id))
+            cachedBacklinkedNotes = backlinks
+            cachedRelatedNotes = Array(store.relatedNotes(for: sid)
+                .filter { !backlinkIDs.contains($0.noteID) }
+                .prefix(3))
         } else {
             cachedRelatedNotes = []
+            cachedBacklinkedNotes = []
         }
     }
 
@@ -692,60 +700,133 @@ struct RelatedPanelContentView: View {
                     title: "选择笔记查看关联",
                     subtitle: "点击左侧笔记查看相关内容"
                 )
-            } else if relatedNotes.isEmpty {
+            } else if relatedNotes.isEmpty && backlinkedNotes.isEmpty {
                 PanelEmptyStateView(
                     icon: "link.circle",
                     title: "暂无相关笔记",
                     subtitle: relatedEmptySubtitle
                 )
             } else {
-                VStack(spacing: 0) {
-                    ForEach(Array(relatedNotes.enumerated()), id: \.element.noteID) { index, relatedNote in
-                        Button {
-                            navigateToNote(relatedNote.noteID)
-                        } label: {
-                            HStack(spacing: 8) {
-                                Circle()
-                                    .fill(AgendaColor.amber)
-                                    .frame(width: 4, height: 4)
+                VStack(alignment: .leading, spacing: 10) {
+                    if !backlinkedNotes.isEmpty {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("反向链接")
+                                .font(AgendaFont.panelCaption)
+                                .foregroundStyle(AgendaColor.panelSub)
+                                .padding(.horizontal, 2)
 
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(relatedNote.title)
-                                        .font(AgendaFont.panelBodyMedium)
-                                        .foregroundStyle(AgendaColor.panelHeading)
-                                        .lineLimit(1)
-
-                                    Text(relatedNote.reasons.joined(separator: " / "))
-                                        .font(AgendaFont.panelCaption)
-                                        .foregroundStyle(AgendaColor.panelSub)
-                                        .lineLimit(1)
-                                }
-
-                                Spacer()
-                            }
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 8)
-                            .contentShape(Rectangle())
+                            linkedNoteGroup(backlinkedNotes, reason: "引用当前笔记", icon: "arrow.turn.down.left")
                         }
-                        .buttonStyle(.plain)
+                    }
 
-                        if index < relatedNotes.count - 1 {
-                            Rectangle()
-                                .fill(AgendaColor.panelWarmDivider)
-                                .frame(height: 1)
-                                .padding(.leading, 22)
+                    if !relatedNotes.isEmpty {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(backlinkedNotes.isEmpty ? "相关笔记" : "其他相关")
+                                .font(AgendaFont.panelCaption)
+                                .foregroundStyle(AgendaColor.panelSub)
+                                .padding(.horizontal, 2)
+
+                            relatedNoteGroup(relatedNotes)
                         }
                     }
                 }
-                .background(
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(Color.white)
-                        .shadow(color: Color.black.opacity(0.02), radius: 4, y: 2)
-                )
                 .padding(.horizontal, AgendaSpacing.panelPaddingH)
                 .padding(.bottom, 12)
             }
         }
+    }
+
+    private func linkedNoteGroup(_ notes: [AgendadaCore.Note], reason: String, icon: String) -> some View {
+        VStack(spacing: 0) {
+            ForEach(Array(notes.enumerated()), id: \.element.id) { index, note in
+                Button {
+                    navigateToNote(note.id)
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: icon)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(AgendaColor.amber)
+                            .frame(width: 14)
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(note.title)
+                                .font(AgendaFont.panelBodyMedium)
+                                .foregroundStyle(AgendaColor.panelHeading)
+                                .lineLimit(1)
+
+                            Text(reason)
+                                .font(AgendaFont.panelCaption)
+                                .foregroundStyle(AgendaColor.panelSub)
+                                .lineLimit(1)
+                        }
+
+                        Spacer()
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+
+                if index < notes.count - 1 {
+                    Rectangle()
+                        .fill(AgendaColor.panelWarmDivider)
+                        .frame(height: 1)
+                        .padding(.leading, 32)
+                }
+            }
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color.white)
+                .shadow(color: Color.black.opacity(0.02), radius: 4, y: 2)
+        )
+    }
+
+    private func relatedNoteGroup(_ notes: [RelatedNote]) -> some View {
+        VStack(spacing: 0) {
+            ForEach(Array(notes.enumerated()), id: \.element.noteID) { index, relatedNote in
+                Button {
+                    navigateToNote(relatedNote.noteID)
+                } label: {
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(AgendaColor.amber)
+                            .frame(width: 4, height: 4)
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(relatedNote.title)
+                                .font(AgendaFont.panelBodyMedium)
+                                .foregroundStyle(AgendaColor.panelHeading)
+                                .lineLimit(1)
+
+                            Text(relatedNote.reasons.joined(separator: " / "))
+                                .font(AgendaFont.panelCaption)
+                                .foregroundStyle(AgendaColor.panelSub)
+                                .lineLimit(1)
+                        }
+
+                        Spacer()
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+
+                if index < notes.count - 1 {
+                    Rectangle()
+                        .fill(AgendaColor.panelWarmDivider)
+                        .frame(height: 1)
+                        .padding(.leading, 22)
+                }
+            }
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color.white)
+                .shadow(color: Color.black.opacity(0.02), radius: 4, y: 2)
+        )
     }
 
     private var relatedEmptySubtitle: String? {

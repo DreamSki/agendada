@@ -43,8 +43,15 @@ final class ObservableLibraryStore {
         set {
             guard newValue != store.searchText else { return }
             store.setSearchTextOnly(newValue)
+            let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty {
+                searchCalcTask?.cancel()
+                store.clearSearchOccurrences()
+            }
             publishChange()
-            scheduleSearchCalculation()
+            if !trimmed.isEmpty {
+                scheduleSearchCalculation()
+            }
             persistSoon()
         }
     }
@@ -86,6 +93,13 @@ final class ObservableLibraryStore {
         publishChange()
         persistSoon()
         return occurrence
+    }
+
+    func commitGlobalSearchText(_ newText: String) {
+        searchCalcTask?.cancel()
+        store.commitGlobalSearchText(newText)
+        publishChange()
+        persistSoon()
     }
 
     var sortOrder: NoteSortOrder {
@@ -287,14 +301,46 @@ final class ObservableLibraryStore {
     }
 
     func selectNote(_ noteID: Note.ID) {
+        let prevProject = store.selectedProjectID
+        let prevOverview = store.selectedOverview
+        let prevSmartOverview = store.selectedSmartOverviewID
+        let prevSearch = store.searchText
+
         store.selectNote(noteID)
-        publishSelectionChange()
+
+        // If selectNote switched views (to show a note not in the current filter),
+        // we need a full change publish, not just a selection change.
+        let viewChanged = store.selectedProjectID != prevProject
+            || store.selectedOverview != prevOverview
+            || store.selectedSmartOverviewID != prevSmartOverview
+            || store.searchText != prevSearch
+
+        if viewChanged {
+            publishChange()
+        } else {
+            publishSelectionChange()
+        }
         persistSoon()
     }
 
     func relatedNotes(for noteID: Note.ID) -> [RelatedNote] {
         observeRevision()
         return store.relatedNotes(for: noteID)
+    }
+
+    func backlinkedNotes(to noteID: Note.ID) -> [Note] {
+        observeRevision()
+        return store.backlinkedNotes(to: noteID)
+    }
+
+    func noteLinked(toCalendarEventID eventID: String) -> Note? {
+        observeRevision()
+        return store.noteLinked(toCalendarEventID: eventID)
+    }
+
+    func noteLinked(toReminderID reminderID: String) -> Note? {
+        observeRevision()
+        return store.noteLinked(toReminderID: reminderID)
     }
 
     func summaryForFilteredNotes() -> String {
@@ -322,6 +368,62 @@ final class ObservableLibraryStore {
         return note.id
     }
 
+    @discardableResult
+    func addNoteReturningID(customTemplate templateID: CustomNoteTemplate.ID) -> Note.ID? {
+        guard let note = store.addNote(customTemplate: templateID) else { return nil }
+        publishChange()
+        persistNow()
+        return note.id
+    }
+
+    @discardableResult
+    func addNoteReturningID(calendarEventID eventID: String, title: String, startDate: Date) -> Note.ID {
+        let note = store.addNoteForCalendarEvent(id: eventID, title: title, startDate: startDate)
+        publishChange()
+        persistNow()
+        return note.id
+    }
+
+    @discardableResult
+    func addNoteReturningID(reminderID: String, title: String, dueDate: Date?) -> Note.ID {
+        let note = store.addNoteForReminder(id: reminderID, title: title, dueDate: dueDate)
+        publishChange()
+        persistNow()
+        return note.id
+    }
+
+    func associateCalendarEvent(id eventID: String, title: String, startDate: Date, to noteID: Note.ID) {
+        guard store.associateCalendarEvent(id: eventID, title: title, startDate: startDate, to: noteID) else {
+            return
+        }
+        publishChange()
+        persistNow()
+    }
+
+    func unassociateCalendarEvent(id eventID: String, from noteID: Note.ID) {
+        guard store.unassociateCalendarEvent(id: eventID, from: noteID) else {
+            return
+        }
+        publishChange()
+        persistNow()
+    }
+
+    func associateReminder(id reminderID: String, title: String, dueDate: Date?, to noteID: Note.ID) {
+        guard store.associateReminder(id: reminderID, title: title, dueDate: dueDate, to: noteID) else {
+            return
+        }
+        publishChange()
+        persistNow()
+    }
+
+    func unassociateReminder(id reminderID: String, from noteID: Note.ID) {
+        guard store.unassociateReminder(id: reminderID, from: noteID) else {
+            return
+        }
+        publishChange()
+        persistNow()
+    }
+
     // MARK: - Custom Note Templates
 
     func addCustomNoteTemplate(name: String, from note: Note) {
@@ -332,6 +434,12 @@ final class ObservableLibraryStore {
 
     func deleteCustomNoteTemplate(_ templateID: CustomNoteTemplate.ID) {
         store.deleteCustomNoteTemplate(templateID)
+        publishChange()
+        persistNow()
+    }
+
+    func renameCustomNoteTemplate(_ templateID: CustomNoteTemplate.ID, name: String) {
+        store.renameCustomNoteTemplate(templateID, name: name)
         publishChange()
         persistNow()
     }
