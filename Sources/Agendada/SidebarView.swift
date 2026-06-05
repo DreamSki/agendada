@@ -18,6 +18,8 @@ struct SidebarView: View {
                         .padding(.top, 2)
                         .padding(.bottom, 16)
 
+                    smartOverviewSection
+
                     ForEach(store.topLevelCategories) { category in
                         categoryRecursiveSection(category, depth: 0)
                     }
@@ -149,6 +151,46 @@ struct SidebarView: View {
                 })
             sidebarButton("待办事项", systemImage: "checkmark.circle", selection: .overview(.tasks), tint: Color(red: 0.96, green: 0.32, blue: 0.37))
             sidebarTrashButton
+        }
+    }
+
+    // MARK: - Smart Overview Section
+
+    @ViewBuilder
+    private var smartOverviewSection: some View {
+        let overviews = store.smartOverviews
+        if !overviews.isEmpty {
+            VStack(alignment: .leading, spacing: 2) {
+                AgendaSidebarSectionLabel("智能概览")
+                    .padding(.bottom, 6)
+
+                ForEach(overviews) { overview in
+                    smartOverviewRow(overview)
+                }
+            }
+            .padding(.bottom, 16)
+        }
+    }
+
+    private func smartOverviewRow(_ overview: SmartOverview) -> some View {
+        let isSelected = store.selectedSmartOverviewID == overview.id
+        return AgendaSidebarRow(
+            title: overview.name,
+            systemImage: "sparkle.magnifyingglass",
+            isSelected: isSelected,
+            tint: AgendaColor.amber,
+            selectedTextColor: AgendaColor.amber,
+            showsSelectionBackground: true,
+            action: { select(.smartOverview(overview.id)) }
+        )
+        .contextMenu {
+            Button("重命名…") {
+                nameSheet = .renameSmartOverview(overview)
+            }
+            Divider()
+            Button("删除", role: .destructive) {
+                deletion = .smartOverview(overview)
+            }
         }
     }
 
