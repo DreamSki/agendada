@@ -4,12 +4,14 @@ import "./styles.css";
 
 import React from "react";
 import { createRoot } from "react-dom/client";
+import { createPortal } from "react-dom";
 import { useCreateBlockNote, GridSuggestionMenuController, getDefaultReactSlashMenuItems } from "@blocknote/react";
 import { BlockNoteView } from "@blocknote/mantine";
 import { filterSuggestionItems } from "@blocknote/core/extensions";
 import { zh } from "@blocknote/core/locales";
 import { MiniSlashMenu } from "./MiniSlashMenu";
 import { ColorMenu, HighlightMenu, createColorItems, createHighlightItems } from "./ColorMenu";
+import { NoteLinkPopup } from "./NoteLinkMenu";
 
 window.__agendada = {
   currentCardId: null,
@@ -23,7 +25,8 @@ window.__agendada = {
   pendingCompositionChange: false,
   compositionBaselineBlocks: null,
   compositionFinalizationTimer: null,
-  assetImportResolvers: {}
+  assetImportResolvers: {},
+  noteLinkResolvers: {}
 };
 
 function post(name, payload) {
@@ -124,6 +127,99 @@ window.__agendadaAssetImported = function agendadaAssetImported(requestId, resul
 
   pending.reject(new Error(result?.error || "Asset import failed"));
 };
+
+// Note link search callback from Swift
+window.__agendadaNoteLinkResults = function(requestId, results) {
+  const pending = window.__agendada.noteLinkResolvers[requestId];
+  if (!pending) return;
+
+  clearTimeout(pending.timer);
+  delete window.__agendada.noteLinkResolvers[requestId];
+  pending.resolve(results || []);
+};
+
+// Request note search from Swift
+async function searchNotesForLink(query) {
+  const bridge = window.webkit?.messageHandlers?.noteLinkSearch;
+  if (!bridge) {
+    return [];
+  }
+
+  const requestId = randomRequestId();
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      delete window.__agendada.noteLinkResolvers[requestId];
+      resolve([]);
+    }, 3000);
+
+    window.__agendada.noteLinkResolvers[requestId] = { resolve, timer };
+    bridge.postMessage({
+      requestId,
+      query,
+      currentNoteId: window.__agendada.currentCardId
+    });
+  });
+}
+
+// Insert note link into editor
+function insertNoteLink(editor, noteId, noteTitle) {
+  const href = `agendada://note/${noteId}`;
+  // Use BlockNote's insertInlineContent with link type
+  // BlockNote supports "link" as a built-in inline content type
+  try {
+    editor.insertInlineContent([
+      {
+        type: "link",
+        href: href,
+        content: noteTitle,
+      },
+      " "
+    ]);
+  } catch (e) {
+    // Fallback: just insert the text with a custom data attribute
+    console.warn("Agendada: link inline content failed, falling back to styled text", e);
+    editor.insertInlineContent(noteTitle + " ");
+  }
+}
+
+// Handle Cmd+Click on note links inside the editor.
+// Uses ProseMirror's API to resolve the clicked position and check for link marks.
+function setupNoteLinkClickHandler(editor) {
+  const view = editor._tiptapEditor?.view || editor.view;
+  if (!view) {
+    console.warn("Agendada: no ProseMirror view found for link click handler");
+    return;
+  }
+
+  // Intercept clicks at the editor DOM level
+  const editorDom = view.dom;
+  editorDom.addEventListener("mousedown", (e) => {
+    // Only Cmd+Click or Ctrl+Click
+    if (!e.metaKey && !e.ctrlKey) return;
+
+    // Get the ProseMirror position at the click point
+    const pos = view.posAtCoords({ left: e.clientX, top: e.clientY });
+    if (!pos) return;
+
+    // Check if there's a link mark at this position
+    const $pos = view.state.doc.resolve(pos.pos);
+    const marks = $pos.marks();
+    const linkMark = marks.find((m) => m.type.name === "link");
+    if (!linkMark) return;
+
+    const href = linkMark.attrs?.href || "";
+    if (href.startsWith("agendada://note/")) {
+      e.preventDefault();
+      e.stopPropagation();
+      const noteId = href.replace("agendada://note/", "");
+      try {
+        window.webkit.messageHandlers.noteLinkNavigate.postMessage(noteId);
+      } catch {
+        // Not in WKWebView
+      }
+    }
+  }, true);
+}
 
 function emptyBlocks() {
   return [{ type: "paragraph", content: "" }];
@@ -593,6 +689,8 @@ function startFallback() {
 setTimeout(startFallback, 5000);
 
 function EditorApp() {
+  const lastBracketTime = React.useRef(0);
+
   const editor = useCreateBlockNote({
     initialContent: emptyBlocks(),
     dictionary: zh,
@@ -633,20 +731,79 @@ function EditorApp() {
     }
   });
 
+  // Debounced height request to avoid excessive bridge calls
+  const debouncedRequestHeight = React.useMemo(() => {
+    let timeout = null;
+    return () => {
+      if (timeout) clearTimeout(timeout);
+      timeout = setTimeout(() => {
+        timeout = null;
+        requestHeight();
+      }, 50);
+    };
+  }, []);
+
   React.useEffect(() => {
     window.__agendada.editor = editor;
     post("editorReady", "ready");
+    // Delay click handler setup to ensure editor DOM is ready
+    setTimeout(() => setupNoteLinkClickHandler(editor), 500);
     if (window.__agendada.pendingLoad) {
       const pending = window.__agendada.pendingLoad;
       window.__agendada.pendingLoad = null;
       window.loadCard(pending.cardId, pending.blockJSONText);
     }
-    const observer = new ResizeObserver(requestHeight);
+    const observer = new ResizeObserver(debouncedRequestHeight);
     observer.observe(document.getElementById("root"));
-    requestHeight();
+    requestHeight(); // Initial height immediately
     return () => {
       observer.disconnect();
     };
+  }, [editor, debouncedRequestHeight]);
+
+  // Listen for [[ to trigger note link popup
+  React.useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (!editor) return;
+
+      if (e.key === "[" && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        const now = Date.now();
+        if (now - lastBracketTime.current < 500) {
+          // Double bracket detected
+          e.preventDefault();
+          lastBracketTime.current = 0;
+
+          // Delete the first [ that was already typed
+          const sel = window.getSelection();
+          if (sel && sel.rangeCount > 0) {
+            const range = sel.getRangeAt(0);
+            range.collapse(true);
+            range.setStart(range.startContainer, Math.max(0, range.startOffset - 1));
+            range.deleteContents();
+          }
+
+          // Get cursor position for popup placement
+          let position = null;
+          if (sel && sel.rangeCount > 0) {
+            const range = sel.getRangeAt(0).cloneRange();
+            range.collapse(false);
+            const rect = range.getBoundingClientRect();
+            position = { x: rect.left, y: rect.bottom + 4 };
+          }
+
+          if (window.__agendada.showNoteLinkPopup) {
+            window.__agendada.showNoteLinkPopup(position);
+          }
+        } else {
+          lastBracketTime.current = now;
+        }
+      } else {
+        lastBracketTime.current = 0;
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown, true);
+    return () => document.removeEventListener("keydown", handleKeyDown, true);
   }, [editor]);
 
   return (
@@ -709,5 +866,150 @@ function EditorApp() {
     </div>
   );
 }
+
+// Render NoteLinkPopup as a separate root to avoid re-rendering the editor
+const noteLinkRoot = document.createElement("div");
+noteLinkRoot.id = "note-link-root";
+document.body.appendChild(noteLinkRoot);
+
+function NoteLinkPopupContainer() {
+  const [state, setState] = React.useState({ visible: false, query: "", position: null });
+
+  React.useEffect(() => {
+    window.__agendada.showNoteLinkPopup = (position) => {
+      setState({ visible: true, query: "", position });
+    };
+    window.__agendada.hideNoteLinkPopup = () => {
+      setState({ visible: false, query: "", position: null });
+    };
+    return () => {
+      delete window.__agendada.showNoteLinkPopup;
+      delete window.__agendada.hideNoteLinkPopup;
+    };
+  }, []);
+
+  if (!state.visible) return null;
+
+  const style = state.position
+    ? { position: "fixed", left: state.position.x, top: state.position.y, zIndex: 9999 }
+    : { position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)", zIndex: 9999 };
+
+  return createPortal(
+    <div style={style} className="note-link-overlay" onMouseDown={(e) => e.stopPropagation()}>
+      <div className="note-link-popup">
+        <NoteLinkPopupInner
+          onSelect={(noteId, noteTitle) => {
+            const editor = window.__agendada.editor;
+            setState({ visible: false, query: "", position: null });
+            // Restore editor focus before inserting content
+            if (editor) {
+              editor.focus();
+              setTimeout(() => {
+                insertNoteLink(editor, noteId, noteTitle);
+              }, 10);
+            }
+          }}
+          onClose={() => setState({ visible: false, query: "", position: null })}
+        />
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+function NoteLinkPopupInner({ onSelect, onClose }) {
+  const [searchText, setSearchText] = React.useState("");
+  const [results, setResults] = React.useState([]);
+  const [loading, setLoading] = React.useState(false);
+  const [selectedIndex, setSelectedIndex] = React.useState(0);
+  const inputRef = React.useRef(null);
+
+  React.useEffect(() => {
+    setTimeout(() => inputRef.current?.focus(), 50);
+  }, []);
+
+  React.useEffect(() => {
+    if (!searchText.trim()) {
+      setResults([]);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    // Debounce search to avoid excessive bridge calls during fast typing
+    const timer = setTimeout(() => {
+      searchNotesForLink(searchText).then((notes) => {
+        if (!cancelled) {
+          setResults(notes);
+          setSelectedIndex(0);
+          setLoading(false);
+        }
+      });
+    }, 200);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [searchText]);
+
+  const handleKeyDown = (e) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      onClose();
+    } else if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setSelectedIndex((i) => Math.min(i + 1, results.length - 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setSelectedIndex((i) => Math.max(i - 1, 0));
+    } else if (e.key === "Enter" && results.length > 0) {
+      e.preventDefault();
+      const note = results[selectedIndex];
+      if (note) onSelect(note.id, note.title);
+    }
+  };
+
+  return (
+    <>
+      <div className="note-link-search-row">
+        <span className="note-link-search-icon">🔗</span>
+        <input
+          ref={inputRef}
+          className="note-link-search-input"
+          type="text"
+          placeholder="搜索笔记标题..."
+          value={searchText}
+          onChange={(e) => setSearchText(e.target.value)}
+          onKeyDown={handleKeyDown}
+        />
+      </div>
+      {loading && <div className="note-link-status">搜索中...</div>}
+      {!loading && searchText && results.length === 0 && (
+        <div className="note-link-status">无匹配笔记</div>
+      )}
+      {results.length > 0 && (
+        <div className="note-link-results">
+          {results.map((note, i) => (
+            <button
+              key={note.id}
+              className={
+                "note-link-result-item" +
+                (i === selectedIndex ? " note-link-result-selected" : "")
+              }
+              onClick={() => onSelect(note.id, note.title)}
+              onMouseEnter={() => setSelectedIndex(i)}
+            >
+              <span className="note-link-result-icon">📄</span>
+              <div className="note-link-result-text">
+                <span className="note-link-result-title">{note.title}</span>
+                {note.project && (
+                  <span className="note-link-result-project">{note.project}</span>
+                )}
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
+createRoot(noteLinkRoot).render(<NoteLinkPopupContainer />);
 
 createRoot(document.getElementById("root")).render(<EditorApp />);

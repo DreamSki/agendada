@@ -395,3 +395,141 @@ body {
 [data-style-type=backgroundColor][data-value="#fcd0e0"] { background-color: #fcd0e0 !important; }
 [data-style-type=backgroundColor][data-value="#e9ecef"] { background-color: #e9ecef !important; }
 [data-style-type=backgroundColor][data-value="#f2dcc8"] { background-color: #f2dcc8 !important; }
+
+/* ── Note Link Menu ── */
+
+.note-link-overlay {
+  z-index: 9999;
+}
+
+.note-link-popup {
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.10);
+  border-radius: 10px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12), 0 0 0 1px rgba(0, 0, 0, 0.04);
+  width: 300px;
+  overflow: hidden;
+  font-family: var(--agendada-editor-font-family);
+}
+
+.note-link-search-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.note-link-search-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.note-link-search-input {
+  flex: 1;
+  border: none;
+  outline: none;
+  font-size: 13px;
+  font-family: var(--agendada-editor-font-family);
+  color: #333;
+  background: transparent;
+}
+
+.note-link-search-input::placeholder {
+  color: #C7C7CC;
+}
+
+.note-link-status {
+  padding: 12px 16px;
+  font-size: 12px;
+  color: #8E8E93;
+  text-align: center;
+}
+
+.note-link-results {
+  max-height: 220px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  padding: 4px;
+}
+
+.note-link-results::-webkit-scrollbar {
+  width: 4px;
+}
+
+.note-link-results::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.12);
+  border-radius: 2px;
+}
+
+.note-link-result-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  user-select: none;
+  outline: none;
+  color: inherit;
+  font-family: inherit;
+  text-align: left;
+  transition: background-color 0.1s ease;
+}
+
+.note-link-result-item:hover,
+.note-link-result-selected {
+  background-color: rgba(245, 166, 35, 0.12);
+}
+
+.note-link-result-icon {
+  flex-shrink: 0;
+  font-size: 13px;
+}
+
+.note-link-result-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.note-link-result-title {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  color: #333;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.note-link-result-selected .note-link-result-title {
+  color: #F5A623;
+}
+
+.note-link-result-project {
+  display: block;
+  font-size: 11px;
+  color: #8E8E93;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Note Link Inline Style ── */
+
+.note-link {
+  color: #F5A623 !important;
+  text-decoration: none !important;
+  background: rgba(245, 166, 35, 0.1);
+  padding: 0 2px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.note-link:hover {
+  background: rgba(245, 166, 35, 0.2);
+  text-decoration: underline !important;
+}
