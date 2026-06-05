@@ -164,6 +164,126 @@ import Testing
     })
 }
 
+@Test func noteLinksCanBeExtractedAndResolvedAsBacklinks() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    let source = store.addNote(title: "来源")
+    let target = store.addNote(title: "目标")
+    let body = "参考 <a href=\"agendada://note/\(target.id.uuidString)\">目标</a>"
+    let blockJSON = Data("""
+    [{"content":[{"type":"link","href":"agendada://note/\(target.id.uuidString)"}]}]
+    """.utf8)
+
+    store.updateNote(
+        noteID: source.id,
+        title: source.title,
+        body: body,
+        blockJSON: blockJSON,
+        scheduledDate: nil,
+        tags: [],
+        people: []
+    )
+
+    let updatedSource = try #require(store.note(withID: source.id))
+    #expect(store.linkedNoteIDs(from: updatedSource) == [target.id])
+    #expect(store.linkedNoteIDs(from: source.id) == [target.id])
+    #expect(store.backlinkedNotes(to: target.id).map(\.id) == [source.id])
+    #expect(store.relatedNotes(for: target.id).contains { related in
+        related.noteID == source.id && related.reasons.contains("链接")
+    })
+}
+
+@Test func trashedLinkedNotesAreIgnoredByBacklinksAndRelatedNotes() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    let source = store.addNote(title: "来源")
+    let target = store.addNote(title: "目标")
+
+    store.updateNote(
+        noteID: source.id,
+        title: source.title,
+        body: "agendada://note/\(target.id.uuidString)",
+        scheduledDate: nil,
+        tags: [],
+        people: []
+    )
+    store.deleteNote(source.id)
+
+    #expect(store.linkedNoteIDs(from: source.id) == [target.id])
+    #expect(store.backlinkedNotes(to: target.id).isEmpty)
+    #expect(store.relatedNotes(for: target.id).contains { $0.noteID == source.id } == false)
+}
+
+@Test func selectingTrashedOrMissingLinkedTargetsIsIgnored() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    let source = store.addNote(title: "来源")
+    let target = store.addNote(title: "目标")
+
+    store.updateNote(
+        noteID: source.id,
+        title: source.title,
+        body: "agendada://note/\(target.id.uuidString)",
+        scheduledDate: nil,
+        tags: [],
+        people: []
+    )
+    store.selectNote(source.id)
+    store.deleteNote(target.id)
+
+    #expect(store.linkedNoteIDs(from: source.id) == [target.id])
+    store.selectNote(target.id)
+    #expect(store.selectedNoteID == source.id)
+
+    store.permanentlyDeleteNote(target.id)
+    store.selectNote(target.id)
+    #expect(store.selectedNoteID == source.id)
+}
+
+@Test func calendarAndReminderAssociationsPersistInNoteBody() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    let date = Date(timeIntervalSince1970: 1_800_000_000)
+    let note = store.addNote(title: "关联笔记", date: nil)
+    let eventID = "calendar/event id with spaces"
+    let reminderID = "reminder/id with spaces"
+
+    #expect(store.associateCalendarEvent(id: eventID, title: "启动会", startDate: date, to: note.id))
+    #expect(store.associateReminder(id: reminderID, title: "提交材料", dueDate: date, to: note.id))
+    #expect(store.associateCalendarEvent(id: eventID, title: "启动会", startDate: date, to: note.id) == false)
+
+    let updated = try #require(store.note(withID: note.id))
+    #expect(store.linkedCalendarEventIDs(from: updated) == [eventID])
+    #expect(store.linkedReminderIDs(from: updated) == [reminderID])
+    #expect(store.noteLinked(toCalendarEventID: eventID)?.id == note.id)
+    #expect(store.noteLinked(toReminderID: reminderID)?.id == note.id)
+    #expect(updated.scheduledDate == date)
+
+    let decoded = LibraryStore(snapshot: store.snapshot())
+    #expect(decoded.noteLinked(toCalendarEventID: eventID)?.id == note.id)
+    #expect(decoded.noteLinked(toReminderID: reminderID)?.id == note.id)
+
+    #expect(decoded.unassociateCalendarEvent(id: eventID, from: note.id))
+    #expect(decoded.linkedCalendarEventIDs(from: note.id).isEmpty)
+    #expect(decoded.noteLinked(toReminderID: reminderID)?.id == note.id)
+}
+
+@Test func notesCanBeCreatedForCalendarEventsAndReminders() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    let date = Date(timeIntervalSince1970: 1_800_000_000)
+
+    let eventNote = store.addNoteForCalendarEvent(id: "event/123", title: "产品评审", startDate: date)
+    let reminderNote = store.addNoteForReminder(id: "reminder/456", title: "发会议纪要", dueDate: nil)
+
+    #expect(eventNote.title == "产品评审")
+    #expect(eventNote.scheduledDate == date)
+    #expect(store.linkedCalendarEventIDs(from: eventNote) == ["event/123"])
+    #expect(reminderNote.title == "发会议纪要")
+    #expect(reminderNote.scheduledDate == nil)
+    #expect(store.linkedReminderIDs(from: reminderNote) == ["reminder/456"])
+}
+
 @Test func snapshotRoundTripsThroughJSON() async throws {
     let store = LibraryStore.sample()
     let smartOverview = store.addSmartOverview(name: "有待办", query: "has:tasks")
@@ -315,6 +435,36 @@ import Testing
     #expect(note.title == "会议纪要")
     #expect(note.tags == ["会议"])
     #expect(note.bodyPlainText.contains("议题"))
+}
+
+@Test func customTemplatesRoundTripAndCreateNotes() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    let source = store.addNote(title: "项目周会")
+    store.updateNote(
+        noteID: source.id,
+        title: source.title,
+        body: "<h2>议题</h2><p>进度</p>",
+        scheduledDate: nil,
+        tags: ["会议", "客户"],
+        people: []
+    )
+    let template = store.addCustomNoteTemplate(name: "客户周会", from: source)
+    let decodedStore = LibraryStore(snapshot: store.snapshot())
+    decodedStore.renameCustomNoteTemplate(template.id, name: "客户复盘")
+    let renamedStore = LibraryStore(snapshot: decodedStore.snapshot())
+
+    let created = try #require(renamedStore.addNote(customTemplate: template.id, date: nil))
+
+    #expect(renamedStore.customNoteTemplate(withID: template.id)?.name == "客户复盘")
+    #expect(created.title == "项目周会")
+    #expect(created.body.contains("议题"))
+    #expect(created.tags == ["会议", "客户"])
+    #expect(created.scheduledDate == nil)
+
+    renamedStore.deleteCustomNoteTemplate(template.id)
+    let deletedStore = LibraryStore(snapshot: renamedStore.snapshot())
+    #expect(deletedStore.customNoteTemplate(withID: template.id) == nil)
 }
 
 @Test func notesCanBeDuplicatedStarredScheduledAndDeleted() async throws {
@@ -909,6 +1059,22 @@ import Testing
     #expect(notes.first?.title == "星标笔记")
 }
 
+@Test func searchIsBriefPredicate() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    let brief = store.addNote(title: "简达笔记")
+    store.setBrief(true, noteID: brief.id)
+    let normal = store.addNote(title: "普通笔记")
+    store.setBrief(false, noteID: normal.id)
+    store.selectOverview(.all)
+
+    store.updateSearchText("is:brief")
+
+    let notes = store.filteredNotes()
+    #expect(notes.count == 1)
+    #expect(notes.first?.title == "简达笔记")
+}
+
 @Test func searchDateTodayPredicate() async throws {
     let now = Date(timeIntervalSince1970: 1_800_000_000)
     let store = LibraryStore()
@@ -1244,9 +1410,9 @@ import Testing
     #expect(highlight.isEmpty)
 }
 
-// MARK: - Search within Project Filter Tests
+// MARK: - Global Search Tests
 
-@Test func searchWithinProjectOnlySearchesProjectNotes() async throws {
+@Test func searchWithSelectedProjectSearchesAllActiveNotes() async throws {
     let store = LibraryStore()
     let cat = store.addCategory(name: "工作")
     let proj1 = store.addProject(name: "项目A", categoryID: cat.id)
@@ -1261,8 +1427,47 @@ import Testing
     store.updateSearchText("架构")
 
     let notes = store.filteredNotes()
-    #expect(notes.count == 1)
-    #expect(notes.first?.title == "架构文档A")
+    #expect(Set(notes.map(\.title)) == ["架构文档A", "架构文档B"])
+}
+
+@Test func previewingGlobalSearchDoesNotChangeCurrentProjectFilter() async throws {
+    let store = LibraryStore()
+    let cat = store.addCategory(name: "工作")
+    let proj1 = store.addProject(name: "项目A", categoryID: cat.id)
+    let proj2 = store.addProject(name: "项目B", categoryID: cat.id)
+
+    store.selectProject(proj1.id)
+    _ = store.addNote(title: "架构文档A")
+    store.selectProject(proj2.id)
+    _ = store.addNote(title: "架构文档B")
+
+    store.selectProject(proj1.id)
+    let preview = store.globalSearchNotes(for: "架构")
+
+    #expect(Set(preview.map(\.title)) == ["架构文档A", "架构文档B"])
+    #expect(store.searchText.isEmpty)
+    #expect(store.selectedProjectID == proj1.id)
+    #expect(store.filteredNotes().map(\.title) == ["架构文档A"])
+}
+
+@Test func committingGlobalSearchLeavesProjectContext() async throws {
+    let store = LibraryStore()
+    let cat = store.addCategory(name: "工作")
+    let proj1 = store.addProject(name: "项目A", categoryID: cat.id)
+    let proj2 = store.addProject(name: "项目B", categoryID: cat.id)
+
+    store.selectProject(proj1.id)
+    _ = store.addNote(title: "架构文档A")
+    store.selectProject(proj2.id)
+    _ = store.addNote(title: "架构文档B")
+
+    store.selectProject(proj1.id)
+    store.commitGlobalSearchText("架构")
+
+    #expect(store.selectedProjectID == nil)
+    #expect(store.selectedOverview == .all)
+    #expect(store.searchText == "架构")
+    #expect(Set(store.filteredNotes().map(\.title)) == ["架构文档A", "架构文档B"])
 }
 
 // MARK: - Search with Special Characters
