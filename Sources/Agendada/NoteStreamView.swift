@@ -251,12 +251,16 @@ struct NoteStreamView: View {
     }
 
     private var mainTitle: String {
+        if !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "搜索结果"
+        }
         if let ov = store.selectedOverview { return ov.title }
         if let pid = store.selectedProjectID, let proj = store.project(withID: pid) { return proj.name }
         return store.activeTitle
     }
 
     private var breadcrumbCategoryName: String? {
+        if !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return nil }
         if store.selectedOverview != nil { return nil }
         if let pid = store.selectedProjectID, let proj = store.project(withID: pid),
            let cid = proj.categoryID, let cat = store.category(withID: cid) { return cat.name }
@@ -265,6 +269,10 @@ struct NoteStreamView: View {
 
     private var breadcrumbContext: String? {
         if store.isInBatchMode { return "已选 \(store.batchSelectedNoteIDs.count) 项" }
+        if !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let scope = store.selectedOverview == .trash ? "废纸篓" : "全局"
+            return "\(scope) · \(store.filteredNotes().count) 条笔记"
+        }
         if store.selectedOverview != nil { return "\(store.filteredNotes().count) 条笔记" }
         if let note = store.selectedNoteID.flatMap({ store.note(withID: $0) }) { return note.title }
         return nil
@@ -282,7 +290,10 @@ struct NoteStreamView: View {
                             note: note,
                             cancelPendingNavigation: cancelPendingNavigation,
                             performLocalSelection: preserveScrollDuringLocalSelection,
-                            preserveLocalScrollPosition: restoreLocalSelectionScrollPosition
+                            preserveLocalScrollPosition: restoreLocalSelectionScrollPosition,
+                            onNavigateToNote: { targetID in
+                                navigationTargetNoteID = targetID
+                            }
                         )
                             .padding(.bottom, AgendaSpacing.cardGap)
                     }
@@ -589,7 +600,7 @@ private struct StableTextField: NSViewRepresentable {
                 tf.attributedStringValue = h
             }
         } else {
-            if tf.stringValue != text {
+            if tf.stringValue != text || hasBackgroundHighlight(tf.attributedStringValue) {
                 tf.stringValue = text
             }
         }
@@ -598,6 +609,18 @@ private struct StableTextField: NSViewRepresentable {
         tf.isEnabled = isEnabled
         tf.isSelectable = isEnabled
         tf.isEditable = isEnabled
+    }
+
+    private func hasBackgroundHighlight(_ attributedString: NSAttributedString) -> Bool {
+        let fullRange = NSRange(location: 0, length: attributedString.length)
+        var found = false
+        attributedString.enumerateAttribute(.backgroundColor, in: fullRange) { value, _, stop in
+            if value != nil {
+                found = true
+                stop.pointee = true
+            }
+        }
+        return found
     }
 
     func makeCoordinator() -> Coordinator {
@@ -625,6 +648,7 @@ private struct StreamNoteRow: View {
     let cancelPendingNavigation: () -> Void
     let performLocalSelection: (@escaping () -> Void) -> Void
     let preserveLocalScrollPosition: () -> Void
+    var onNavigateToNote: ((Note.ID) -> Void)?
 
     @State private var draft: StreamNoteDraft
     @State private var initialDraft: StreamNoteDraft
@@ -645,12 +669,14 @@ private struct StreamNoteRow: View {
         note: Note,
         cancelPendingNavigation: @escaping () -> Void = {},
         performLocalSelection: @escaping (@escaping () -> Void) -> Void = { update in update() },
-        preserveLocalScrollPosition: @escaping () -> Void = {}
+        preserveLocalScrollPosition: @escaping () -> Void = {},
+        onNavigateToNote: ((Note.ID) -> Void)? = nil
     ) {
         self.note = note
         self.cancelPendingNavigation = cancelPendingNavigation
         self.performLocalSelection = performLocalSelection
         self.preserveLocalScrollPosition = preserveLocalScrollPosition
+        self.onNavigateToNote = onNavigateToNote
         let d = StreamNoteDraft(note: note)
         _draft = State(initialValue: d)
         _initialDraft = State(initialValue: d)
@@ -863,6 +889,22 @@ private struct StreamNoteRow: View {
                                 SharedBlockNoteWebView.shared.navigateToMatch(index: pending.bodyIndex) { _, _ in }
                             }
                         }
+                    },
+                    onNoteLinkSearch: { query, excludeNoteID in
+                        let allNotes = store.filteredNotes()
+                        let filtered = allNotes.filter { note in
+                            if let excludeID = excludeNoteID, note.id == excludeID { return false }
+                            return note.title.localizedCaseInsensitiveContains(query)
+                                || note.bodyPlainText.localizedCaseInsensitiveContains(query)
+                        }
+                        return Array(filtered.prefix(8).map { note in
+                            let projectName = store.project(withID: note.projectID)?.name ?? ""
+                            return NoteLinkSearchResult(id: note.id, title: note.title, project: projectName)
+                        })
+                    },
+                    onNoteLinkNavigate: { targetNoteID in
+                        store.selectNote(targetNoteID)
+                        onNavigateToNote?(targetNoteID)
                     }
                 )
                 .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -872,8 +914,6 @@ private struct StreamNoteRow: View {
         }
         .frame(minHeight: minH, alignment: .top)
         .animation(.easeInOut(duration: 0.12), value: isSelected)
-        .animation(.easeInOut(duration: 0.12), value: editorIsVisible)
-        .animation(.easeInOut(duration: 0.15), value: capturedPreviewHeight)
         .padding(.bottom, 60)
     }
 
@@ -1306,6 +1346,21 @@ private struct StreamNoteRow: View {
 
     // MARK: - Date
 
+    // MARK: - Static DateFormatters (avoid per-render allocation)
+    private static let dateLabelFormatter: DateFormatter = {
+        let fm = DateFormatter()
+        fm.locale = Locale(identifier: "zh_CN")
+        fm.dateFormat = "M月d日 EEEE"
+        return fm
+    }()
+
+    private static let editedAtFormatter: DateFormatter = {
+        let fm = DateFormatter()
+        fm.locale = Locale(identifier: "zh_CN")
+        fm.dateFormat = "M月d日"
+        return fm
+    }()
+
     /// Date label color. Hover sensitivity is handled inside StreamNoteDateControlView.
     private var dateColor: Color {
         (isSelected || isToday) ? AgendaColor.amber : AgendaColor.textMuted
@@ -1321,8 +1376,7 @@ private struct StreamNoteRow: View {
         if Calendar.current.isDateInToday(d) { return "今天" }
         if Calendar.current.isDateInTomorrow(d) { return "明天" }
         if Calendar.current.isDateInYesterday(d) { return "昨天" }
-        let fm = DateFormatter(); fm.locale = Locale(identifier: "zh_CN"); fm.dateFormat = "M月d日 EEEE"
-        return fm.string(from: d)
+        return Self.dateLabelFormatter.string(from: d)
     }
     private var isToday: Bool {
         guard let d = draft.hasScheduledDate ? draft.scheduledDate : note.scheduledDate else { return false }
@@ -1339,8 +1393,7 @@ private struct StreamNoteRow: View {
         if interval < 86400 { return "\(Int(interval / 3600)) 小时前" }
         if interval < 172800 { return "昨天" }
         if interval < 604800 { return "\(Int(interval / 86400)) 天前" }
-        let fm = DateFormatter(); fm.locale = Locale(identifier: "zh_CN"); fm.dateFormat = "M月d日"
-        return fm.string(from: note.editedAt)
+        return Self.editedAtFormatter.string(from: note.editedAt)
     }
 
     // MARK: - Action Menu
@@ -1469,11 +1522,43 @@ private struct StreamNoteRow: View {
 
     @ViewBuilder
     private var contextMenuContent: some View {
-        Button(note.isStarred ? "取消标星" : "标星") { store.setStarred(!note.isStarred, noteID: note.id) }
-        Button("指定到今天") { store.scheduleToday(noteID: note.id) }
-        Button("复制笔记") { store.duplicateNote(note.id) }
+        Button("复制链接") {
+            copyToPasteboard(agendaNoteLink)
+        }
+        Button("复制为 Markdown") {
+            flushDraft()
+            copyToPasteboard(markdownNoteText)
+        }
+        Button("复制为纯文本") {
+            flushDraft()
+            copyToPasteboard(fullNoteText)
+        }
+        Button("复制摘要") {
+            if let s = store.summary(for: note.id) { copyToPasteboard(s) }
+        }
         Divider()
-        Button("复制摘要") { if let s = store.summary(for: note.id) { copyToPasteboard(s) } }
+        Button("保存为模板...") {
+            flushDraft()
+            saveAsTemplate(from: note, store: store)
+        }
+        Button("复制笔记") { store.duplicateNote(note.id) }
+        Button("指定到今天") { store.scheduleToday(noteID: note.id) }
+        Divider()
+        Button(note.status == .completed ? "标记为未完成" : "标记为已完成") {
+            store.setStatus(note.status == .completed ? .open : .completed, noteID: note.id)
+        }
+        Button(note.status == .closed ? "取消归档" : "归档笔记") {
+            store.setStatus(note.status == .closed ? .open : .closed, noteID: note.id)
+        }
+        Button(note.isBrief ? "取消简达" : "标记为简达") {
+            store.setBrief(!note.isBrief, noteID: note.id)
+        }
+        Button(note.pinState == .pinnedTop ? "取消置顶" : "置顶") {
+            store.setPinState(note.pinState == .pinnedTop ? .none : .pinnedTop, noteID: note.id)
+        }
+        Button(note.pinState == .pinnedBottom ? "取消置底" : "置底") {
+            store.setPinState(note.pinState == .pinnedBottom ? .none : .pinnedBottom, noteID: note.id)
+        }
         Divider()
         Button("删除笔记", role: .destructive) { store.deleteNote(note.id) }
     }
@@ -1942,10 +2027,31 @@ private struct ReturnKeyTextField: NSViewRepresentable {
 
 // MARK: - Search Popover Content
 
+private struct SearchFilterOption: Identifiable {
+    let label: String
+    let token: String
+    let systemImage: String
+
+    var id: String { token }
+}
+
+private struct SearchPopoverResult: Identifiable {
+    let note: Note
+    let projectName: String
+    let excerpt: String
+    let matchCount: Int
+    let field: SearchField?
+
+    var id: Note.ID { note.id }
+}
+
 private struct SearchPopoverContent: View {
     @Binding var searchText: String
     @Binding var navigationTargetNoteID: Note.ID?
     @Environment(ObservableLibraryStore.self) private var store
+    @State private var showSaveSheet = false
+    @State private var showAdvanced = false
+    @State private var draftSearchText = ""
 
     private var summary: SearchSummary {
         store.searchSummary
@@ -1959,14 +2065,14 @@ private struct SearchPopoverContent: View {
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(AgendaColor.textMuted)
                 ReturnKeyTextField(
-                    text: $searchText,
+                    text: $draftSearchText,
                     placeholder: "搜索标题、正文、标签或人员",
-                    onReturn: { handleNext() }
+                    onReturn: { handleSearchReturn() }
                 )
                 .frame(width: 180, height: 20)
-                if !searchText.isEmpty {
+                if !draftSearchText.isEmpty {
                     Button {
-                        searchText = ""
+                        clearSearch()
                     } label: {
                         Image(systemName: "xmark.circle.fill")
                             .font(.system(size: 13, weight: .medium))
@@ -1976,8 +2082,16 @@ private struct SearchPopoverContent: View {
                 }
             }
 
+            if hasActiveSearch {
+                searchResultsOverview
+            }
+
+            if !searchResultRows.isEmpty {
+                searchResultList
+            }
+
             // 导航和计数行
-            if summary.totalOccurrences > 0 {
+            if isCommittedDraft && summary.totalOccurrences > 0 {
                 HStack(spacing: 8) {
                     Button { handlePrevious() } label: {
                         Image(systemName: "chevron.up")
@@ -1999,19 +2113,55 @@ private struct SearchPopoverContent: View {
 
                     Spacer()
 
+                    Button {
+                        showSaveSheet = true
+                    } label: {
+                        Image(systemName: "plus.rectangle.on.folder")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(AgendaColor.amber)
+                    }
+                    .buttonStyle(.plain)
+                    .help("保存为智能概览")
+
                     Text("笔记 \(summary.currentNoteIndex)/\(summary.totalMatchedNotes)")
                         .font(.custom("Avenir Next", size: 11))
                         .foregroundStyle(AgendaColor.textMuted)
                 }
-            } else if !searchText.isEmpty {
-                Text("无匹配结果")
-                    .font(.custom("Avenir Next", size: 11))
-                    .foregroundStyle(AgendaColor.textMuted)
+            }
+
+            Divider()
+                .padding(.vertical, 2)
+
+            Button {
+                showAdvanced.toggle()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: showAdvanced ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                    Text("语法与筛选")
+                        .font(.custom("Avenir Next Medium", size: 11))
+                    Spacer()
+                    Text(store.sortMode.title)
+                        .font(.custom("Avenir Next", size: 10))
+                        .foregroundStyle(AgendaColor.textMuted)
+                }
+                .foregroundStyle(AgendaColor.textMuted)
+            }
+            .buttonStyle(.plain)
+
+            if showAdvanced {
+                advancedSearchContent
             }
         }
         .padding(.horizontal, 10).padding(.vertical, 8)
-        .frame(width: 320)
+        .frame(width: 390)
+        .onAppear {
+            draftSearchText = searchText
+        }
         .onChange(of: searchText) { _, newValue in
+            if draftSearchText != newValue {
+                draftSearchText = newValue
+            }
             if newValue.isEmpty {
                 SharedBlockNoteWebView.shared.clearSearch()
             }
@@ -2028,9 +2178,339 @@ private struct SearchPopoverContent: View {
                 SharedBlockNoteWebView.shared.navigateToMatch(index: 0) { _, _ in }
             }
         }
+        .sheet(isPresented: $showSaveSheet) {
+            SmartOverviewPromptSheet(
+                sheet: SmartOverviewSheet(query: draftSearchText),
+                onSave: { name, query in
+                    store.addSmartOverview(name: name, query: query)
+                }
+            )
+        }
     }
 
     // MARK: - Navigation helpers
+
+    private var searchResultsOverview: some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(searchScopeTitle)
+                    .font(.custom("Avenir Next Demi Bold", size: 11))
+                    .foregroundStyle(AgendaColor.textMuted)
+                Text(searchResultSummaryText)
+                    .font(.custom("Avenir Next", size: 12))
+                    .foregroundStyle(AgendaColor.textPrimary)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            if !searchResultRows.isEmpty {
+                Text("全局")
+                    .font(.custom("Avenir Next Demi Bold", size: 10))
+                    .foregroundStyle(AgendaColor.amber)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(AgendaColor.amber.opacity(0.12), in: Capsule())
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(AgendaColor.canvasGray.opacity(0.8), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var searchResultList: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(searchResultRows) { result in
+                Button {
+                    openSearchResult(result)
+                } label: {
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: result.field == .title ? "textformat" : "doc.text")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(AgendaColor.amber)
+                            .frame(width: 16, height: 16)
+                            .padding(.top, 2)
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack(spacing: 6) {
+                                Text(result.note.title.isEmpty ? "无标题" : result.note.title)
+                                    .font(.custom("Avenir Next Medium", size: 12))
+                                    .foregroundStyle(AgendaColor.textPrimary)
+                                    .lineLimit(1)
+
+                                if result.matchCount > 0 {
+                                    Text("\(result.matchCount)")
+                                        .font(.custom("Avenir Next Demi Bold", size: 9))
+                                        .foregroundStyle(AgendaColor.amber)
+                                        .padding(.horizontal, 5)
+                                        .padding(.vertical, 1)
+                                        .background(AgendaColor.amber.opacity(0.12), in: Capsule())
+                                }
+                            }
+
+                            Text(result.excerpt)
+                                .font(.custom("Avenir Next", size: 10))
+                                .foregroundStyle(AgendaColor.textMuted)
+                                .lineLimit(1)
+
+                            Text(result.projectName)
+                                .font(.custom("Avenir Next", size: 9))
+                                .foregroundStyle(AgendaColor.textMuted.opacity(0.85))
+                                .lineLimit(1)
+                        }
+
+                        Spacer(minLength: 8)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .background(Color.white.opacity(0.7), in: RoundedRectangle(cornerRadius: 7))
+                .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color.black.opacity(0.05), lineWidth: 0.5))
+            }
+        }
+    }
+
+    private var advancedSearchContent: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Text("排序")
+                    .font(.custom("Avenir Next Medium", size: 11))
+                    .foregroundStyle(AgendaColor.textMuted)
+                Menu {
+                    ForEach(SortMode.allCases, id: \.self) { mode in
+                        Button(mode.title) {
+                            store.setSortMode(mode)
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(store.sortMode.title)
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.system(size: 8, weight: .semibold))
+                    }
+                    .font(.custom("Avenir Next", size: 11))
+                    .foregroundStyle(AgendaColor.amber)
+                }
+                .menuStyle(.borderlessButton)
+
+                Spacer()
+
+                Button {
+                    showSaveSheet = true
+                } label: {
+                    Label("保存概览", systemImage: "plus.rectangle.on.folder")
+                        .font(.custom("Avenir Next Medium", size: 11))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(AgendaColor.amber)
+                .disabled(draftSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+
+            Text("输入关键词，或点下面条件快速组合筛选：")
+                .font(.custom("Avenir Next", size: 10))
+                .foregroundStyle(AgendaColor.textMuted)
+
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 74), spacing: 6)], alignment: .leading, spacing: 6) {
+                ForEach(searchFilterOptions) { option in
+                    Button {
+                        toggleSearchToken(option.token)
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: containsSearchToken(option.token) ? "checkmark.circle.fill" : option.systemImage)
+                                .font(.system(size: 10, weight: .medium))
+                            Text(option.label)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .font(.custom("Avenir Next", size: 10))
+                    .foregroundStyle(containsSearchToken(option.token) ? AgendaColor.amber : AgendaColor.textPrimary)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(AgendaColor.canvasGray, in: Capsule())
+                    .help(option.token)
+                }
+            }
+
+            Text("语法：tag:标签 person:人名 status:open，多个条件会同时生效")
+                .font(.custom("Avenir Next", size: 10))
+                .foregroundStyle(AgendaColor.textMuted)
+        }
+        .padding(.top, 2)
+    }
+
+    private var searchFilterOptions: [SearchFilterOption] {
+        [
+            SearchFilterOption(label: "简达", token: "is:brief", systemImage: "smallcircle.fill.circle"),
+            SearchFilterOption(label: "关注", token: "is:focused", systemImage: "scope"),
+            SearchFilterOption(label: "未完成", token: "status:open", systemImage: "circle"),
+            SearchFilterOption(label: "已完成", token: "status:completed", systemImage: "checkmark.circle"),
+            SearchFilterOption(label: "有待办", token: "has:tasks", systemImage: "checklist"),
+            SearchFilterOption(label: "有日期", token: "has:date", systemImage: "calendar"),
+            SearchFilterOption(label: "今天", token: "date:today", systemImage: "sun.max"),
+            SearchFilterOption(label: "未来", token: "date:upcoming", systemImage: "calendar.badge.clock")
+        ]
+    }
+
+    private var searchTerms: [String] {
+        draftSearchText
+            .split(separator: " ")
+            .map(String.init)
+            .filter { !$0.isEmpty }
+    }
+
+    private var trimmedSearchText: String {
+        draftSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var hasActiveSearch: Bool {
+        !trimmedSearchText.isEmpty
+    }
+
+    private var searchResultNotes: [Note] {
+        hasActiveSearch ? store.library.globalSearchNotes(for: draftSearchText, includeTrash: includeTrashInPreview) : []
+    }
+
+    private var searchResultRows: [SearchPopoverResult] {
+        let occurrencesByNote = Dictionary(grouping: previewOccurrences, by: \.noteID)
+        return searchResultNotes.prefix(5).map { note in
+            let occurrences = occurrencesByNote[note.id] ?? []
+            let firstOccurrence = occurrences.first
+            return SearchPopoverResult(
+                note: note,
+                projectName: projectPath(for: note),
+                excerpt: firstOccurrence?.excerpt ?? fallbackExcerpt(for: note),
+                matchCount: occurrences.count,
+                field: firstOccurrence?.field
+            )
+        }
+    }
+
+    private var previewOccurrences: [SearchOccurrence] {
+        hasActiveSearch
+            ? store.library.globalSearchOccurrences(for: draftSearchText, includeTrash: includeTrashInPreview)
+            : []
+    }
+
+    private var includeTrashInPreview: Bool {
+        store.selectedOverview == .trash
+    }
+
+    private var isCommittedDraft: Bool {
+        !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && searchText.trimmingCharacters(in: .whitespacesAndNewlines) == trimmedSearchText
+    }
+
+    private var searchScopeTitle: String {
+        if store.selectedOverview == .trash {
+            return "废纸篓搜索"
+        }
+        return "全局搜索"
+    }
+
+    private var searchResultSummaryText: String {
+        if !previewOccurrences.isEmpty {
+            return "\(searchResultNotes.count) 篇笔记，\(previewOccurrences.count) 处命中"
+        }
+        return filteredSearchStatusText
+    }
+
+    private var hasSearchFilters: Bool {
+        searchTerms.contains { isSearchFilterToken($0) }
+    }
+
+    private var hasPlainKeywords: Bool {
+        searchTerms.contains { !isSearchFilterToken($0) }
+    }
+
+    private var filteredSearchStatusText: String {
+        let count = searchResultNotes.count
+        if count == 0 {
+            return hasPlainKeywords ? "无匹配结果" : "没有符合条件的笔记"
+        }
+        if hasPlainKeywords {
+            return "已筛选 \(count) 篇笔记，未找到关键词位置"
+        }
+        return "已筛选 \(count) 篇笔记"
+    }
+
+    private func containsSearchToken(_ token: String) -> Bool {
+        searchTerms.contains(token)
+    }
+
+    private func toggleSearchToken(_ token: String) {
+        var terms = searchTerms
+        if let index = terms.firstIndex(of: token) {
+            terms.remove(at: index)
+        } else {
+            terms.append(token)
+        }
+        draftSearchText = terms.joined(separator: " ")
+    }
+
+    private func isSearchFilterToken(_ term: String) -> Bool {
+        term.hasPrefix("tag:")
+            || term.hasPrefix("person:")
+            || term.hasPrefix("status:")
+            || term.hasPrefix("has:")
+            || term.hasPrefix("is:")
+            || term.hasPrefix("date:")
+    }
+
+    private func projectPath(for note: Note) -> String {
+        guard let project = store.project(withID: note.projectID) else {
+            return "未归属项目"
+        }
+        if let categoryID = project.categoryID,
+           let category = store.category(withID: categoryID) {
+            return "\(category.name) / \(project.name)"
+        }
+        return project.name
+    }
+
+    private func fallbackExcerpt(for note: Note) -> String {
+        let body = note.bodyPlainText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !body.isEmpty {
+            return String(body.prefix(72))
+        }
+        if !note.tags.isEmpty {
+            return note.tags.map { "#\($0)" }.joined(separator: " ")
+        }
+        return hasSearchFilters ? "符合当前筛选条件" : "标题匹配"
+    }
+
+    private func openSearchResult(_ result: SearchPopoverResult) {
+        commitDraftSearch()
+        store.selectNote(result.note.id)
+        navigationTargetNoteID = result.note.id
+        if let occurrence = store.searchOccurrences.first(where: { $0.noteID == result.note.id }) {
+            prepareEditorSearchNavigation(for: occurrence)
+        }
+    }
+
+    private func clearSearch() {
+        draftSearchText = ""
+        searchText = ""
+    }
+
+    private func commitDraftSearch() {
+        store.commitGlobalSearchText(draftSearchText)
+    }
+
+    private func handleSearchReturn() {
+        guard hasActiveSearch else {
+            clearSearch()
+            return
+        }
+
+        guard isCommittedDraft else {
+            commitDraftSearch()
+            return
+        }
+
+        handleNext()
+    }
 
     private func handleNext() {
         let previousNoteID = store.selectedNoteID
