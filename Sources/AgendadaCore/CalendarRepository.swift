@@ -6,8 +6,7 @@ import Foundation
 ///
 /// All `EKEventStore` operations are serialized on the actor's executor,
 /// keeping synchronous EventKit calls (`events(matching:)`, calendar enumeration,
-/// etc.) off the main thread.  Only permission-request methods are `@MainActor`
-/// because the system authorization dialog must present from the main thread.
+/// etc.) off the main thread.
 public actor CalendarRepository {
     private let eventStore = EKEventStore()
 
@@ -31,9 +30,8 @@ public actor CalendarRepository {
 
     public init() {}
 
-    // MARK: - Permission Requests (must be @MainActor for system dialog)
+    // MARK: - Permission Requests
 
-    @MainActor
     public func requestEventAccess() async -> Bool {
         do {
             return try await eventStore.requestFullAccessToEvents()
@@ -42,7 +40,6 @@ public actor CalendarRepository {
         }
     }
 
-    @MainActor
     public func requestReminderAccess() async -> Bool {
         do {
             return try await eventStore.requestFullAccessToReminders()

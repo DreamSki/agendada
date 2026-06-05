@@ -34,6 +34,7 @@ struct AgendadaMain {
 private final class AppDelegate: NSObject, NSApplicationDelegate {
     private var window: NSWindow?
     private var measurementWindow: NSWindow?
+    private var templateManagerWindow: NSWindow?
     var store: ObservableLibraryStore!
     private let calendarStore = CalendarStore()
 
@@ -56,10 +57,20 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         mainMenu.addItem(appMenuItem)
         let appMenu = NSMenu()
         appMenuItem.submenu = appMenu
-        appMenu.addItem(NSMenuItem(title: "关于 Agendada", action: #selector(NSApp.orderFrontStandardAboutPanel(_:)), keyEquivalent: ""))
-        appMenu.addItem(NSMenuItem(title: "样式测量工具", action: #selector(AppDelegate.showMeasurementWindow), keyEquivalent: "m"))
+        let aboutItem = NSMenuItem(title: "关于 Agendada", action: #selector(NSApp.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        aboutItem.target = NSApp
+        appMenu.addItem(aboutItem)
         appMenu.addItem(.separator())
-        appMenu.addItem(NSMenuItem(title: "退出 Agendada", action: #selector(NSApp.terminate(_:)), keyEquivalent: "q"))
+        let templateManagerItem = NSMenuItem(title: "模板管理器", action: #selector(AppDelegate.showTemplateManager), keyEquivalent: "")
+        templateManagerItem.target = self
+        appMenu.addItem(templateManagerItem)
+        let measurementItem = NSMenuItem(title: "样式测量工具", action: #selector(AppDelegate.showMeasurementWindow), keyEquivalent: "m")
+        measurementItem.target = self
+        appMenu.addItem(measurementItem)
+        appMenu.addItem(.separator())
+        let quitItem = NSMenuItem(title: "退出 Agendada", action: #selector(NSApp.terminate(_:)), keyEquivalent: "q")
+        quitItem.target = NSApp
+        appMenu.addItem(quitItem)
 
         // Edit menu
         let editItem = NSMenuItem()
@@ -92,33 +103,48 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         fontItem.submenu = fontMenu
         formatMenu.addItem(fontItem)
 
-        fontMenu.addItem(NSMenuItem(title: "显示字体面板", action: #selector(NSFontManager.orderFrontFontPanel(_:)), keyEquivalent: "t"))
+        let fontPanelItem = NSMenuItem(title: "显示字体面板", action: #selector(NSFontManager.orderFrontFontPanel(_:)), keyEquivalent: "t")
+        fontPanelItem.target = NSFontManager.shared
+        fontMenu.addItem(fontPanelItem)
         fontMenu.addItem(.separator())
 
         let boldItem = NSMenuItem(title: "粗体", action: #selector(AppDelegate.toggleBoldViaFontManager), keyEquivalent: "b")
         boldItem.keyEquivalentModifierMask = .command
+        boldItem.target = self
         fontMenu.addItem(boldItem)
 
         let italicItem = NSMenuItem(title: "斜体", action: #selector(AppDelegate.toggleItalicViaFontManager), keyEquivalent: "i")
         italicItem.keyEquivalentModifierMask = .command
+        italicItem.target = self
         fontMenu.addItem(italicItem)
 
         let underlineItem = NSMenuItem(title: "下划线", action: #selector(AppDelegate.toggleUnderlineViaFontManager), keyEquivalent: "u")
         underlineItem.keyEquivalentModifierMask = .command
+        underlineItem.target = self
         fontMenu.addItem(underlineItem)
 
         fontMenu.addItem(.separator())
-        fontMenu.addItem(NSMenuItem(title: "更大", action: #selector(NSFontManager.modifyFont(_:)), keyEquivalent: "="))
-        fontMenu.addItem(NSMenuItem(title: "更小", action: #selector(NSFontManager.modifyFont(_:)), keyEquivalent: "-"))
+        let largerFontItem = NSMenuItem(title: "更大", action: #selector(NSFontManager.modifyFont(_:)), keyEquivalent: "=")
+        largerFontItem.target = NSFontManager.shared
+        fontMenu.addItem(largerFontItem)
+        let smallerFontItem = NSMenuItem(title: "更小", action: #selector(NSFontManager.modifyFont(_:)), keyEquivalent: "-")
+        smallerFontItem.target = NSFontManager.shared
+        fontMenu.addItem(smallerFontItem)
 
         // Lists submenu
         let listMenu = NSMenu(title: "列表")
         let listItem = NSMenuItem(title: "列表", action: nil, keyEquivalent: "")
         listItem.submenu = listMenu
         formatMenu.addItem(listItem)
-        listMenu.addItem(NSMenuItem(title: "无序列表", action: #selector(AppDelegate.insertBulletList), keyEquivalent: "l"))
-        listMenu.addItem(NSMenuItem(title: "有序列表", action: #selector(AppDelegate.insertNumberedList), keyEquivalent: "o"))
-        listMenu.addItem(NSMenuItem(title: "任务列表", action: #selector(AppDelegate.insertChecklist), keyEquivalent: "t"))
+        let bulletListItem = NSMenuItem(title: "无序列表", action: #selector(AppDelegate.insertBulletList), keyEquivalent: "l")
+        bulletListItem.target = self
+        listMenu.addItem(bulletListItem)
+        let numberedListItem = NSMenuItem(title: "有序列表", action: #selector(AppDelegate.insertNumberedList), keyEquivalent: "o")
+        numberedListItem.target = self
+        listMenu.addItem(numberedListItem)
+        let checklistItem = NSMenuItem(title: "任务列表", action: #selector(AppDelegate.insertChecklist), keyEquivalent: "t")
+        checklistItem.target = self
+        listMenu.addItem(checklistItem)
     }
 
     // Menu action helpers — operate on first-responder NSTextView
@@ -220,11 +246,38 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             defer: false
         )
         window.title = "样式测量工具"
+        window.isReleasedWhenClosed = false
         window.center()
         window.contentView = NSHostingView(rootView: contentView)
         window.makeKeyAndOrderFront(nil)
 
         self.measurementWindow = window
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    @objc private func showTemplateManager() {
+        if let templateManagerWindow {
+            templateManagerWindow.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+
+        let contentView = TemplateManagerView()
+            .environment(store)
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 420, height: 520),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "模板管理器"
+        window.isReleasedWhenClosed = false
+        window.center()
+        window.contentView = NSHostingView(rootView: contentView)
+        window.makeKeyAndOrderFront(nil)
+
+        self.templateManagerWindow = window
         NSApp.activate(ignoringOtherApps: true)
     }
 

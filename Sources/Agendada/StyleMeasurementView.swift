@@ -136,7 +136,6 @@ struct StyleMeasurementView: View {
 
     func cssRow(_ name: String, fontSize: CGFloat, lineHeight: CGFloat, padding: CGFloat, paddingV: CGFloat? = nil, paddingH: CGFloat? = nil) -> some View {
         let pv = paddingV ?? padding
-        let ph = paddingH ?? 0
         let lineH = fontSize * lineHeight
         let totalH = lineH + pv * 2
         return HStack {

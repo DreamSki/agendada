@@ -7,6 +7,7 @@ final class CategoryWindowManager {
     static let shared = CategoryWindowManager()
 
     private var openWindows: [ProjectCategory.ID: NSWindow] = [:]
+    private var closeTrackers: [ProjectCategory.ID: WindowCloseTracker] = [:]
 
     func openWindow(for category: ProjectCategory, store: ObservableLibraryStore) {
         // If window already exists, bring it to front
@@ -30,11 +31,13 @@ final class CategoryWindowManager {
         window.center()
 
         let categoryID = category.id
-        window.delegate = WindowCloseTracker {
+        let closeTracker = WindowCloseTracker {
             Task { @MainActor in
                 CategoryWindowManager.shared.handleWindowClosed(categoryID: categoryID)
             }
         }
+        closeTrackers[categoryID] = closeTracker
+        window.delegate = closeTracker
 
         openWindows[category.id] = window
         window.makeKeyAndOrderFront(nil)
@@ -43,10 +46,12 @@ final class CategoryWindowManager {
     func closeWindow(for categoryID: ProjectCategory.ID) {
         openWindows[categoryID]?.close()
         openWindows.removeValue(forKey: categoryID)
+        closeTrackers.removeValue(forKey: categoryID)
     }
 
     private func handleWindowClosed(categoryID: ProjectCategory.ID) {
         openWindows.removeValue(forKey: categoryID)
+        closeTrackers.removeValue(forKey: categoryID)
     }
 }
 
