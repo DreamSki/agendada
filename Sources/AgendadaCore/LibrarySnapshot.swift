@@ -10,6 +10,7 @@ public struct LibrarySnapshot: Codable, Equatable, Sendable {
     public var selectedSmartOverviewID: SmartOverview.ID?
     public var selectedNoteID: Note.ID?
     public var searchText: String
+    public var searchScope: SearchScope = .currentScope
     public var sortOrder: NoteSortOrder
     public var sortMode: SortMode = .scheduledDate
     public var customNoteTemplates: [CustomNoteTemplate] = []
@@ -24,6 +25,7 @@ public struct LibrarySnapshot: Codable, Equatable, Sendable {
         selectedSmartOverviewID: SmartOverview.ID? = nil,
         selectedNoteID: Note.ID?,
         searchText: String,
+        searchScope: SearchScope = .currentScope,
         sortOrder: NoteSortOrder = .scheduledDateDesc,
         sortMode: SortMode = .scheduledDate,
         customNoteTemplates: [CustomNoteTemplate] = []
@@ -37,6 +39,7 @@ public struct LibrarySnapshot: Codable, Equatable, Sendable {
         self.selectedSmartOverviewID = selectedSmartOverviewID
         self.selectedNoteID = selectedNoteID
         self.searchText = searchText
+        self.searchScope = searchScope
         self.sortOrder = sortOrder
         self.sortMode = sortMode
         self.customNoteTemplates = customNoteTemplates
@@ -45,7 +48,7 @@ public struct LibrarySnapshot: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case categories, projects, notes, smartOverviews
         case selectedProjectID, selectedOverview, selectedSmartOverviewID
-        case selectedNoteID, searchText, sortOrder, sortMode, customNoteTemplates
+        case selectedNoteID, searchText, searchScope, sortOrder, sortMode, customNoteTemplates
     }
 
     public init(from decoder: Decoder) throws {
@@ -59,6 +62,7 @@ public struct LibrarySnapshot: Codable, Equatable, Sendable {
         selectedSmartOverviewID = try container.decodeIfPresent(SmartOverview.ID.self, forKey: .selectedSmartOverviewID)
         selectedNoteID = try container.decodeIfPresent(Note.ID.self, forKey: .selectedNoteID)
         searchText = try container.decodeIfPresent(String.self, forKey: .searchText) ?? ""
+        searchScope = try container.decodeIfPresent(SearchScope.self, forKey: .searchScope) ?? .currentScope
         sortOrder = try container.decodeIfPresent(NoteSortOrder.self, forKey: .sortOrder) ?? .scheduledDateDesc
         sortMode = try container.decodeIfPresent(SortMode.self, forKey: .sortMode) ?? .scheduledDate
         customNoteTemplates = try container.decodeIfPresent([CustomNoteTemplate].self, forKey: .customNoteTemplates) ?? []

@@ -2057,6 +2057,7 @@ private struct SearchPopoverContent: View {
     @State private var showSaveSheet = false
     @State private var showAdvanced = false
     @State private var draftSearchText = ""
+    @State private var searchScope: SearchScope = .currentScope
 
     private var summary: SearchSummary {
         store.searchSummary
@@ -2082,6 +2083,28 @@ private struct SearchPopoverContent: View {
                         Image(systemName: "xmark.circle.fill")
                             .font(.system(size: 13, weight: .medium))
                             .foregroundStyle(AgendaColor.textMuted)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            // 搜索范围切换
+            HStack(spacing: 0) {
+                ForEach(SearchScope.allCases, id: \.self) { scope in
+                    Button {
+                        searchScope = scope
+                    } label: {
+                        Text(scope == .currentScope ? "当前范围" : "全部笔记")
+                            .font(.custom("Avenir Next Medium", size: 11))
+                            .foregroundStyle(searchScope == scope ? AgendaColor.amber : AgendaColor.textMuted)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
+                            .background(
+                                searchScope == scope
+                                    ? AgendaColor.amber.opacity(0.12)
+                                    : Color.clear,
+                                in: Capsule()
+                            )
                     }
                     .buttonStyle(.plain)
                 }
@@ -2162,6 +2185,10 @@ private struct SearchPopoverContent: View {
         .frame(width: 390)
         .onAppear {
             draftSearchText = committedSearchText
+            searchScope = store.searchScope
+        }
+        .onChange(of: searchScope) { _, newScope in
+            store.searchScope = newScope
         }
         .onChange(of: committedSearchText) { _, newValue in
             if draftSearchText != newValue {
@@ -2171,12 +2198,8 @@ private struct SearchPopoverContent: View {
                 SharedBlockNoteWebView.shared.clearSearch()
             }
         }
-        .onChange(of: store.searchOccurrences.count) { _, newCount in
-            // Fire searchInEditor only after calculateSearchOccurrences
-            // completes (180ms debounced in ObservableLibraryStore).
-            // This avoids the double-debounce race where the old 250ms
-            // timer could fire before occurrences were ready.
-            guard !committedSearchText.isEmpty, newCount > 0 else { return }
+        .onChange(of: editorSearchRenderKey) { _, _ in
+            guard !committedSearchText.isEmpty, store.searchOccurrences.count > 0 else { return }
             let q = store.library.searchHighlightText
             guard !q.isEmpty else { return }
             SharedBlockNoteWebView.shared.searchInEditor(query: q) { _ in
@@ -2210,7 +2233,7 @@ private struct SearchPopoverContent: View {
             Spacer()
 
             if !searchResultRows.isEmpty {
-                Text("全局")
+                Text(searchScope == .currentScope ? "范围内" : "全局")
                     .font(.custom("Avenir Next Demi Bold", size: 10))
                     .foregroundStyle(AgendaColor.amber)
                     .padding(.horizontal, 7)
@@ -2374,7 +2397,15 @@ private struct SearchPopoverContent: View {
     }
 
     private var searchResultNotes: [Note] {
-        hasActiveSearch ? store.library.globalSearchNotes(for: draftSearchText, includeTrash: includeTrashInPreview) : []
+        guard hasActiveSearch else { return [] }
+        if searchScope == .currentScope {
+            // 当前范围预览：从 store 的 base scope notes 直接用 draftText 过滤
+            let baseNotes = store.library.currentScopeNotesForPreview(now: Date())
+            let query = NoteSearchEngine.parse(draftSearchText)
+            return NoteSearchEngine.filter(baseNotes, query: query)
+        } else {
+            return store.library.globalSearchNotes(for: draftSearchText, onlyTrash: isTrashPreview)
+        }
     }
 
     private var searchResultRows: [SearchPopoverResult] {
@@ -2393,12 +2424,27 @@ private struct SearchPopoverContent: View {
     }
 
     private var previewOccurrences: [SearchOccurrence] {
-        hasActiveSearch
-            ? store.library.globalSearchOccurrences(for: draftSearchText, includeTrash: includeTrashInPreview)
-            : []
+        guard hasActiveSearch else { return [] }
+        if searchScope == .currentScope {
+            let notes = searchResultNotes
+            return NoteSearchEngine.occurrences(in: notes, query: draftSearchText)
+        } else {
+            return store.library.globalSearchOccurrences(for: draftSearchText, onlyTrash: isTrashPreview)
+        }
     }
 
-    private var includeTrashInPreview: Bool {
+    /// Stable key for WebView search highlight refresh — avoids stale highlights
+    /// when search text changes but occurrence count stays the same.
+    private var editorSearchRenderKey: String {
+        [
+            committedSearchText,
+            store.selectedNoteID?.uuidString ?? "",
+            "\(store.currentOccurrence?.globalIndex ?? -1)",
+            "\(store.searchOccurrences.count)"
+        ].joined(separator: "|")
+    }
+
+    private var isTrashPreview: Bool {
         store.selectedOverview == .trash
     }
 
@@ -2410,6 +2456,15 @@ private struct SearchPopoverContent: View {
     private var searchScopeTitle: String {
         if store.selectedOverview == .trash {
             return "废纸篓搜索"
+        }
+        if searchScope == .currentScope {
+            if let projectID = store.selectedProjectID,
+               let project = store.library.project(withID: projectID) {
+                return "项目：\(project.name)"
+            }
+            if let overview = store.selectedOverview {
+                return overview.title + "搜索"
+            }
         }
         return "全局搜索"
     }
@@ -2500,7 +2555,7 @@ private struct SearchPopoverContent: View {
     }
 
     private func commitDraftSearch() {
-        store.commitGlobalSearchText(draftSearchText)
+        store.commitSearchText(draftSearchText)
     }
 
     private func handleSearchReturn() {

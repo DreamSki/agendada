@@ -56,6 +56,19 @@ final class ObservableLibraryStore {
         }
     }
 
+    var searchScope: SearchScope {
+        get { observeRevision(); return store.searchScope }
+        set {
+            guard newValue != store.searchScope else { return }
+            store.setSearchScope(newValue)
+            publishChange()
+            persistSoon()
+            if !store.searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                scheduleSearchCalculation()
+            }
+        }
+    }
+
     // MARK: - Search
 
     /// 底层 LibraryStore 的直接访问（只读）
@@ -95,9 +108,9 @@ final class ObservableLibraryStore {
         return occurrence
     }
 
-    func commitGlobalSearchText(_ newText: String) {
+    func commitSearchText(_ newText: String) {
         searchCalcTask?.cancel()
-        store.commitGlobalSearchText(newText)
+        store.commitSearchText(newText)
         publishChange()
         persistSoon()
     }

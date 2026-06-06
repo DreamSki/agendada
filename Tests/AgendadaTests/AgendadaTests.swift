@@ -1092,8 +1092,8 @@ import Testing
 }
 
 @Test func searchDateUpcomingPredicate() async throws {
-    // date:upcoming uses `scheduledDate > startOfDay`, which includes today
-    // (any time after midnight today qualifies as "upcoming")
+    // date:upcoming now uses day-level comparison (strictly after today),
+    // matching the "即将到来" overview semantics.
     let now = Date(timeIntervalSince1970: 1_800_000_000)
     let store = LibraryStore()
     _ = store.addProject(name: "项目")
@@ -1105,8 +1105,9 @@ import Testing
     store.updateSearchText("date:upcoming")
 
     let notes = store.filteredNotes(now: now)
-    // Both today and tomorrow notes have dates > startOfDay
-    #expect(notes.count == 2)
+    // Only tomorrow qualifies as upcoming (strictly after today's day)
+    #expect(notes.count == 1)
+    #expect(notes[0].title == "明天笔记")
 }
 
 @Test func searchCombinedTagAndKeyword() async throws {
@@ -1413,6 +1414,7 @@ import Testing
 // MARK: - Global Search Tests
 
 @Test func searchWithSelectedProjectSearchesAllActiveNotes() async throws {
+    // .all scope: 搜索全库（旧行为）
     let store = LibraryStore()
     let cat = store.addCategory(name: "工作")
     let proj1 = store.addProject(name: "项目A", categoryID: cat.id)
@@ -1424,10 +1426,31 @@ import Testing
     _ = store.addNote(title: "架构文档B")
 
     store.selectProject(proj1.id)
+    store.setSearchScope(.all)
     store.updateSearchText("架构")
 
     let notes = store.filteredNotes()
     #expect(Set(notes.map(\.title)) == ["架构文档A", "架构文档B"])
+}
+
+@Test func searchWithSelectedProjectScopedToCurrentProject() async throws {
+    // .currentScope（默认）: 只搜当前项目
+    let store = LibraryStore()
+    let cat = store.addCategory(name: "工作")
+    let proj1 = store.addProject(name: "项目A", categoryID: cat.id)
+    let proj2 = store.addProject(name: "项目B", categoryID: cat.id)
+
+    store.selectProject(proj1.id)
+    _ = store.addNote(title: "架构文档A")
+    store.selectProject(proj2.id)
+    _ = store.addNote(title: "架构文档B")
+
+    store.selectProject(proj1.id)
+    // default scope is .currentScope
+    store.updateSearchText("架构")
+
+    let notes = store.filteredNotes()
+    #expect(notes.map(\.title) == ["架构文档A"])
 }
 
 @Test func previewingGlobalSearchDoesNotChangeCurrentProjectFilter() async throws {
@@ -1451,6 +1474,7 @@ import Testing
 }
 
 @Test func committingGlobalSearchLeavesProjectContext() async throws {
+    // .all scope: commit 切换到全局视图（旧行为）
     let store = LibraryStore()
     let cat = store.addCategory(name: "工作")
     let proj1 = store.addProject(name: "项目A", categoryID: cat.id)
@@ -1462,12 +1486,106 @@ import Testing
     _ = store.addNote(title: "架构文档B")
 
     store.selectProject(proj1.id)
-    store.commitGlobalSearchText("架构")
+    store.setSearchScope(.all)
+    store.commitSearchText("架构")
 
     #expect(store.selectedProjectID == nil)
     #expect(store.selectedOverview == .all)
     #expect(store.searchText == "架构")
     #expect(Set(store.filteredNotes().map(\.title)) == ["架构文档A", "架构文档B"])
+}
+
+@Test func committingScopedSearchStaysInCurrentProject() async throws {
+    // .currentScope（默认）: commit 不切换视图
+    let store = LibraryStore()
+    let cat = store.addCategory(name: "工作")
+    let proj1 = store.addProject(name: "项目A", categoryID: cat.id)
+    let proj2 = store.addProject(name: "项目B", categoryID: cat.id)
+
+    store.selectProject(proj1.id)
+    _ = store.addNote(title: "架构文档A")
+    store.selectProject(proj2.id)
+    _ = store.addNote(title: "架构文档B")
+
+    store.selectProject(proj1.id)
+    // default scope is .currentScope
+    store.commitSearchText("架构")
+
+    #expect(store.selectedProjectID == proj1.id)
+    #expect(store.searchText == "架构")
+    #expect(store.filteredNotes().map(\.title) == ["架构文档A"])
+}
+
+@Test func currentScopeSearchStaysInsideTodayOverview() async throws {
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    let todayNote = store.addNote(title: "今天架构", date: now)
+    let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: now)!
+    _ = store.addNote(title: "明天架构", date: tomorrow)
+    _ = store.addNote(title: "无日期架构")
+
+    store.selectOverview(.today)
+    // default scope is .currentScope
+    store.updateSearchText("架构")
+
+    let notes = store.filteredNotes(now: now)
+    #expect(notes.count == 1)
+    #expect(notes[0].id == todayNote.id)
+}
+
+@Test func trashScopeOnlySearchesTrashedNotes() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    let note1 = store.addNote(title: "正常架构")
+    let note2 = store.addNote(title: "已删架构")
+    store.deleteNote(note2.id)
+
+    store.selectOverview(.trash)
+    store.updateSearchText("架构")
+
+    let notes = store.filteredNotes()
+    #expect(notes.count == 1)
+    #expect(notes[0].id == note2.id)
+}
+
+@Test func switchingSearchScopeRecalculates() async throws {
+    let store = LibraryStore()
+    let cat = store.addCategory(name: "工作")
+    let proj1 = store.addProject(name: "项目A", categoryID: cat.id)
+    let proj2 = store.addProject(name: "项目B", categoryID: cat.id)
+
+    store.selectProject(proj1.id)
+    _ = store.addNote(title: "架构文档A")
+    store.selectProject(proj2.id)
+    _ = store.addNote(title: "架构文档B")
+
+    // Start in project A, current scope
+    store.selectProject(proj1.id)
+    store.updateSearchText("架构")
+    #expect(store.filteredNotes().map(\.title) == ["架构文档A"])
+
+    // Switch to all scope — should now see both
+    store.setSearchScope(.all)
+    #expect(Set(store.filteredNotes().map(\.title)) == ["架构文档A", "架构文档B"])
+
+    // Switch back to current scope — should be back to one
+    store.setSearchScope(.currentScope)
+    #expect(store.filteredNotes().map(\.title) == ["架构文档A"])
+}
+
+@Test func searchScopePersistsInSnapshot() async throws {
+    let store = LibraryStore()
+    store.setSearchScope(.all)
+    store.updateSearchText("测试")
+
+    let snapshot = store.snapshot()
+    #expect(snapshot.searchScope == .all)
+    #expect(snapshot.searchText == "测试")
+
+    let restored = LibraryStore(snapshot: snapshot)
+    #expect(restored.searchScope == .all)
+    #expect(restored.searchText == "测试")
 }
 
 // MARK: - Search with Special Characters
