@@ -940,6 +940,7 @@ private struct StreamNoteRow: View {
         .animation(.easeInOut(duration: 0.12), value: isSelected)
         .padding(.bottom, 60)
         .onChange(of: editorFindRenderKey) { _, _ in
+            guard note.id == store.selectedNoteID else { return }
             let findText = store.findInNoteText.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !findText.isEmpty, store.findInNoteOccurrences.count > 0 else {
                 SharedBlockNoteWebView.shared.clearSearch()
