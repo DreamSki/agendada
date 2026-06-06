@@ -993,39 +993,32 @@ public final class LibraryStore {
         }
 
         let trimmedSavedSearch = savedSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let queryParts = [trimmedSavedSearch, trimmedCurrentSearch].filter { !$0.isEmpty }
-        let trimmedSearch = queryParts.joined(separator: " ").lowercased()
-        let matchingNotes = trimmedSearch.isEmpty
+        let query = NoteSearchEngine.mergedQuery(savedQuery: trimmedSavedSearch, transientText: trimmedCurrentSearch)
+        let matchingNotes = query.isEmpty
             ? baseNotes
-            : baseNotes.filter { note in
-                matchesSearch(trimmedSearch, note: note, now: now)
-            }
+            : NoteSearchEngine.filter(baseNotes, query: query, now: now)
 
         return sortedNotesForCurrentMode(matchingNotes)
     }
 
     public func globalSearchNotes(for query: String, includeTrash: Bool = false, now: Date = Date()) -> [Note] {
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return [] }
 
         let baseNotes = notes.filter { note in
             includeTrash ? note.status == .trashed : note.status != .trashed
         }
-        let matchingNotes = baseNotes.filter { note in
-            matchesSearch(trimmed, note: note, now: now)
-        }
+        let parsed = NoteSearchEngine.parse(trimmed)
+        let matchingNotes = NoteSearchEngine.filter(baseNotes, query: parsed, now: now)
         return sortedNotesForCurrentMode(matchingNotes)
     }
 
     public func globalSearchOccurrences(for query: String, includeTrash: Bool = false, now: Date = Date()) -> [SearchOccurrence] {
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return [] }
 
-        let keywords = plainKeywords(from: trimmed)
-        guard !keywords.isEmpty else { return [] }
-
         let notes = globalSearchNotes(for: query, includeTrash: includeTrash, now: now)
-        return occurrences(in: notes, keywords: keywords)
+        return NoteSearchEngine.occurrences(in: notes, query: trimmed, now: now)
     }
 
     public func commitGlobalSearchText(_ newText: String) {
@@ -1097,56 +1090,6 @@ public final class LibraryStore {
         return result
     }
 
-    private func matchesSearch(_ searchText: String, note: Note, now: Date) -> Bool {
-        let terms = searchText.split(separator: " ").map(String.init)
-        let haystack = ([note.title, note.bodyPlainText] + note.tags + note.people).joined(separator: " ").lowercased()
-
-        return terms.allSatisfy { term in
-            if let tag = prefixedValue("tag:", in: term) {
-                return note.tags.contains { $0.lowercased() == tag }
-            }
-
-            if let person = prefixedValue("person:", in: term) {
-                return note.people.contains { $0.lowercased() == person }
-            }
-
-            if let status = prefixedValue("status:", in: term) {
-                return note.status.rawValue == status || note.status.title.lowercased() == status
-            }
-
-            if term == "has:tasks" {
-                return note.checklistSummary.hasOpenItems
-            }
-
-            if term == "has:date" {
-                return note.scheduledDate != nil
-            }
-
-            if term == "is:focused" {
-                return note.isFocused
-            }
-
-            if term == "is:starred" {
-                return note.isStarred
-            }
-
-            if term == "is:brief" {
-                return note.isBrief
-            }
-
-            if term == "date:today" {
-                guard let scheduledDate = note.scheduledDate else { return false }
-                return Calendar.current.isDate(scheduledDate, inSameDayAs: now)
-            }
-
-            if term == "date:upcoming" {
-                guard let scheduledDate = note.scheduledDate else { return false }
-                return scheduledDate > Calendar.current.startOfDay(for: now)
-            }
-
-            return haystack.contains(term)
-        }
-    }
 
     private func summaryText(for summaryNotes: [Note], now: Date) -> String {
         var lines = [
@@ -1514,12 +1457,6 @@ public final class LibraryStore {
             .replacingOccurrences(of: "<", with: "&lt;")
             .replacingOccurrences(of: ">", with: "&gt;")
             .replacingOccurrences(of: "\"", with: "&quot;")
-    }
-
-    private func prefixedValue(_ prefix: String, in term: String) -> String? {
-        guard term.hasPrefix(prefix) else { return nil }
-        let value = String(term.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
-        return value.isEmpty ? nil : value
     }
 
     private func uniqueSorted(_ values: [String]) -> [String] {
@@ -1891,7 +1828,7 @@ public final class LibraryStore {
 
     /// 重新计算搜索命中位置（由 debounce 机制调用）
     public func calculateSearchOccurrences() {
-        let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard !trimmed.isEmpty else {
             searchOccurrences = []
@@ -1899,13 +1836,13 @@ public final class LibraryStore {
             return
         }
 
-        // 提取纯关键词（排除搜索语法前缀）
-        let keywords = plainKeywords(from: trimmed)
+        // 通过 NoteSearchEngine 解析查询并计算命中位置
+        let query = NoteSearchEngine.parse(trimmed)
 
         // 获取过滤后的笔记列表（应用全部搜索语法）
         let notes = filteredNotes()
 
-        searchOccurrences = occurrences(in: notes, keywords: keywords)
+        searchOccurrences = NoteSearchEngine.occurrences(in: notes, query: query)
         currentOccurrenceIndex = nil
         // Leave currentOccurrenceIndex as nil so the first Enter/next press
         // lands on the first match (goToNextSearchOccurrence resolves
@@ -1913,102 +1850,9 @@ public final class LibraryStore {
         // here — that would trigger an onChange storm across all StreamNoteRow views.
     }
 
-    private func occurrences(in notes: [Note], keywords: [String]) -> [SearchOccurrence] {
-        var occurrences: [SearchOccurrence] = []
-        var globalIdx = 0
-
-        for note in notes {
-            var noteOccIdx = 0
-            var bodyIdx = 0
-
-            // 在标题中搜索（标题匹配排在正文前面）
-            let title = note.title
-            for keyword in keywords {
-                findOccurrences(
-                    in: title, keyword: keyword,
-                    field: .title, note: note,
-                    occurrences: &occurrences, globalIdx: &globalIdx,
-                    noteOccIdx: &noteOccIdx, bodyIdx: &bodyIdx
-                )
-            }
-
-            // 在正文中搜索
-            let body = note.bodyPlainText
-            for keyword in keywords {
-                findOccurrences(
-                    in: body, keyword: keyword,
-                    field: .body, note: note,
-                    occurrences: &occurrences, globalIdx: &globalIdx,
-                    noteOccIdx: &noteOccIdx, bodyIdx: &bodyIdx
-                )
-            }
-        }
-
-        return occurrences
-    }
-
-    /// 在给定文本中查找关键词的所有出现位置。
-    /// Searches case-insensitively on the original text to avoid the
-    /// String.Index cross-instance crash that would occur when using
-    /// lowercased-text indices to subscript the original string.
-    private func findOccurrences(
-        in text: String,
-        keyword: String,
-        field: SearchField,
-        note: Note,
-        occurrences: inout [SearchOccurrence],
-        globalIdx: inout Int,
-        noteOccIdx: inout Int,
-        bodyIdx: inout Int
-    ) {
-        var searchStart = text.startIndex
-
-        while let range = text.range(of: keyword, options: .caseInsensitive, range: searchStart..<text.endIndex) {
-            // UTF-16 偏移（用于 WebView 定位）
-            let prefix = String(text[..<range.lowerBound])
-            let matchPosition = prefix.utf16.count
-            let matchLength = keyword.utf16.count
-
-            // 上下文片段（±30 字符）
-            let contextStart = text.index(range.lowerBound, offsetBy: -30, limitedBy: text.startIndex) ?? text.startIndex
-            let contextEnd = text.index(range.upperBound, offsetBy: 30, limitedBy: text.endIndex) ?? text.endIndex
-            var excerpt = String(text[contextStart..<contextEnd])
-                .replacingOccurrences(of: "\n", with: " ")
-                .trimmingCharacters(in: .whitespaces)
-            if contextStart > text.startIndex { excerpt = "…" + excerpt }
-            if contextEnd < text.endIndex { excerpt = excerpt + "…" }
-
-            occurrences.append(SearchOccurrence(
-                noteID: note.id,
-                noteTitle: note.title,
-                globalIndex: globalIdx,
-                occurrenceIndexInNote: noteOccIdx,
-                bodyIndexInNote: field == .body ? bodyIdx : -1,
-                field: field,
-                matchPosition: matchPosition,
-                matchLength: matchLength,
-                excerpt: excerpt
-            ))
-
-            globalIdx += 1
-            noteOccIdx += 1
-            if field == .body { bodyIdx += 1 }
-            searchStart = range.upperBound
-        }
-    }
-
-    /// 从搜索查询中提取纯关键词（排除 tag:、person: 等语法前缀）
-    private func plainKeywords(from query: String) -> [String] {
-        query.split(separator: " ").map(String.init).filter { term in
-            !term.hasPrefix("tag:") && !term.hasPrefix("person:") &&
-            !term.hasPrefix("status:") && !term.hasPrefix("has:") &&
-            !term.hasPrefix("is:") && !term.hasPrefix("date:")
-        }
-    }
-
     /// 用于 UI 高亮的纯关键词（空格分隔）
     public var searchHighlightText: String {
-        plainKeywords(from: searchText.lowercased()).joined(separator: " ")
+        NoteSearchEngine.highlightText(for: searchText)
     }
 
     // MARK: - Occurrence Navigation

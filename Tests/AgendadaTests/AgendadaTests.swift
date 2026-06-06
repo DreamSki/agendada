@@ -1092,8 +1092,8 @@ import Testing
 }
 
 @Test func searchDateUpcomingPredicate() async throws {
-    // date:upcoming uses `scheduledDate > startOfDay`, which includes today
-    // (any time after midnight today qualifies as "upcoming")
+    // date:upcoming now uses day-level comparison (strictly after today),
+    // matching the "即将到来" overview semantics.
     let now = Date(timeIntervalSince1970: 1_800_000_000)
     let store = LibraryStore()
     _ = store.addProject(name: "项目")
@@ -1105,8 +1105,9 @@ import Testing
     store.updateSearchText("date:upcoming")
 
     let notes = store.filteredNotes(now: now)
-    // Both today and tomorrow notes have dates > startOfDay
-    #expect(notes.count == 2)
+    // Only tomorrow qualifies as upcoming (strictly after today's day)
+    #expect(notes.count == 1)
+    #expect(notes[0].title == "明天笔记")
 }
 
 @Test func searchCombinedTagAndKeyword() async throws {
