@@ -865,6 +865,25 @@ final class ObservableLibraryStore {
         return result
     }
 
+    // MARK: - Search Result Groups Cache
+
+    @ObservationIgnored
+    private var cachedSearchResultGroups: [SearchResultGroup]?
+    @ObservationIgnored
+    private var cachedSearchResultGroupsRevision: Int = -1
+
+    func searchResultGroups() -> [SearchResultGroup] {
+        observeRevision()
+        if let cached = cachedSearchResultGroups,
+           cachedSearchResultGroupsRevision == dataRevision {
+            return cached
+        }
+        let result = store.searchResultGroups()
+        cachedSearchResultGroups = result
+        cachedSearchResultGroupsRevision = dataRevision
+        return result
+    }
+
     /// Cached hash of scheduled notes (id + scheduledDate) for RelatedPanelContentView.
     /// Computed once per filteredNotes() result to avoid O(n) hashing in view body.
     @ObservationIgnored
@@ -888,6 +907,8 @@ final class ObservableLibraryStore {
         cachedFilteredNotes = nil
         cachedFilteredNotesRevision = -1
         cachedFilteredNotesSearchText = ""
+        cachedSearchResultGroups = nil
+        cachedSearchResultGroupsRevision = -1
     }
 
     /// Debounce search-occurrence calculation so fast typing doesn't

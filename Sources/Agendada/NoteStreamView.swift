@@ -289,20 +289,28 @@ struct NoteStreamView: View {
 
     private var noteStreamContent: some View {
         let notes = store.filteredNotes()
+        let isSearchResultsMode = !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !store.searchOccurrences.isEmpty
         return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(notes, id: \.id) { note in
-                        StreamNoteRow(
-                            note: note,
-                            cancelPendingNavigation: cancelPendingNavigation,
-                            performLocalSelection: preserveScrollDuringLocalSelection,
-                            preserveLocalScrollPosition: restoreLocalSelectionScrollPosition,
-                            onNavigateToNote: { targetID in
-                                navigationTargetNoteID = targetID
-                            }
+                    if isSearchResultsMode {
+                        SearchResultsContentView(
+                            navigationTargetNoteID: $navigationTargetNoteID
                         )
-                            .padding(.bottom, AgendaSpacing.cardGap)
+                    } else {
+                        ForEach(notes, id: \.id) { note in
+                            StreamNoteRow(
+                                note: note,
+                                cancelPendingNavigation: cancelPendingNavigation,
+                                performLocalSelection: preserveScrollDuringLocalSelection,
+                                preserveLocalScrollPosition: restoreLocalSelectionScrollPosition,
+                                onNavigateToNote: { targetID in
+                                    navigationTargetNoteID = targetID
+                                }
+                            )
+                                .padding(.bottom, AgendaSpacing.cardGap)
+                        }
                     }
                 // Bottom terminal drop zone
                 Rectangle()
@@ -644,6 +652,125 @@ private struct StableTextField: NSViewRepresentable {
             guard newValue != text.wrappedValue else { return }
             text.wrappedValue = newValue
         }
+    }
+}
+
+// MARK: - Search Results Mode
+
+/// Renders search results as grouped snippets instead of full note cards.
+private struct SearchResultsContentView: View {
+    @Environment(ObservableLibraryStore.self) private var store
+    @Binding var navigationTargetNoteID: Note.ID?
+
+    var body: some View {
+        let groups = store.searchResultGroups()
+        let summary = store.searchSummary
+
+        VStack(alignment: .leading, spacing: 0) {
+            // Summary header
+            HStack(spacing: 8) {
+                Text("搜索结果：\(store.library.searchHighlightText)")
+                    .font(AgendaFont.breadcrumbTitle)
+                    .foregroundStyle(Color(red: 0.173, green: 0.173, blue: 0.180))
+                Spacer()
+                Text("\(summary.totalMatchedNotes) 篇笔记 · \(summary.totalOccurrences) 个命中")
+                    .font(AgendaFont.cardMeta)
+                    .foregroundStyle(AgendaColor.textMuted)
+            }
+            .padding(.horizontal, AgendaSpacing.cardPaddingH)
+            .padding(.bottom, 12)
+
+            ForEach(groups) { group in
+                SearchResultGroupRow(
+                    group: group,
+                    onSelectOccurrence: { occurrence in
+                        selectOccurrence(occurrence)
+                    }
+                )
+                .padding(.bottom, AgendaSpacing.cardGap)
+            }
+        }
+    }
+
+    private func selectOccurrence(_ occurrence: SearchOccurrence) {
+        store.selectNote(occurrence.noteID)
+        navigationTargetNoteID = occurrence.noteID
+
+        let query = store.library.searchHighlightText
+        guard !query.isEmpty else { return }
+        SharedBlockNoteWebView.shared.prepareSearchNavigation(
+            noteID: occurrence.noteID,
+            query: query,
+            bodyIndex: occurrence.field == .body ? occurrence.bodyIndexInNote : 0
+        )
+    }
+}
+
+private struct SearchResultGroupRow: View {
+    @Environment(ObservableLibraryStore.self) private var store
+    let group: SearchResultGroup
+    let onSelectOccurrence: (SearchOccurrence) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            // Note title + match count badge
+            Button {
+                if let first = group.occurrences.first {
+                    onSelectOccurrence(first)
+                }
+            } label: {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(group.note.title.isEmpty ? "无标题" : group.note.title)
+                        .font(AgendaFont.cardTitle)
+                        .foregroundStyle(Color(red: 0.102, green: 0.102, blue: 0.102))
+                        .lineLimit(1)
+
+                    Text("\(group.occurrences.count)")
+                        .font(.custom("Avenir Next Demi Bold", size: 9))
+                        .foregroundStyle(AgendaColor.amber)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(AgendaColor.amber.opacity(0.12), in: Capsule())
+
+                    Spacer()
+                }
+            }
+            .buttonStyle(.plain)
+
+            // Snippets (up to 3)
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(Array(group.snippets.prefix(3))) { snippet in
+                    Button {
+                        onSelectOccurrence(snippet.occurrence)
+                    } label: {
+                        HStack(alignment: .top, spacing: 6) {
+                            Image(systemName: snippet.occurrence.field == .title ? "textformat" : "doc.text")
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(AgendaColor.amber)
+                                .frame(width: 14)
+                                .padding(.top, 1)
+
+                            Text(snippet.occurrence.excerpt)
+                                .font(AgendaFont.cardBodyCompact)
+                                .foregroundStyle(AgendaColor.textMuted)
+                                .lineLimit(2)
+                                .multilineTextAlignment(.leading)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.leading, 28)
+        }
+        .padding(AgendaSpacing.cardPaddingV)
+        .padding(.horizontal, AgendaSpacing.cardPaddingH)
+        .background(Color.white, in: RoundedRectangle(cornerRadius: AgendaSpacing.cardRadius))
+        .overlay(
+            RoundedRectangle(cornerRadius: AgendaSpacing.cardRadius)
+                .stroke(AgendaColor.cardBorder, lineWidth: 0.5)
+        )
+        .shadow(color: AgendaColor.cardShadow, radius: 4, y: 2)
+        .padding(.horizontal, 12)
     }
 }
 
