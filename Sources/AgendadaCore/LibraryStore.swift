@@ -1924,27 +1924,13 @@ public final class LibraryStore {
         findInNoteNavigation = (noteID, trimmed, 0)
 
         let query = NoteSearchEngine.parse(trimmed)
-        var result: [SearchOccurrence] = []
 
-        // 只在当前笔记内搜索
-        let titleHits = sortedUniqueHitsInText(note.title, terms: query.highlightTerms)
+        // Find in Note only searches body (like browser Cmd+F).
+        // Title search belongs to List Search.
+        let bodyHits = sortedUniqueHitsInText(note.bodyPlainText, terms: query.highlightTerms)
+        var result: [SearchOccurrence] = []
         var bodyIdx = 0
 
-        for hit in titleHits {
-            result.append(SearchOccurrence(
-                noteID: note.id,
-                noteTitle: note.title,
-                globalIndex: result.count,
-                occurrenceIndexInNote: result.count,
-                bodyIndexInNote: -1,
-                field: .title,
-                matchPosition: hit.position,
-                matchLength: hit.length,
-                excerpt: hit.excerpt
-            ))
-        }
-
-        let bodyHits = sortedUniqueHitsInText(note.bodyPlainText, terms: query.highlightTerms)
         for hit in bodyHits {
             result.append(SearchOccurrence(
                 noteID: note.id,
