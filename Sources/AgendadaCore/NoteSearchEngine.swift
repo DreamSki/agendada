@@ -412,7 +412,7 @@ public enum NoteSearchDatePredicate: String, Equatable, Sendable {
     case none
 }
 
-private struct SearchHit: Equatable {
+internal struct SearchHit: Equatable {
     let position: Int
     let length: Int
     let excerpt: String
