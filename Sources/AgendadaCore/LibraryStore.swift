@@ -12,6 +12,7 @@ public final class LibraryStore {
     public private(set) var selectedNoteID: Note.ID?
     public var batchSelectedNoteIDs: Set<Note.ID> = []
     public private(set) var searchText: String
+    public private(set) var searchScope: SearchScope = .currentScope
     public var sortOrder: NoteSortOrder = .scheduledDateDesc
     public var sortMode: SortMode = .scheduledDate
 
@@ -30,6 +31,7 @@ public final class LibraryStore {
         selectedSmartOverviewID: SmartOverview.ID? = nil,
         selectedNoteID: Note.ID? = nil,
         searchText: String = "",
+        searchScope: SearchScope = .currentScope,
         sortOrder: NoteSortOrder = .scheduledDateDesc,
         sortMode: SortMode = .scheduledDate,
         customNoteTemplates: [CustomNoteTemplate] = []
@@ -43,6 +45,7 @@ public final class LibraryStore {
         self.selectedSmartOverviewID = selectedSmartOverviewID
         self.selectedNoteID = selectedNoteID
         self.searchText = searchText
+        self.searchScope = searchScope
         self.sortOrder = sortOrder
         self.sortMode = sortMode
         self.customNoteTemplates = customNoteTemplates
@@ -59,6 +62,7 @@ public final class LibraryStore {
             selectedSmartOverviewID: snapshot.selectedSmartOverviewID,
             selectedNoteID: snapshot.selectedNoteID,
             searchText: snapshot.searchText,
+            searchScope: snapshot.searchScope,
             sortOrder: snapshot.sortOrder,
             sortMode: snapshot.sortMode,
             customNoteTemplates: snapshot.customNoteTemplates
@@ -935,30 +939,51 @@ public final class LibraryStore {
     }
 
     public func filteredNotes(now: Date = Date()) -> [Note] {
-        var baseNotes: [Note]
-        let savedSearchText: String
         let trimmedCurrentSearch = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let savedSearchText = currentSavedSearchText()
+        let baseNotes = currentScopeNotes(now: now)
 
-        if let selectedSmartOverviewID,
-           let smartOverview = smartOverview(withID: selectedSmartOverviewID) {
-            baseNotes = notes
-            savedSearchText = smartOverview.query
-        } else if !trimmedCurrentSearch.isEmpty {
-            if selectedOverview == .trash {
-                baseNotes = notes.filter { $0.status == .trashed }
-            } else {
-                baseNotes = notes.filter { $0.status != .trashed }
-            }
-            savedSearchText = ""
-        } else if let selectedProjectID {
-            baseNotes = notes.filter { $0.projectID == selectedProjectID }
-            savedSearchText = ""
-        } else if let selectedOverview {
+        let trimmedSavedSearch = savedSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let query = NoteSearchEngine.mergedQuery(savedQuery: trimmedSavedSearch, transientText: trimmedCurrentSearch)
+        let matchingNotes = query.isEmpty
+            ? baseNotes
+            : NoteSearchEngine.filter(baseNotes, query: query, now: now)
+
+        return sortedNotesForCurrentMode(matchingNotes)
+    }
+
+    /// 当前视图范围的基础笔记集合（不受搜索文本影响），供搜索弹窗预览使用
+    public func currentScopeNotesForPreview(now: Date = Date()) -> [Note] {
+        currentScopeNotes(now: now)
+    }
+
+    /// 当前视图范围的基础笔记集合（不受搜索文本影响）
+    private func currentScopeNotes(now: Date) -> [Note] {
+        // Smart Overview → 全库（由 query 定义范围）
+        if let selectedSmartOverviewID, smartOverview(withID: selectedSmartOverviewID) != nil {
+            return notes.filter { selectedOverview != .trash ? $0.status != .trashed : $0.status == .trashed }
+        }
+
+        // 搜索模式下：.all 搜索全库，.currentScope 保持当前范围
+        let trimmedCurrentSearch = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedCurrentSearch.isEmpty && searchScope == .all {
+            return selectedOverview == .trash
+                ? notes.filter { $0.status == .trashed }
+                : notes.filter { $0.status != .trashed }
+        }
+
+        // 按当前选择确定范围
+        if let selectedProjectID {
+            let projectNotes = notes.filter { $0.projectID == selectedProjectID }
+            return selectedOverview != .trash
+                ? projectNotes.filter { $0.status != .trashed }
+                : projectNotes
+        }
+
+        if let selectedOverview {
             let isTrashView = selectedOverview == .trash
-            baseNotes = notes.filter { note in
-                if isTrashView {
-                    return note.status == .trashed
-                }
+            let filtered = notes.filter { note in
+                if isTrashView { return note.status == .trashed }
                 guard note.status != .trashed else { return false }
                 switch selectedOverview {
                 case .today:
@@ -974,31 +999,27 @@ public final class LibraryStore {
                 case .starred:
                     return note.isStarred
                 case .brief:
-                    return note.isBrief  // 简达概览显示标记为简达的笔记
+                    return note.isBrief
                 case .all:
                     return true
                 case .trash:
                     return false
                 }
             }
-            savedSearchText = ""
-        } else {
-            baseNotes = notes
-            savedSearchText = ""
+            return filtered
         }
 
-        // Filter trashed from non-trash views
-        if selectedOverview != .trash {
-            baseNotes = baseNotes.filter { $0.status != .trashed }
+        // 默认：全部笔记
+        return notes.filter { selectedOverview != .trash ? $0.status != .trashed : $0.status == .trashed }
+    }
+
+    /// 当前视图的已保存搜索文本
+    private func currentSavedSearchText() -> String {
+        if let selectedSmartOverviewID,
+           let smartOverview = smartOverview(withID: selectedSmartOverviewID) {
+            return smartOverview.query
         }
-
-        let trimmedSavedSearch = savedSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let query = NoteSearchEngine.mergedQuery(savedQuery: trimmedSavedSearch, transientText: trimmedCurrentSearch)
-        let matchingNotes = query.isEmpty
-            ? baseNotes
-            : NoteSearchEngine.filter(baseNotes, query: query, now: now)
-
-        return sortedNotesForCurrentMode(matchingNotes)
+        return ""
     }
 
     public func globalSearchNotes(for query: String, includeTrash: Bool = false, now: Date = Date()) -> [Note] {
@@ -1031,11 +1052,15 @@ public final class LibraryStore {
             return
         }
 
-        if selectedOverview != .trash {
-            selectedOverview = .all
+        // .all scope: 切换到全局视图（现有行为）
+        // .currentScope: 保持当前 overview/project，只设搜索文本
+        if searchScope == .all {
+            if selectedOverview != .trash {
+                selectedOverview = .all
+            }
+            selectedProjectID = nil
+            selectedSmartOverviewID = nil
         }
-        selectedProjectID = nil
-        selectedSmartOverviewID = nil
         calculateSearchOccurrences()
     }
 
@@ -1820,6 +1845,10 @@ public final class LibraryStore {
         searchText = newText
     }
 
+    public func setSearchScope(_ scope: SearchScope) {
+        searchScope = scope
+    }
+
     /// 清除所有搜索命中（搜索文本已清空时调用）
     public func clearSearchOccurrences() {
         searchOccurrences = []
@@ -1937,6 +1966,7 @@ public final class LibraryStore {
             selectedSmartOverviewID: selectedSmartOverviewID,
             selectedNoteID: selectedNoteID,
             searchText: searchText,
+            searchScope: searchScope,
             sortOrder: sortOrder,
             sortMode: sortMode,
             customNoteTemplates: customNoteTemplates

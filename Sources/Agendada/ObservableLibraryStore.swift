@@ -56,6 +56,18 @@ final class ObservableLibraryStore {
         }
     }
 
+    var searchScope: SearchScope {
+        get { observeRevision(); return store.searchScope }
+        set {
+            guard newValue != store.searchScope else { return }
+            store.setSearchScope(newValue)
+            publishChange()
+            if !store.searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                scheduleSearchCalculation()
+            }
+        }
+    }
+
     // MARK: - Search
 
     /// 底层 LibraryStore 的直接访问（只读）

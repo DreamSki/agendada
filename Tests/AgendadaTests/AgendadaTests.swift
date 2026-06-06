@@ -1414,6 +1414,7 @@ import Testing
 // MARK: - Global Search Tests
 
 @Test func searchWithSelectedProjectSearchesAllActiveNotes() async throws {
+    // .all scope: 搜索全库（旧行为）
     let store = LibraryStore()
     let cat = store.addCategory(name: "工作")
     let proj1 = store.addProject(name: "项目A", categoryID: cat.id)
@@ -1425,10 +1426,31 @@ import Testing
     _ = store.addNote(title: "架构文档B")
 
     store.selectProject(proj1.id)
+    store.setSearchScope(.all)
     store.updateSearchText("架构")
 
     let notes = store.filteredNotes()
     #expect(Set(notes.map(\.title)) == ["架构文档A", "架构文档B"])
+}
+
+@Test func searchWithSelectedProjectScopedToCurrentProject() async throws {
+    // .currentScope（默认）: 只搜当前项目
+    let store = LibraryStore()
+    let cat = store.addCategory(name: "工作")
+    let proj1 = store.addProject(name: "项目A", categoryID: cat.id)
+    let proj2 = store.addProject(name: "项目B", categoryID: cat.id)
+
+    store.selectProject(proj1.id)
+    _ = store.addNote(title: "架构文档A")
+    store.selectProject(proj2.id)
+    _ = store.addNote(title: "架构文档B")
+
+    store.selectProject(proj1.id)
+    // default scope is .currentScope
+    store.updateSearchText("架构")
+
+    let notes = store.filteredNotes()
+    #expect(notes.map(\.title) == ["架构文档A"])
 }
 
 @Test func previewingGlobalSearchDoesNotChangeCurrentProjectFilter() async throws {
@@ -1452,6 +1474,7 @@ import Testing
 }
 
 @Test func committingGlobalSearchLeavesProjectContext() async throws {
+    // .all scope: commit 切换到全局视图（旧行为）
     let store = LibraryStore()
     let cat = store.addCategory(name: "工作")
     let proj1 = store.addProject(name: "项目A", categoryID: cat.id)
@@ -1463,12 +1486,34 @@ import Testing
     _ = store.addNote(title: "架构文档B")
 
     store.selectProject(proj1.id)
+    store.setSearchScope(.all)
     store.commitGlobalSearchText("架构")
 
     #expect(store.selectedProjectID == nil)
     #expect(store.selectedOverview == .all)
     #expect(store.searchText == "架构")
     #expect(Set(store.filteredNotes().map(\.title)) == ["架构文档A", "架构文档B"])
+}
+
+@Test func committingScopedSearchStaysInCurrentProject() async throws {
+    // .currentScope（默认）: commit 不切换视图
+    let store = LibraryStore()
+    let cat = store.addCategory(name: "工作")
+    let proj1 = store.addProject(name: "项目A", categoryID: cat.id)
+    let proj2 = store.addProject(name: "项目B", categoryID: cat.id)
+
+    store.selectProject(proj1.id)
+    _ = store.addNote(title: "架构文档A")
+    store.selectProject(proj2.id)
+    _ = store.addNote(title: "架构文档B")
+
+    store.selectProject(proj1.id)
+    // default scope is .currentScope
+    store.commitGlobalSearchText("架构")
+
+    #expect(store.selectedProjectID == proj1.id)
+    #expect(store.searchText == "架构")
+    #expect(store.filteredNotes().map(\.title) == ["架构文档A"])
 }
 
 // MARK: - Search with Special Characters

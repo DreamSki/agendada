@@ -370,6 +370,12 @@ public struct RelatedNote: Identifiable, Hashable, Sendable {
 
 // MARK: - Search Occurrence
 
+/// 搜索范围：在当前视图范围内过滤，或搜索全部笔记
+public enum SearchScope: String, Codable, Sendable, CaseIterable {
+    case currentScope = "current"
+    case all = "all"
+}
+
 /// 匹配字段类型
 public enum SearchField: String, Sendable, Codable {
     case title
