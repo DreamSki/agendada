@@ -2404,7 +2404,7 @@ private struct SearchPopoverContent: View {
             let query = NoteSearchEngine.parse(draftSearchText)
             return NoteSearchEngine.filter(baseNotes, query: query)
         } else {
-            return store.library.globalSearchNotes(for: draftSearchText, includeTrash: includeTrashInPreview)
+            return store.library.globalSearchNotes(for: draftSearchText, onlyTrash: isTrashPreview)
         }
     }
 
@@ -2429,7 +2429,7 @@ private struct SearchPopoverContent: View {
             let notes = searchResultNotes
             return NoteSearchEngine.occurrences(in: notes, query: draftSearchText)
         } else {
-            return store.library.globalSearchOccurrences(for: draftSearchText, includeTrash: includeTrashInPreview)
+            return store.library.globalSearchOccurrences(for: draftSearchText, onlyTrash: isTrashPreview)
         }
     }
 
@@ -2444,7 +2444,7 @@ private struct SearchPopoverContent: View {
         ].joined(separator: "|")
     }
 
-    private var includeTrashInPreview: Bool {
+    private var isTrashPreview: Bool {
         store.selectedOverview == .trash
     }
 

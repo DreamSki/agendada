@@ -1022,23 +1022,23 @@ public final class LibraryStore {
         return ""
     }
 
-    public func globalSearchNotes(for query: String, includeTrash: Bool = false, now: Date = Date()) -> [Note] {
+    public func globalSearchNotes(for query: String, onlyTrash: Bool = false, now: Date = Date()) -> [Note] {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return [] }
 
         let baseNotes = notes.filter { note in
-            includeTrash ? note.status == .trashed : note.status != .trashed
+            onlyTrash ? note.status == .trashed : note.status != .trashed
         }
         let parsed = NoteSearchEngine.parse(trimmed)
         let matchingNotes = NoteSearchEngine.filter(baseNotes, query: parsed, now: now)
         return sortedNotesForCurrentMode(matchingNotes)
     }
 
-    public func globalSearchOccurrences(for query: String, includeTrash: Bool = false, now: Date = Date()) -> [SearchOccurrence] {
+    public func globalSearchOccurrences(for query: String, onlyTrash: Bool = false, now: Date = Date()) -> [SearchOccurrence] {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return [] }
 
-        let notes = globalSearchNotes(for: query, includeTrash: includeTrash, now: now)
+        let notes = globalSearchNotes(for: query, onlyTrash: onlyTrash, now: now)
         return NoteSearchEngine.occurrences(in: notes, query: trimmed, now: now)
     }
 
