@@ -1537,7 +1537,7 @@ import Testing
 @Test func trashScopeOnlySearchesTrashedNotes() async throws {
     let store = LibraryStore()
     _ = store.addProject(name: "项目")
-    let note1 = store.addNote(title: "正常架构")
+    _ = store.addNote(title: "正常架构")
     let note2 = store.addNote(title: "已删架构")
     store.deleteNote(note2.id)
 
@@ -1606,21 +1606,22 @@ import Testing
 @Test func findInNoteOnlySearchesCurrentNote() async throws {
     let store = LibraryStore()
     _ = store.addProject(name: "项目")
-    let note1 = store.addNote(title: "架构文档")
-    _ = store.addNote(title: "架构笔记")
+    let note1 = store.addNote(title: "文档一")
+    store.updateNote(noteID: note1.id, title: "文档一", body: "架构相关", scheduledDate: nil, tags: [], people: [])
+    _ = store.addNote(title: "文档二")
 
     store.selectNote(note1.id)
     store.updateFindInNoteText("架构")
 
     let occs = store.findInNoteOccurrences
     #expect(occs.allSatisfy { $0.noteID == note1.id })
-    // 不应该包含 note2 的 occurrence
 }
 
 @Test func findInNoteClearClearsAll() async throws {
     let store = LibraryStore()
-    let proj = store.addProject(name: "项目")
-    let note = store.addNote(title: "测试笔记")
+    _ = store.addProject(name: "项目")
+    let note = store.addNote(title: "标题")
+    store.updateNote(noteID: note.id, title: "标题", body: "测试笔记 body", scheduledDate: nil, tags: [], people: [])
 
     store.selectNote(note.id)
     store.updateFindInNoteText("测试")
@@ -1634,21 +1635,24 @@ import Testing
 
 @Test func findInNoteSummaryReflectsOccurrences() async throws {
     let store = LibraryStore()
-    let proj = store.addProject(name: "项目")
-    let note = store.addNote(title: "apple apple apple")
+    _ = store.addProject(name: "项目")
+    let note = store.addNote(title: "标题")
+    store.updateNote(noteID: note.id, title: "标题", body: "apple apple apple", scheduledDate: nil, tags: [], people: [])
 
     store.selectNote(note.id)
     store.updateFindInNoteText("apple")
 
     let summary = store.findInNoteSummary
+    // Find in Note only searches body
     #expect(summary.totalOccurrences == 3)
     #expect(summary.currentIndex == 1)
 }
 
 @Test func findInNoteEmptyTextClearsOccurrences() async throws {
     let store = LibraryStore()
-    let proj = store.addProject(name: "项目")
-    let note = store.addNote(title: "测试")
+    _ = store.addProject(name: "项目")
+    let note = store.addNote(title: "标题")
+    store.updateNote(noteID: note.id, title: "标题", body: "测试文本", scheduledDate: nil, tags: [], people: [])
 
     store.selectNote(note.id)
     store.updateFindInNoteText("测试")
@@ -1668,11 +1672,9 @@ import Testing
     store.selectNote(note.id)
     store.updateFindInNoteText("匹配")
 
-    #expect(store.findInNoteOccurrences.count == 3)
-    // Title hit comes first
-    #expect(store.findInNoteOccurrences[0].field == .title)
-    // Body hits come after title
-    #expect(store.findInNoteOccurrences[1].field == .body)
+    // Find in Note only searches body (Cmd+F behavior)
+    #expect(store.findInNoteOccurrences.count == 2)
+    #expect(store.findInNoteOccurrences.allSatisfy { $0.field == .body })
 
     let next = store.goToNextInNote()
     #expect(next?.field == .body)
