@@ -23,6 +23,7 @@ public final class LibraryStore {
 
     // MARK: - Find in Note State
 
+    public var isFindInNoteBarVisible: Bool = false
     public private(set) var findInNoteText: String = ""
     private var findInNoteNavigation: (noteID: Note.ID, query: String, bodyIndex: Int)?
     public private(set) var findInNoteOccurrences: [SearchOccurrence] = []

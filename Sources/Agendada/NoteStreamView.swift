@@ -29,6 +29,9 @@ struct NoteStreamView: View {
                 SharedBlockNoteWebView.shared.clearSearch()
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .findInNoteRequested)) { _ in
+            store.requestFindInNote()
+        }
     }
 
     // MARK: - Header
@@ -920,6 +923,15 @@ private struct StreamNoteRow: View {
                 .frame(maxWidth: .infinity, alignment: .topLeading)
                 .frame(minHeight: minH, alignment: .top)
                 .opacity(editorIsVisible ? (isNoteDimmed ? 0.58 : 1) : 0)
+                .overlay(alignment: .top) {
+                    if store.isFindInNoteBarVisible {
+                        FindInNoteBar()
+                            .padding(.horizontal, 12)
+                            .padding(.top, 8)
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                    }
+                }
+                .animation(.easeInOut(duration: 0.15), value: store.isFindInNoteBarVisible)
             }
         }
         .frame(minHeight: minH, alignment: .top)

@@ -638,6 +638,14 @@ private func htmlToPlainText(_ html: String) -> String {
     return text.trimmingCharacters(in: .whitespacesAndNewlines)
 }
 
+// MARK: - Find in Note Notification
+
+public extension Notification.Name {
+    /// Posted when Cmd+F is pressed while the editor WebView has focus.
+    /// The UI layer observes this to show the Find in Note bar.
+    static let findInNoteRequested = Notification.Name("com.agendada.findInNote")
+}
+
 // MARK: - Calendar Safe Arithmetic
 
 public extension Calendar {

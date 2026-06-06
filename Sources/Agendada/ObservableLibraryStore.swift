@@ -113,14 +113,27 @@ final class ObservableLibraryStore {
         return store.findInNoteSummary
     }
 
+    /// Find in Note bar visibility (toggled via Cmd+F or menu)
+    var isFindInNoteBarVisible: Bool {
+        get { store.isFindInNoteBarVisible }
+        set {
+            store.isFindInNoteBarVisible = newValue
+            if !newValue { store.clearFindInNote() }
+            publishChange()
+        }
+    }
+
+    func requestFindInNote() {
+        isFindInNoteBarVisible = true
+    }
+
     func updateFindInNoteText(_ text: String) {
         store.updateFindInNoteText(text)
         publishChange()
     }
 
     func clearFindInNote() {
-        store.clearFindInNote()
-        publishChange()
+        isFindInNoteBarVisible = false
     }
 
     func goToNextInNote() {
