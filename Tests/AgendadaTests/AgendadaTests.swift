@@ -1588,6 +1588,99 @@ import Testing
     #expect(restored.searchText == "测试")
 }
 
+// MARK: - Find in Note Tests
+
+@Test func findInNoteDoesNotAffectFilteredNotes() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    let note = store.addNote(title: "架构文档")
+    store.updateNote(noteID: note.id, title: "架构文档", body: "关于架构的详细说明", scheduledDate: nil, tags: [], people: [])
+
+    store.selectNote(note.id)
+    store.updateFindInNoteText("架构")
+
+    #expect(store.searchText.isEmpty)
+    #expect(store.filteredNotes().contains(where: { $0.id == note.id }))
+}
+
+@Test func findInNoteOnlySearchesCurrentNote() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    let note1 = store.addNote(title: "架构文档")
+    _ = store.addNote(title: "架构笔记")
+
+    store.selectNote(note1.id)
+    store.updateFindInNoteText("架构")
+
+    let occs = store.findInNoteOccurrences
+    #expect(occs.allSatisfy { $0.noteID == note1.id })
+    // 不应该包含 note2 的 occurrence
+}
+
+@Test func findInNoteClearClearsAll() async throws {
+    let store = LibraryStore()
+    let proj = store.addProject(name: "项目")
+    let note = store.addNote(title: "测试笔记")
+
+    store.selectNote(note.id)
+    store.updateFindInNoteText("测试")
+    #expect(!store.findInNoteText.isEmpty)
+
+    store.clearFindInNote()
+    #expect(store.findInNoteText.isEmpty)
+    #expect(store.findInNoteOccurrences.isEmpty)
+    #expect(store.currentFindInNoteIndex == nil)
+}
+
+@Test func findInNoteSummaryReflectsOccurrences() async throws {
+    let store = LibraryStore()
+    let proj = store.addProject(name: "项目")
+    let note = store.addNote(title: "apple apple apple")
+
+    store.selectNote(note.id)
+    store.updateFindInNoteText("apple")
+
+    let summary = store.findInNoteSummary
+    #expect(summary.totalOccurrences == 3)
+    #expect(summary.currentIndex == 1)
+}
+
+@Test func findInNoteEmptyTextClearsOccurrences() async throws {
+    let store = LibraryStore()
+    let proj = store.addProject(name: "项目")
+    let note = store.addNote(title: "测试")
+
+    store.selectNote(note.id)
+    store.updateFindInNoteText("测试")
+    #expect(!store.findInNoteOccurrences.isEmpty)
+
+    store.updateFindInNoteText("")
+    #expect(store.findInNoteOccurrences.isEmpty)
+    #expect(store.currentFindInNoteIndex == nil)
+}
+
+@Test func findInNoteNavigationWithinNote() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    let note = store.addNote(title: "标题匹配")
+    store.updateNote(noteID: note.id, title: "标题匹配", body: "正文匹配 标题匹配", scheduledDate: nil, tags: [], people: [])
+
+    store.selectNote(note.id)
+    store.updateFindInNoteText("匹配")
+
+    #expect(store.findInNoteOccurrences.count == 3)
+    // Title hit comes first
+    #expect(store.findInNoteOccurrences[0].field == .title)
+    // Body hits come after title
+    #expect(store.findInNoteOccurrences[1].field == .body)
+
+    let next = store.goToNextInNote()
+    #expect(next?.field == .body)
+
+    let next2 = store.goToNextInNote()
+    #expect(next2?.field == .body)
+}
+
 // MARK: - Search with Special Characters
 
 @Test func searchWithPartialMatch() async throws {

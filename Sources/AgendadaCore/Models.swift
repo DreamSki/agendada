@@ -418,6 +418,19 @@ public struct SearchOccurrence: Identifiable, Hashable, Sendable {
     }
 }
 
+/// Find in Note 匹配摘要
+public struct FindInNoteSummary: Sendable, Equatable {
+    public let totalOccurrences: Int
+    public let currentIndex: Int
+
+    public init(totalOccurrences: Int, currentIndex: Int) {
+        self.totalOccurrences = totalOccurrences
+        self.currentIndex = currentIndex
+    }
+
+    public static let empty = FindInNoteSummary(totalOccurrences: 0, currentIndex: 0)
+}
+
 /// 搜索匹配摘要信息
 public struct SearchSummary: Sendable, Equatable {
     public let totalOccurrences: Int      // 总命中位置数
