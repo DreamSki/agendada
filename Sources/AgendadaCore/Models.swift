@@ -448,6 +448,32 @@ public struct SearchSummary: Sendable, Equatable {
     public static let empty = SearchSummary(totalOccurrences: 0, totalMatchedNotes: 0, currentOccurrenceIndex: 0, currentNoteIndex: 0)
 }
 
+/// A single search-match snippet within a grouped result.
+public struct SearchResultSnippet: Identifiable, Hashable, Sendable {
+    public let id: UUID
+    public let occurrence: SearchOccurrence
+
+    public init(occurrence: SearchOccurrence) {
+        self.id = occurrence.id
+        self.occurrence = occurrence
+    }
+}
+
+/// Groups search occurrences by note for compact search-result display.
+public struct SearchResultGroup: Identifiable, Hashable, Sendable {
+    public let note: Note
+    public let occurrences: [SearchOccurrence]
+    public let snippets: [SearchResultSnippet]
+
+    public var id: Note.ID { note.id }
+
+    public init(note: Note, occurrences: [SearchOccurrence]) {
+        self.note = note
+        self.occurrences = occurrences
+        self.snippets = occurrences.map { SearchResultSnippet(occurrence: $0) }
+    }
+}
+
 // MARK: - Sort Mode
 
 public enum SortMode: String, CaseIterable, Codable, Sendable {

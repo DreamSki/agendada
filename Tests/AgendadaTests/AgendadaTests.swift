@@ -1683,7 +1683,73 @@ import Testing
     #expect(next2?.field == .body)
 }
 
-// MARK: - Search with Special Characters
+// MARK: - Search Result Groups
+
+@Test func searchResultGroupsEmptyWhenNoSearch() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    _ = store.addNote(title: "测试笔记")
+    store.selectOverview(.all)
+
+    #expect(store.searchResultGroups().isEmpty)
+}
+
+@Test func searchResultGroupsSingleNoteMultipleHits() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    let note = store.addNote(title: "架构重构计划")
+    store.updateNote(noteID: note.id, title: "架构重构计划", body: "架构已经拆分，新的架构更好", scheduledDate: nil, tags: [], people: [])
+    store.selectOverview(.all)
+    store.updateSearchText("架构")
+
+    let groups = store.searchResultGroups()
+    #expect(groups.count == 1)
+    #expect(groups[0].note.id == note.id)
+    // title has 1 hit, body has 2 hits = 3 total
+    #expect(groups[0].occurrences.count == 3)
+    #expect(groups[0].snippets.count == 3)
+    let titleHits = groups[0].occurrences.filter { $0.field == .title }
+    let bodyHits = groups[0].occurrences.filter { $0.field == .body }
+    #expect(titleHits.count == 1)
+    #expect(bodyHits.count == 2)
+}
+
+@Test func searchResultGroupsMultipleNotes() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    let n1 = store.addNote(title: "架构重构")
+    store.updateNote(noteID: n1.id, title: "架构重构", body: "架构调整", scheduledDate: nil, tags: [], people: [])
+    let n2 = store.addNote(title: "会议记录")
+    store.updateNote(noteID: n2.id, title: "会议记录", body: "讨论架构问题", scheduledDate: nil, tags: [], people: [])
+    let n3 = store.addNote(title: "周报")
+    store.updateNote(noteID: n3.id, title: "周报", body: "本周完成设计", scheduledDate: nil, tags: [], people: [])
+    store.selectOverview(.all)
+    store.updateSearchText("架构")
+
+    let groups = store.searchResultGroups()
+    #expect(groups.count == 2)
+    let groupIDs = groups.map(\.note.id)
+    #expect(groupIDs.contains(n1.id))
+    #expect(groupIDs.contains(n2.id))
+    // n3 doesn't match, not in groups
+}
+
+@Test func searchResultGroupsFollowFilteredNotesOrder() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    let n1 = store.addNote(title: "Alpha 搜索测试")
+    store.updateNote(noteID: n1.id, title: "Alpha 搜索测试", body: "内容", scheduledDate: nil, tags: [], people: [])
+    let n2 = store.addNote(title: "Beta 搜索测试")
+    store.updateNote(noteID: n2.id, title: "Beta 搜索测试", body: "内容", scheduledDate: nil, tags: [], people: [])
+    store.selectOverview(.all)
+    store.updateSearchText("搜索测试")
+
+    let groups = store.searchResultGroups()
+    let filteredIDs = store.filteredNotes().map(\.id)
+    #expect(groups.count == 2)
+    // Groups follow filteredNotes() order
+    #expect(groups.map(\.note.id) == filteredIDs)
+}
 
 @Test func searchWithPartialMatch() async throws {
     let store = LibraryStore()

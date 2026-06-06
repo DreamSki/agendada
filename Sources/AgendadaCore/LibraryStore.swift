@@ -2108,6 +2108,17 @@ public final class LibraryStore {
         return filtered.compactMap { noteIDs.contains($0.id) ? $0.id : nil }
     }
 
+    /// Groups search occurrences by note for compact search-result display.
+    /// Returns groups ordered by filteredNotes() position.
+    public func searchResultGroups() -> [SearchResultGroup] {
+        guard !searchOccurrences.isEmpty else { return [] }
+        let grouped = Dictionary(grouping: searchOccurrences, by: \.noteID)
+        return filteredNotes().compactMap { note in
+            guard let occs = grouped[note.id] else { return nil }
+            return SearchResultGroup(note: note, occurrences: occs)
+        }
+    }
+
     public func snapshot() -> LibrarySnapshot {
         #if DEBUG
         let start = Date()
