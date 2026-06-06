@@ -1048,6 +1048,11 @@ private final class PasteInterceptWebView: WKWebView {
                     """)
                 return true
             }
+            if event.charactersIgnoringModifiers == "f" {
+                // Cmd+F → Find in Note (not browser find)
+                NotificationCenter.default.post(name: .findInNoteRequested, object: nil)
+                return true
+            }
         }
         return super.performKeyEquivalent(with: event)
     }

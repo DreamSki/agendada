@@ -29,6 +29,9 @@ struct NoteStreamView: View {
                 SharedBlockNoteWebView.shared.clearSearch()
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .findInNoteRequested)) { _ in
+            store.requestFindInNote()
+        }
     }
 
     // MARK: - Header
@@ -887,7 +890,13 @@ private struct StreamNoteRow: View {
                         editorIsVisible = true
                         preserveLocalScrollPosition()
                         SharedBlockNoteWebView.shared.focusEditor()
-                        if let pending = SharedBlockNoteWebView.shared.consumeSearchNavigation(for: note.id),
+                        // Find in Note 优先于 List Search
+                        if let findPending = store.library.consumeFindInNoteNavigation(for: note.id) {
+                            SharedBlockNoteWebView.shared.clearSearch()
+                            SharedBlockNoteWebView.shared.searchInEditor(query: findPending.query) { _ in
+                                SharedBlockNoteWebView.shared.navigateToMatch(index: findPending.bodyIndex) { _, _ in }
+                            }
+                        } else if let pending = SharedBlockNoteWebView.shared.consumeSearchNavigation(for: note.id),
                            !pending.query.isEmpty {
                             SharedBlockNoteWebView.shared.searchInEditor(query: pending.query) { _ in
                                 SharedBlockNoteWebView.shared.navigateToMatch(index: pending.bodyIndex) { _, _ in }
@@ -914,6 +923,15 @@ private struct StreamNoteRow: View {
                 .frame(maxWidth: .infinity, alignment: .topLeading)
                 .frame(minHeight: minH, alignment: .top)
                 .opacity(editorIsVisible ? (isNoteDimmed ? 0.58 : 1) : 0)
+                .overlay(alignment: .top) {
+                    if store.isFindInNoteBarVisible {
+                        FindInNoteBar()
+                            .padding(.horizontal, 12)
+                            .padding(.top, 8)
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                    }
+                }
+                .animation(.easeInOut(duration: 0.15), value: store.isFindInNoteBarVisible)
             }
         }
         .frame(minHeight: minH, alignment: .top)
@@ -2206,6 +2224,19 @@ private struct SearchPopoverContent: View {
                 SharedBlockNoteWebView.shared.navigateToMatch(index: 0) { _, _ in }
             }
         }
+        .onChange(of: editorFindRenderKey) { _, _ in
+            let findText = store.findInNoteText.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !findText.isEmpty, store.findInNoteOccurrences.count > 0 else {
+                SharedBlockNoteWebView.shared.clearSearch()
+                return
+            }
+            let q = NoteSearchEngine.highlightText(for: findText)
+            guard !q.isEmpty else { return }
+            SharedBlockNoteWebView.shared.searchInEditor(query: q) { _ in
+                let idx = store.currentFindInNoteIndex ?? 0
+                SharedBlockNoteWebView.shared.navigateToMatch(index: idx) { _, _ in }
+            }
+        }
         .sheet(isPresented: $showSaveSheet) {
             SmartOverviewPromptSheet(
                 sheet: SmartOverviewSheet(query: draftSearchText),
@@ -2441,6 +2472,17 @@ private struct SearchPopoverContent: View {
             store.selectedNoteID?.uuidString ?? "",
             "\(store.currentOccurrence?.globalIndex ?? -1)",
             "\(store.searchOccurrences.count)"
+        ].joined(separator: "|")
+    }
+
+    /// Stable key for Find in Note WebView highlight — tracks findInNote
+    /// text + current note + current index to avoid stale highlights.
+    private var editorFindRenderKey: String {
+        [
+            store.findInNoteText,
+            store.selectedNoteID?.uuidString ?? "",
+            "\(store.currentFindInNoteIndex ?? -1)",
+            "\(store.findInNoteOccurrences.count)"
         ].joined(separator: "|")
     }
 

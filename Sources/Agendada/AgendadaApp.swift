@@ -91,6 +91,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         deleteNoteItem.keyEquivalentModifierMask = .command
         deleteNoteItem.target = self
         editMenu.addItem(deleteNoteItem)
+        editMenu.addItem(.separator())
+        let findInNoteItem = NSMenuItem(title: "在笔记中查找…", action: #selector(AppDelegate.requestFindInNote), keyEquivalent: "f")
+        findInNoteItem.keyEquivalentModifierMask = .command
+        findInNoteItem.target = self
+        editMenu.addItem(findInNoteItem)
 
         // Format menu
         let formatItem = NSMenuItem()
@@ -310,6 +315,10 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
 
         self.window = window
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    @objc private func requestFindInNote() {
+        NotificationCenter.default.post(name: .findInNoteRequested, object: nil)
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

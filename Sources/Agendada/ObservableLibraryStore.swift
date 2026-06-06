@@ -87,6 +87,65 @@ final class ObservableLibraryStore {
         return store.currentOccurrence
     }
 
+    // MARK: - Find in Note
+
+    var findInNoteText: String {
+        get { observeRevision(); return store.findInNoteText }
+        set {
+            guard newValue != store.findInNoteText else { return }
+            store.updateFindInNoteText(newValue)
+            publishChange()
+        }
+    }
+
+    var findInNoteOccurrences: [SearchOccurrence] {
+        observeRevision()
+        return store.findInNoteOccurrences
+    }
+
+    var currentFindInNoteIndex: Int? {
+        observeRevision()
+        return store.currentFindInNoteIndex
+    }
+
+    var findInNoteSummary: FindInNoteSummary {
+        observeRevision()
+        return store.findInNoteSummary
+    }
+
+    /// Find in Note bar visibility (toggled via Cmd+F or menu)
+    var isFindInNoteBarVisible: Bool {
+        get { store.isFindInNoteBarVisible }
+        set {
+            store.isFindInNoteBarVisible = newValue
+            if !newValue { store.clearFindInNote() }
+            publishChange()
+        }
+    }
+
+    func requestFindInNote() {
+        isFindInNoteBarVisible = true
+    }
+
+    func updateFindInNoteText(_ text: String) {
+        store.updateFindInNoteText(text)
+        publishChange()
+    }
+
+    func clearFindInNote() {
+        isFindInNoteBarVisible = false
+    }
+
+    func goToNextInNote() {
+        store.goToNextInNote()
+        publishChange()
+    }
+
+    func goToPreviousInNote() {
+        store.goToPreviousInNote()
+        publishChange()
+    }
+
     var searchSummary: SearchSummary {
         observeRevision()
         return store.searchSummary

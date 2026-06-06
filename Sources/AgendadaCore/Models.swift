@@ -418,6 +418,19 @@ public struct SearchOccurrence: Identifiable, Hashable, Sendable {
     }
 }
 
+/// Find in Note 匹配摘要
+public struct FindInNoteSummary: Sendable, Equatable {
+    public let totalOccurrences: Int
+    public let currentIndex: Int
+
+    public init(totalOccurrences: Int, currentIndex: Int) {
+        self.totalOccurrences = totalOccurrences
+        self.currentIndex = currentIndex
+    }
+
+    public static let empty = FindInNoteSummary(totalOccurrences: 0, currentIndex: 0)
+}
+
 /// 搜索匹配摘要信息
 public struct SearchSummary: Sendable, Equatable {
     public let totalOccurrences: Int      // 总命中位置数
@@ -623,6 +636,14 @@ private func htmlToPlainText(_ html: String) -> String {
     text = text.replacingOccurrences(of: "&#39;", with: "'")
     text = text.replacingOccurrences(of: "&nbsp;", with: " ")
     return text.trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+// MARK: - Find in Note Notification
+
+public extension Notification.Name {
+    /// Posted when Cmd+F is pressed while the editor WebView has focus.
+    /// The UI layer observes this to show the Find in Note bar.
+    static let findInNoteRequested = Notification.Name("com.agendada.findInNote")
 }
 
 // MARK: - Calendar Safe Arithmetic

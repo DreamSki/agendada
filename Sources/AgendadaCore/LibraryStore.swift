@@ -21,6 +21,14 @@ public final class LibraryStore {
     public private(set) var searchOccurrences: [SearchOccurrence] = []
     public private(set) var currentOccurrenceIndex: Int? = nil
 
+    // MARK: - Find in Note State
+
+    public var isFindInNoteBarVisible: Bool = false
+    public private(set) var findInNoteText: String = ""
+    private var findInNoteNavigation: (noteID: Note.ID, query: String, bodyIndex: Int)?
+    public private(set) var findInNoteOccurrences: [SearchOccurrence] = []
+    public private(set) var currentFindInNoteIndex: Int? = nil
+
     public init(
         categories: [ProjectCategory] = [],
         projects: [Project] = [],
@@ -247,6 +255,8 @@ public final class LibraryStore {
 
     public func selectNote(_ noteID: Note.ID) {
         guard let note = notes.first(where: { $0.id == noteID && $0.status != .trashed }) else { return }
+
+        let noteChanged = selectedNoteID != noteID
         selectedNoteID = noteID
 
         // If the note is not visible in the current view, switch to its project
@@ -255,6 +265,11 @@ public final class LibraryStore {
             selectedOverview = nil
             selectedSmartOverviewID = nil
             searchText = ""
+        }
+
+        // 切换笔记时重新计算 Find in Note（如果查找文本非空）
+        if noteChanged && !findInNoteText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            calculateFindInNoteOccurrences()
         }
     }
 
@@ -1882,6 +1897,161 @@ public final class LibraryStore {
     /// 用于 UI 高亮的纯关键词（空格分隔）
     public var searchHighlightText: String {
         NoteSearchEngine.highlightText(for: searchText)
+    }
+
+    // MARK: - Find in Note
+
+    /// 设置查找文本，只在当前笔记内搜索
+    public func updateFindInNoteText(_ text: String) {
+        findInNoteText = text
+        calculateFindInNoteOccurrences()
+        // 不自动切换笔记，让用户在当前笔记内查找
+    }
+
+    /// 计算当前笔记内的 occurrence
+    public func calculateFindInNoteOccurrences() {
+        let trimmed = findInNoteText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let noteID = selectedNoteID else {
+            findInNoteOccurrences = []
+            currentFindInNoteIndex = nil
+            findInNoteNavigation = nil
+            return
+        }
+
+        guard let note = note(withID: noteID) else { return }
+
+        // 为 WebView onReady 准备导航（当笔记重新加载时能重新应用查找）
+        findInNoteNavigation = (noteID, trimmed, 0)
+
+        let query = NoteSearchEngine.parse(trimmed)
+        var result: [SearchOccurrence] = []
+
+        // 只在当前笔记内搜索
+        let titleHits = sortedUniqueHitsInText(note.title, terms: query.highlightTerms)
+        var bodyIdx = 0
+
+        for hit in titleHits {
+            result.append(SearchOccurrence(
+                noteID: note.id,
+                noteTitle: note.title,
+                globalIndex: result.count,
+                occurrenceIndexInNote: result.count,
+                bodyIndexInNote: -1,
+                field: .title,
+                matchPosition: hit.position,
+                matchLength: hit.length,
+                excerpt: hit.excerpt
+            ))
+        }
+
+        let bodyHits = sortedUniqueHitsInText(note.bodyPlainText, terms: query.highlightTerms)
+        for hit in bodyHits {
+            result.append(SearchOccurrence(
+                noteID: note.id,
+                noteTitle: note.title,
+                globalIndex: result.count,
+                occurrenceIndexInNote: result.count,
+                bodyIndexInNote: bodyIdx,
+                field: .body,
+                matchPosition: hit.position,
+                matchLength: hit.length,
+                excerpt: hit.excerpt
+            ))
+            bodyIdx += 1
+        }
+
+        findInNoteOccurrences = result
+        currentFindInNoteIndex = result.isEmpty ? nil : 0
+    }
+
+    /// 当前笔记内下一个命中
+    public func goToNextInNote() -> SearchOccurrence? {
+        guard !findInNoteOccurrences.isEmpty else { return nil }
+        let nextIdx = ((currentFindInNoteIndex ?? -1) + 1) % findInNoteOccurrences.count
+        currentFindInNoteIndex = nextIdx
+        return findInNoteOccurrences[safe: nextIdx]
+    }
+
+    /// 当前笔记内上一个命中
+    public func goToPreviousInNote() -> SearchOccurrence? {
+        guard !findInNoteOccurrences.isEmpty else { return nil }
+        let prevIdx = ((currentFindInNoteIndex ?? 0) - 1 + findInNoteOccurrences.count) % findInNoteOccurrences.count
+        currentFindInNoteIndex = prevIdx
+        return findInNoteOccurrences[safe: prevIdx]
+    }
+
+    /// 清空 Find in Note 状态
+    public func clearFindInNote() {
+        findInNoteText = ""
+        findInNoteOccurrences = []
+        currentFindInNoteIndex = nil
+        findInNoteNavigation = nil
+    }
+
+    /// 消费 Find in Note 导航（用于 WebView 加载时应用查找）
+    public func consumeFindInNoteNavigation(for noteID: Note.ID) -> (query: String, bodyIndex: Int)? {
+        guard let pending = findInNoteNavigation, pending.noteID == noteID else { return nil }
+        findInNoteNavigation = nil
+        return (pending.query, pending.bodyIndex)
+    }
+
+    /// Find in Note 摘要
+    public var findInNoteSummary: FindInNoteSummary {
+        guard !findInNoteOccurrences.isEmpty else { return .empty }
+        return FindInNoteSummary(
+            totalOccurrences: findInNoteOccurrences.count,
+            currentIndex: (currentFindInNoteIndex ?? -1) + 1
+        )
+    }
+
+    private func sortedUniqueHitsInText(_ text: String, terms: [NoteSearchTextTerm]) -> [SearchHit] {
+        var hits: [SearchHit] = []
+        var seen = Set<String>()
+
+        for term in terms where !term.value.isEmpty {
+            for hit in hitsForTerm(term.value, in: text) {
+                let key = "\(hit.position):\(hit.length)"
+                if seen.insert(key).inserted {
+                    hits.append(hit)
+                }
+            }
+        }
+
+        return hits.sorted {
+            if $0.position != $1.position { return $0.position < $1.position }
+            return $0.length > $1.length
+        }
+    }
+
+    private func hitsForTerm(_ term: String, in text: String) -> [SearchHit] {
+        guard !term.isEmpty, !text.isEmpty else { return [] }
+
+        var hits: [SearchHit] = []
+        var searchStart = text.startIndex
+
+        while let range = text.range(of: term, options: [.caseInsensitive, .diacriticInsensitive], range: searchStart..<text.endIndex) {
+            let nsRange = NSRange(range, in: text)
+            hits.append(SearchHit(
+                position: nsRange.location,
+                length: nsRange.length,
+                excerpt: excerpt(around: range, in: text)
+            ))
+
+            guard range.upperBound < text.endIndex else { break }
+            searchStart = range.upperBound
+        }
+
+        return hits
+    }
+
+    private func excerpt(around range: Range<String.Index>, in text: String) -> String {
+        let context = 30
+        let lower = text.index(range.lowerBound, offsetBy: -context, limitedBy: text.startIndex) ?? text.startIndex
+        let upper = text.index(range.upperBound, offsetBy: context, limitedBy: text.endIndex) ?? text.endIndex
+        var value = String(text[lower..<upper]).trimmingCharacters(in: .whitespacesAndNewlines)
+        if lower > text.startIndex { value = "…" + value }
+        if upper < text.endIndex { value += "…" }
+        return value
     }
 
     // MARK: - Occurrence Navigation
