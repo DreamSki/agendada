@@ -62,6 +62,7 @@ final class ObservableLibraryStore {
             guard newValue != store.searchScope else { return }
             store.setSearchScope(newValue)
             publishChange()
+            persistSoon()
             if !store.searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 scheduleSearchCalculation()
             }
@@ -107,9 +108,9 @@ final class ObservableLibraryStore {
         return occurrence
     }
 
-    func commitGlobalSearchText(_ newText: String) {
+    func commitSearchText(_ newText: String) {
         searchCalcTask?.cancel()
-        store.commitGlobalSearchText(newText)
+        store.commitSearchText(newText)
         publishChange()
         persistSoon()
     }

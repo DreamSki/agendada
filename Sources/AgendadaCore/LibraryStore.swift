@@ -1042,7 +1042,7 @@ public final class LibraryStore {
         return NoteSearchEngine.occurrences(in: notes, query: trimmed, now: now)
     }
 
-    public func commitGlobalSearchText(_ newText: String) {
+    public func commitSearchText(_ newText: String) {
         searchText = newText
         currentOccurrenceIndex = nil
 

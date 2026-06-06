@@ -2198,12 +2198,8 @@ private struct SearchPopoverContent: View {
                 SharedBlockNoteWebView.shared.clearSearch()
             }
         }
-        .onChange(of: store.searchOccurrences.count) { _, newCount in
-            // Fire searchInEditor only after calculateSearchOccurrences
-            // completes (180ms debounced in ObservableLibraryStore).
-            // This avoids the double-debounce race where the old 250ms
-            // timer could fire before occurrences were ready.
-            guard !committedSearchText.isEmpty, newCount > 0 else { return }
+        .onChange(of: editorSearchRenderKey) { _, _ in
+            guard !committedSearchText.isEmpty, store.searchOccurrences.count > 0 else { return }
             let q = store.library.searchHighlightText
             guard !q.isEmpty else { return }
             SharedBlockNoteWebView.shared.searchInEditor(query: q) { _ in
@@ -2437,6 +2433,17 @@ private struct SearchPopoverContent: View {
         }
     }
 
+    /// Stable key for WebView search highlight refresh — avoids stale highlights
+    /// when search text changes but occurrence count stays the same.
+    private var editorSearchRenderKey: String {
+        [
+            committedSearchText,
+            store.selectedNoteID?.uuidString ?? "",
+            "\(store.currentOccurrence?.globalIndex ?? -1)",
+            "\(store.searchOccurrences.count)"
+        ].joined(separator: "|")
+    }
+
     private var includeTrashInPreview: Bool {
         store.selectedOverview == .trash
     }
@@ -2548,7 +2555,7 @@ private struct SearchPopoverContent: View {
     }
 
     private func commitDraftSearch() {
-        store.commitGlobalSearchText(draftSearchText)
+        store.commitSearchText(draftSearchText)
     }
 
     private func handleSearchReturn() {
