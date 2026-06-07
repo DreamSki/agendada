@@ -513,6 +513,33 @@ public struct SearchResultGroup: Identifiable, Hashable, Sendable {
     }
 }
 
+// MARK: - Query Chips
+
+/// The semantic type of a parsed query token, used for visual styling.
+public enum QueryChipType: String, Equatable, Sendable, CaseIterable {
+    case tag
+    case person
+    case status
+    case has
+    case `is`
+    case date
+    case keyword
+    case notKeyword
+}
+
+/// A read-only visual chip representing a parsed token in the search query.
+public struct QueryChip: Identifiable, Equatable, Sendable {
+    public let id: UUID
+    public let label: String
+    public let chipType: QueryChipType
+
+    public init(id: UUID = UUID(), label: String, chipType: QueryChipType) {
+        self.id = id
+        self.label = label
+        self.chipType = chipType
+    }
+}
+
 // MARK: - Sort Mode
 
 public enum SortMode: String, CaseIterable, Codable, Sendable {

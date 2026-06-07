@@ -2008,6 +2008,153 @@ import Testing
     #expect(store.searchReturnContext == .empty)
 }
 
+// MARK: - Query Chips
+
+@Test func chipsEmptyForBlankText() async throws {
+    #expect(NoteSearchEngine.chips(for: "").isEmpty)
+    #expect(NoteSearchEngine.chips(for: "   ").isEmpty)
+}
+
+@Test func chipsPlainKeyword() async throws {
+    let chips = NoteSearchEngine.chips(for: "hello")
+    #expect(chips.count == 1)
+    #expect(chips[0].label == "hello")
+    #expect(chips[0].chipType == .keyword)
+}
+
+@Test func chipsMultipleKeywords() async throws {
+    let chips = NoteSearchEngine.chips(for: "hello world")
+    #expect(chips.count == 2)
+    #expect(chips[0].label == "hello")
+    #expect(chips[0].chipType == .keyword)
+    #expect(chips[1].label == "world")
+    #expect(chips[1].chipType == .keyword)
+}
+
+@Test func chipsTagHashShorthand() async throws {
+    let chips = NoteSearchEngine.chips(for: "#Design")
+    #expect(chips.count == 1)
+    #expect(chips[0].label == "#Design")
+    #expect(chips[0].chipType == .tag)
+}
+
+@Test func chipsTagColonForm() async throws {
+    let chips = NoteSearchEngine.chips(for: "tag:Design")
+    #expect(chips.count == 1)
+    #expect(chips[0].label == "#Design")
+    #expect(chips[0].chipType == .tag)
+}
+
+@Test func chipsPersonAtShorthand() async throws {
+    let chips = NoteSearchEngine.chips(for: "@John")
+    #expect(chips.count == 1)
+    #expect(chips[0].label == "@John")
+    #expect(chips[0].chipType == .person)
+}
+
+@Test func chipsPersonColonForm() async throws {
+    let chips = NoteSearchEngine.chips(for: "person:John")
+    #expect(chips.count == 1)
+    #expect(chips[0].label == "@John")
+    #expect(chips[0].chipType == .person)
+}
+
+@Test func chipsStatus() async throws {
+    let chips = NoteSearchEngine.chips(for: "status:open")
+    #expect(chips.count == 1)
+    #expect(chips[0].label == "status:open")
+    #expect(chips[0].chipType == .status)
+}
+
+@Test func chipsHas() async throws {
+    let chips = NoteSearchEngine.chips(for: "has:tasks")
+    #expect(chips.count == 1)
+    #expect(chips[0].label == "has:tasks")
+    #expect(chips[0].chipType == .has)
+}
+
+@Test func chipsIs() async throws {
+    let chips = NoteSearchEngine.chips(for: "is:focused")
+    #expect(chips.count == 1)
+    #expect(chips[0].label == "is:focused")
+    #expect(chips[0].chipType == .is)
+}
+
+@Test func chipsDate() async throws {
+    let chips = NoteSearchEngine.chips(for: "date:today")
+    #expect(chips.count == 1)
+    #expect(chips[0].label == "date:today")
+    #expect(chips[0].chipType == .date)
+}
+
+@Test func chipsNotKeyword() async throws {
+    let chips = NoteSearchEngine.chips(for: "NOT completed")
+    #expect(chips.count == 1)
+    #expect(chips[0].label == "NOT completed")
+    #expect(chips[0].chipType == .notKeyword)
+}
+
+@Test func chipsNotWithTag() async throws {
+    let chips = NoteSearchEngine.chips(for: "NOT #Design")
+    #expect(chips.count == 1)
+    #expect(chips[0].label == "NOT #Design")
+    #expect(chips[0].chipType == .notKeyword)
+}
+
+@Test func chipsNotBeforeParenthesizedGroup() async throws {
+    let chips = NoteSearchEngine.chips(for: "NOT (hello world)")
+    #expect(chips.count >= 3) // NOT chip + hello chip + world chip
+    // NOT should appear as standalone chip before parenthesized group
+    let notChips = chips.filter { $0.chipType == .notKeyword }
+    #expect(notChips.count == 1)
+    #expect(notChips[0].label == "NOT")
+}
+
+@Test func chipsPhrase() async throws {
+    let chips = NoteSearchEngine.chips(for: "\"exact phrase\"")
+    #expect(chips.count == 1)
+    #expect(chips[0].label == "\"exact phrase\"")
+    #expect(chips[0].chipType == .keyword)
+}
+
+@Test func chipsMixedComplexQuery() async throws {
+    let chips = NoteSearchEngine.chips(for: "#Design @John NOT completed is:focused hello")
+    #expect(chips.count == 5)
+    #expect(chips[0].chipType == .tag)
+    #expect(chips[1].chipType == .person)
+    #expect(chips[2].chipType == .notKeyword)
+    #expect(chips[3].chipType == .is)
+    #expect(chips[4].chipType == .keyword)
+}
+
+@Test func chipsTitleFieldScope() async throws {
+    let chips = NoteSearchEngine.chips(for: "title:meeting")
+    #expect(chips.count == 1)
+    #expect(chips[0].label == "title:meeting")
+    #expect(chips[0].chipType == .keyword) // field-scoped text = keyword
+}
+
+@Test func chipsBodyFieldScope() async throws {
+    let chips = NoteSearchEngine.chips(for: "body:notes")
+    #expect(chips.count == 1)
+    #expect(chips[0].label == "body:notes")
+    #expect(chips[0].chipType == .keyword)
+}
+
+@Test func chipsTrailingNot() async throws {
+    let chips = NoteSearchEngine.chips(for: "NOT")
+    #expect(chips.count == 1)
+    #expect(chips[0].label == "NOT")
+    #expect(chips[0].chipType == .notKeyword)
+}
+
+@Test func chipsDashNotPrefix() async throws {
+    let chips = NoteSearchEngine.chips(for: "-tag:Design")
+    #expect(chips.count == 1)
+    #expect(chips[0].label == "NOT #Design")
+    #expect(chips[0].chipType == .notKeyword)
+}
+
 // MARK: - Search Result Groups
 
 @Test func searchResultGroupsEmptyWhenNoSearch() async throws {

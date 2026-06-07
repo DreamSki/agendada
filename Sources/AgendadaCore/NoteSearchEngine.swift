@@ -278,6 +278,114 @@ public enum NoteSearchEngine {
         if upper < text.endIndex { value += "…" }
         return value
     }
+
+    // MARK: - Query Chips
+
+    /// Parse `rawText` into read-only query chips for visual feedback in the search popover.
+    /// Reuses ``SearchTokenizer`` so that field prefixes (`tag:`, `person:`, etc.) are
+    /// already coalesced with their values.
+    public static func chips(for rawText: String) -> [QueryChip] {
+        let trimmed = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+
+        let tokens = SearchTokenizer(trimmed).tokens()
+        var chips: [QueryChip] = []
+        var index = 0
+
+        while index < tokens.count {
+            let token = tokens[index]
+
+            switch token {
+            case .not:
+                // Coalesce NOT + next word/phrase into a single notKeyword chip
+                if index + 1 < tokens.count {
+                    let next = tokens[index + 1]
+                    switch next {
+                    case let .word(word):
+                        let (label, _) = Self.chipLabelAndType(for: word)
+                        chips.append(QueryChip(label: "NOT \(label)", chipType: .notKeyword))
+                        index += 2
+                        continue
+                    case let .phrase(phrase):
+                        chips.append(QueryChip(label: "NOT \"\(phrase)\"", chipType: .notKeyword))
+                        index += 2
+                        continue
+                    case .leftParen:
+                        // NOT before parenthesized group — emit standalone NOT chip
+                        chips.append(QueryChip(label: "NOT", chipType: .notKeyword))
+                        index += 1
+                        continue
+                    default:
+                        chips.append(QueryChip(label: "NOT", chipType: .notKeyword))
+                        index += 1
+                        continue
+                    }
+                } else {
+                    chips.append(QueryChip(label: "NOT", chipType: .notKeyword))
+                    index += 1
+                }
+
+            case let .word(word):
+                let (label, type) = Self.chipLabelAndType(for: word)
+                chips.append(QueryChip(label: label, chipType: type))
+                index += 1
+
+            case let .phrase(phrase):
+                chips.append(QueryChip(label: "\"\(phrase)\"", chipType: .keyword))
+                index += 1
+
+            case .leftParen, .rightParen, .and, .or:
+                // Structural tokens — not rendered as chips
+                index += 1
+            }
+        }
+
+        return chips
+    }
+
+    /// Classify a coalesced word token into a (displayLabel, chipType) pair.
+    private static func chipLabelAndType(for word: String) -> (label: String, type: QueryChipType) {
+        // `#tag` shorthand
+        if word.hasPrefix("#") {
+            return (word, .tag)
+        }
+        // `@person` shorthand
+        if word.hasPrefix("@") {
+            return (word, .person)
+        }
+
+        guard let colon = word.firstIndex(of: ":") else {
+            return (stripSurroundingQuotes(word), .keyword)
+        }
+
+        let key = word[..<colon].lowercased()
+        let rawValue = String(word[word.index(after: colon)...])
+        let value = stripSurroundingQuotes(rawValue)
+
+        switch key {
+        case "tag", "tags":
+            return ("#\(value)", .tag)
+        case "person", "people", "assignee", "owner":
+            return ("@\(value)", .person)
+        case "status":
+            return (word, .status)
+        case "has":
+            return (word, .has)
+        case "is":
+            return (word, .is)
+        case "date", "scheduled":
+            return (word, .date)
+        case "title", "body", "content", "meta", "metadata":
+            return (word, .keyword)
+        default:
+            return (stripSurroundingQuotes(word), .keyword)
+        }
+    }
+
+    private static func stripSurroundingQuotes(_ value: String) -> String {
+        guard value.count >= 2, value.first == "\"", value.last == "\"" else { return value }
+        return String(value.dropFirst().dropLast())
+    }
 }
 
 public struct NoteSearchQuery: Equatable, Sendable {
