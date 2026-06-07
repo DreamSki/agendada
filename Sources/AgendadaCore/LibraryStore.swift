@@ -1891,8 +1891,20 @@ public final class LibraryStore {
 
         searchOccurrences = NoteSearchEngine.occurrences(in: notes, query: query)
         currentOccurrenceIndex = nil
-        // Auto-select first result for keyboard navigation
-        selectedSearchResultIndex = searchOccurrences.isEmpty ? nil : 0
+        // Manage selection based on new result count
+        if searchOccurrences.isEmpty {
+            selectedSearchResultIndex = nil
+        } else if searchPresentationMode == .results {
+            // In committed search mode, clamp existing selection or select first
+            if let existing = selectedSearchResultIndex {
+                selectedSearchResultIndex = min(existing, searchOccurrences.count - 1)
+            } else {
+                selectedSearchResultIndex = 0
+            }
+        } else {
+            // Preview mode — no selection
+            selectedSearchResultIndex = nil
+        }
         // Leave currentOccurrenceIndex as nil so the first Enter/next press
         // lands on the first match (goToNextSearchOccurrence resolves
         // (nil ?? -1) + 1 = 0 → index 0). Do NOT auto-select the first note

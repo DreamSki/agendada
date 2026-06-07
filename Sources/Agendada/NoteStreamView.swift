@@ -878,12 +878,13 @@ private struct SearchResultGroupRow: View {
                         }
                         .padding(.horizontal, 6)
                         .padding(.vertical, 4)
-                        .background(isSelected ? Color.white : Color.clear)
+                        .background(isSelected ? AgendaColor.amber.opacity(0.08) : Color.clear)
                     }
                     .buttonStyle(.plain)
                     .background(
                         RoundedRectangle(cornerRadius: 4)
                             .stroke(isSelected ? AgendaColor.amber : Color.clear, lineWidth: 1)
+                            .background(isSelected ? AgendaColor.amber.opacity(0.08) : Color.clear)
                     )
                 }
             }
