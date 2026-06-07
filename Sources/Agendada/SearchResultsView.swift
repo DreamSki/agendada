@@ -74,15 +74,6 @@ struct SearchResultsContentView: View {
                 .padding(.bottom, AgendaSpacing.cardGap)
             }
         }
-        .focusable()
-        .modifier(SearchKeyboardNavigationModifier(
-            onOpenResult: { occurrence in
-                openResult(occurrence)
-            },
-            onExitSearch: {
-                store.exitSearchMode()
-            }
-        ))
         .onChange(of: store.searchPresentationMode) { _, newMode in
             // Clear expanded groups when search mode changes
             if newMode == .normal {

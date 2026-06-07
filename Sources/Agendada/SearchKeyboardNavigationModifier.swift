@@ -8,9 +8,8 @@ import SwiftUI
 struct SearchKeyboardNavigationModifier: ViewModifier {
     @Environment(ObservableLibraryStore.self) private var store
 
-    /// Called when Enter is pressed with a selected result.
-    /// Receives the occurrence to open.
-    let onOpenResult: (SearchOccurrence) -> Void
+    /// Called when Enter is pressed — advances to the next snippet.
+    let onAdvanceSelection: () -> Void
     /// Called when Esc is pressed and no search result is selected (second-stage Esc).
     let onExitSearch: () -> Void
 
@@ -33,9 +32,8 @@ struct SearchKeyboardNavigationModifier: ViewModifier {
                 return .handled
             }
             .onKeyPress(.return) {
-                if let occ = store.jumpToSelectedSearchResult() {
-                    onOpenResult(occ)
-                }
+                _ = store.selectNextSearchResult()
+                onAdvanceSelection()
                 return .handled
             }
     }

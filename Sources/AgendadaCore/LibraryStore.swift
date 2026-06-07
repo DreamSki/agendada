@@ -2237,6 +2237,11 @@ public final class LibraryStore {
         if let idx = searchOccurrences.firstIndex(where: { $0.id == occurrence.id }) {
             currentOccurrenceIndex = idx
         }
+
+        // Clear the return context — we're navigating TO a result, not canceling
+        // search. Prevents exitSearchMode() from undoing this navigation back to
+        // the pre-search project/note.
+        searchReturnContext = .empty
     }
 
     /// 搜索摘要信息

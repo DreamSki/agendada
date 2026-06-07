@@ -358,6 +358,10 @@ struct NoteStreamView: View {
             .opacity(0)
             .frame(width: 0, height: 0)
         }
+        .modifier(SearchKeyboardNavigationModifier(
+            onAdvanceSelection: { },
+            onExitSearch: { store.exitSearchMode() }
+        ))
         .onChange(of: navigationTargetNoteID) { _, targetID in
             navigationScrollWorkItem?.cancel()
             guard let id = targetID else { return }

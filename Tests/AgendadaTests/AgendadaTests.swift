@@ -2201,6 +2201,38 @@ import Testing
     #expect(store.selectedNoteID == note.id)
 }
 
+@Test func openSearchResultThenExitDoesNotUndoNavigation() async throws {
+    let store = LibraryStore()
+    let projA = store.addProject(name: "项目A")
+    let projB = store.addProject(name: "项目B")
+    store.selectProject(projA.id)
+    let noteA = store.addNote(title: "项目A笔记")
+    store.selectProject(projB.id)
+    let noteB = store.addNote(title: "项目B架构")
+    store.updateNote(noteID: noteB.id, title: "项目B架构", body: "架构细节", scheduledDate: nil, tags: [], people: [])
+    // Stay in project A context, but search globally
+    store.selectProject(projA.id)
+    store.selectNote(noteA.id)
+    store.setSearchScope(.all)
+
+    // Search captures project A as return context
+    store.commitSearchText("架构")
+    #expect(store.searchReturnContext.selectedProjectID == projA.id)
+
+    // Open a result from project B
+    guard let occB = store.searchOccurrences.first(where: { $0.noteID == noteB.id }) else {
+        fatalError("Expected occurrence from project B")
+    }
+    store.openSearchResult(occB)
+    #expect(store.selectedProjectID == projB.id)
+    #expect(store.selectedNoteID == noteB.id)
+
+    // Exit search — should NOT restore project A context
+    store.exitSearchMode()
+    #expect(store.selectedProjectID == projB.id, "exitSearchMode should not undo openSearchResult navigation")
+    #expect(store.selectedNoteID == noteB.id, "exitSearchMode should not undo openSearchResult navigation")
+}
+
 // MARK: - Search History
 
 @Test func commitSearchSavesHistory() async throws {
