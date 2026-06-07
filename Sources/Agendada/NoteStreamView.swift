@@ -662,6 +662,7 @@ private struct StableTextField: NSViewRepresentable {
 private struct SearchResultsContentView: View {
     @Environment(ObservableLibraryStore.self) private var store
     @Binding var navigationTargetNoteID: Note.ID?
+    @State private var expandedSearchResultNoteIDs: Set<Note.ID> = []
 
     var body: some View {
         let groups = store.searchResultGroups()
@@ -717,6 +718,10 @@ private struct SearchResultsContentView: View {
                     group: group,
                     highlightTerms: highlightTerms,
                     selectedGlobalIndex: selectedIndex,
+                    isExpanded: isSearchResultGroupExpanded(group.note.id),
+                    onToggleExpand: {
+                        toggleSearchResultGroupExpansion(group.note.id)
+                    },
                     onSelectOccurrence: { occurrence in
                         selectOccurrence(occurrence)
                     }
@@ -753,6 +758,16 @@ private struct SearchResultsContentView: View {
             }
             return .handled
         }
+        .onChange(of: store.searchPresentationMode) { _, newMode in
+            // Clear expanded groups when search mode changes
+            if newMode == .normal {
+                clearExpandedSearchResultGroups()
+            }
+        }
+        .onChange(of: store.library.searchHighlightText) { _, _ in
+            // Clear expanded groups when search query changes
+            clearExpandedSearchResultGroups()
+        }
     }
 
     private var searchScopeLabel: String {
@@ -768,6 +783,22 @@ private struct SearchResultsContentView: View {
     private var highlightTerms: [String] {
         let raw = store.library.searchHighlightText
         return raw.split(separator: " ").map(String.init)
+    }
+
+    private func isSearchResultGroupExpanded(_ noteID: Note.ID) -> Bool {
+        expandedSearchResultNoteIDs.contains(noteID)
+    }
+
+    private func toggleSearchResultGroupExpansion(_ noteID: Note.ID) {
+        if expandedSearchResultNoteIDs.contains(noteID) {
+            expandedSearchResultNoteIDs.remove(noteID)
+        } else {
+            expandedSearchResultNoteIDs.insert(noteID)
+        }
+    }
+
+    private func clearExpandedSearchResultGroups() {
+        expandedSearchResultNoteIDs.removeAll()
     }
 
     private func selectOccurrence(_ occurrence: SearchOccurrence) {
@@ -825,6 +856,8 @@ private struct SearchResultGroupRow: View {
     let group: SearchResultGroup
     let highlightTerms: [String]
     let selectedGlobalIndex: Int?
+    let isExpanded: Bool
+    let onToggleExpand: () -> Void
     let onSelectOccurrence: (SearchOccurrence) -> Void
 
     var body: some View {
@@ -853,9 +886,11 @@ private struct SearchResultGroupRow: View {
             }
             .buttonStyle(.plain)
 
-            // Snippets (up to 3)
+            // Snippets (3 by default, or all when expanded)
             VStack(alignment: .leading, spacing: 4) {
-                ForEach(Array(group.snippets.prefix(3))) { snippet in
+                let visibleSnippets = isExpanded ? group.snippets : Array(group.snippets.prefix(3))
+
+                ForEach(visibleSnippets) { snippet in
                     let isSelected = selectedGlobalIndex == snippet.occurrence.globalIndex
                     Button {
                         onSelectOccurrence(snippet.occurrence)
@@ -886,6 +921,28 @@ private struct SearchResultGroupRow: View {
                             .stroke(isSelected ? AgendaColor.amber : Color.clear, lineWidth: 1)
                             .background(isSelected ? AgendaColor.amber.opacity(0.08) : Color.clear)
                     )
+                }
+
+                // Expand/collapse button when there are more than 3 snippets
+                if group.snippets.count > 3 {
+                    Button {
+                        onToggleExpand()
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(AgendaColor.textMuted)
+
+                            Text(isExpanded ? "收起" : "显示全部 \(group.snippets.count) 个命中")
+                                .font(AgendaFont.panelMicro)
+                                .foregroundStyle(AgendaColor.textMuted)
+                        }
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(AgendaColor.sidebarBg, in: RoundedRectangle(cornerRadius: 3))
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.leading, 28)
                 }
             }
             .padding(.leading, 28)
