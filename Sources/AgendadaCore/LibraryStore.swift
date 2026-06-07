@@ -22,6 +22,7 @@ public final class LibraryStore {
     public private(set) var currentOccurrenceIndex: Int? = nil
     public private(set) var selectedSearchResultIndex: Int? = nil
     public private(set) var searchReturnContext: SearchReturnContext = .empty
+    public private(set) var searchHistory: [SearchHistoryEntry] = []
 
     // MARK: - Find in Note State
 
@@ -44,7 +45,8 @@ public final class LibraryStore {
         searchScope: SearchScope = .currentScope,
         sortOrder: NoteSortOrder = .scheduledDateDesc,
         sortMode: SortMode = .scheduledDate,
-        customNoteTemplates: [CustomNoteTemplate] = []
+        customNoteTemplates: [CustomNoteTemplate] = [],
+        searchHistory: [SearchHistoryEntry] = []
     ) {
         self.categories = categories
         self.projects = projects
@@ -59,6 +61,7 @@ public final class LibraryStore {
         self.sortOrder = sortOrder
         self.sortMode = sortMode
         self.customNoteTemplates = customNoteTemplates
+        self.searchHistory = searchHistory
     }
 
     public convenience init(snapshot: LibrarySnapshot) {
@@ -75,7 +78,8 @@ public final class LibraryStore {
             searchScope: snapshot.searchScope,
             sortOrder: snapshot.sortOrder,
             sortMode: snapshot.sortMode,
-            customNoteTemplates: snapshot.customNoteTemplates
+            customNoteTemplates: snapshot.customNoteTemplates,
+            searchHistory: snapshot.searchHistory
         )
     }
 
@@ -1090,6 +1094,29 @@ public final class LibraryStore {
             selectedSmartOverviewID = nil
         }
         calculateSearchOccurrences()
+        addSearchToHistory(trimmed)
+    }
+
+    // MARK: - Search History
+
+    /// Records a committed search query in the recent history.
+    /// Deduplicates (moves existing entry to top) and caps at 10 entries.
+    public func addSearchToHistory(_ query: String) {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        // Remove existing duplicate
+        searchHistory.removeAll { $0.query == trimmed }
+        // Prepend new entry
+        searchHistory.insert(SearchHistoryEntry(query: trimmed), at: 0)
+        // Cap at 10
+        if searchHistory.count > 10 {
+            searchHistory = Array(searchHistory.prefix(10))
+        }
+    }
+
+    public func clearSearchHistory() {
+        searchHistory = []
     }
 
     private func sortedNotesForCurrentMode(_ matchingNotes: [Note]) -> [Note] {
@@ -2254,7 +2281,8 @@ public final class LibraryStore {
             searchScope: searchScope,
             sortOrder: sortOrder,
             sortMode: sortMode,
-            customNoteTemplates: customNoteTemplates
+            customNoteTemplates: customNoteTemplates,
+            searchHistory: searchHistory
         )
         #if DEBUG
         let elapsed = Date().timeIntervalSince(start)

@@ -2095,6 +2095,74 @@ import Testing
     #expect(store.findInNoteText == "内容")
 }
 
+// MARK: - Search History
+
+@Test func commitSearchSavesHistory() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    _ = store.addNote(title: "测试")
+    store.selectOverview(.all)
+
+    store.commitSearchText("架构")
+    #expect(store.searchHistory.count == 1)
+    #expect(store.searchHistory[0].query == "架构")
+}
+
+@Test func emptySearchNotSavedToHistory() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    _ = store.addNote(title: "测试")
+    store.selectOverview(.all)
+
+    store.commitSearchText("   ")
+    #expect(store.searchHistory.isEmpty)
+}
+
+@Test func duplicateSearchMovesToTop() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    _ = store.addNote(title: "测试")
+    store.selectOverview(.all)
+
+    store.commitSearchText("架构")
+    store.commitSearchText("设计")
+    #expect(store.searchHistory[0].query == "设计")
+
+    // "架构" again — should move to top, no duplicates
+    store.commitSearchText("架构")
+    #expect(store.searchHistory.count == 2)
+    #expect(store.searchHistory[0].query == "架构")
+    #expect(store.searchHistory[1].query == "设计")
+}
+
+@Test func searchHistoryCappedAtTen() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    _ = store.addNote(title: "测试")
+    store.selectOverview(.all)
+
+    for i in 1...15 {
+        store.commitSearchText("查询\(i)")
+    }
+    #expect(store.searchHistory.count == 10)
+    #expect(store.searchHistory[0].query == "查询15")
+    #expect(store.searchHistory[9].query == "查询6")
+}
+
+@Test func clearSearchHistoryEmptiesAll() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    _ = store.addNote(title: "测试")
+    store.selectOverview(.all)
+
+    store.commitSearchText("架构")
+    store.commitSearchText("设计")
+    #expect(store.searchHistory.count == 2)
+
+    store.clearSearchHistory()
+    #expect(store.searchHistory.isEmpty)
+}
+
 // MARK: - Query Chips
 
 @Test func chipsEmptyForBlankText() async throws {
