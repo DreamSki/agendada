@@ -1,0 +1,658 @@
+import AgendadaCore
+import AppKit
+import SwiftUI
+
+// MARK: - Supporting Types
+
+struct SearchFilterOption: Identifiable {
+    let label: String
+    let token: String
+    let systemImage: String
+
+    var id: String { token }
+}
+
+struct SearchPopoverResult: Identifiable {
+    let note: Note
+    let projectName: String
+    let excerpt: String
+    let matchCount: Int
+    let field: SearchField?
+
+    var id: Note.ID { note.id }
+}
+
+// MARK: - Enter-intercepting TextField for Search Popover
+
+struct ReturnKeyTextField: NSViewRepresentable {
+    @Binding var text: String
+    let placeholder: String
+    var onReturn: () -> Void
+
+    func makeNSView(context: Context) -> NSTextField {
+        let tf = NSTextField()
+        tf.isBezeled = false
+        tf.isBordered = false
+        tf.drawsBackground = false
+        tf.focusRingType = .none
+        tf.font = NSFont(name: "Avenir Next", size: 13)
+        tf.placeholderString = placeholder
+        tf.lineBreakMode = .byTruncatingTail
+        tf.cell?.isScrollable = true
+        tf.cell?.wraps = false
+        tf.delegate = context.coordinator
+        return tf
+    }
+
+    func updateNSView(_ tf: NSTextField, context: Context) {
+        if tf.stringValue != text { tf.stringValue = text }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text, onReturn: onReturn)
+    }
+
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        @Binding var text: String
+        let onReturn: () -> Void
+
+        init(text: Binding<String>, onReturn: @escaping () -> Void) {
+            _text = text
+            self.onReturn = onReturn
+        }
+
+        func controlTextDidChange(_ obj: Notification) {
+            guard let tf = obj.object as? NSTextField else { return }
+            // Only write to binding if value actually changed — prevents
+            // unnecessary publishChange → re-render → binding writeback cycles
+            let newValue = tf.stringValue
+            guard newValue != text else { return }
+            text = newValue
+        }
+
+        func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+            if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+                onReturn()
+                return true  // 拦截回车，不再传给系统
+            }
+            return false
+        }
+    }
+}
+
+// MARK: - Search Popover Content
+
+struct SearchPopoverContent: View {
+    let committedSearchText: String
+    let clearCommittedSearch: () -> Void
+    @Binding var navigationTargetNoteID: Note.ID?
+    @Environment(ObservableLibraryStore.self) private var store
+    @State private var showSaveSheet = false
+    @State private var showAdvanced = false
+    @State private var draftSearchText = ""
+    @State private var searchScope: SearchScope = .currentScope
+
+    private var summary: SearchSummary {
+        store.searchSummary
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            // 搜索输入框行
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(AgendaColor.textMuted)
+                ReturnKeyTextField(
+                    text: $draftSearchText,
+                    placeholder: "搜索标题、正文、标签或人员",
+                    onReturn: { handleSearchReturn() }
+                )
+                .frame(width: 180, height: 20)
+                if !draftSearchText.isEmpty {
+                    Button {
+                        clearSearch()
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(AgendaColor.textMuted)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            // 搜索范围切换
+            HStack(spacing: 0) {
+                ForEach(SearchScope.allCases, id: \.self) { scope in
+                    Button {
+                        searchScope = scope
+                    } label: {
+                        Text(scope == .currentScope ? "当前范围" : "全部笔记")
+                            .font(.custom("Avenir Next Medium", size: 11))
+                            .foregroundStyle(searchScope == scope ? AgendaColor.amber : AgendaColor.textMuted)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
+                            .background(
+                                searchScope == scope
+                                    ? AgendaColor.amber.opacity(0.12)
+                                    : Color.clear,
+                                in: Capsule()
+                            )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            if !draftChips.isEmpty {
+                QueryChipsRow(chips: draftChips)
+                    .padding(.top, 4)
+            }
+
+            if hasActiveSearch {
+                searchResultsOverview
+            }
+
+            if !searchResultRows.isEmpty {
+                searchResultList
+            }
+
+            // 导航和计数行
+            if isCommittedDraft && summary.totalOccurrences > 0 {
+                HStack(spacing: 8) {
+                    Button { handlePrevious() } label: {
+                        Image(systemName: "chevron.up")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(AgendaColor.amber)
+                    }
+                    .buttonStyle(.plain)
+
+                    Button { handleNext() } label: {
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(AgendaColor.amber)
+                    }
+                    .buttonStyle(.plain)
+
+                    Text("\(summary.currentOccurrenceIndex)/\(summary.totalOccurrences)")
+                        .font(.custom("Avenir Next Medium", size: 11))
+                        .foregroundStyle(AgendaColor.textMuted)
+
+                    Spacer()
+
+                    Button {
+                        showSaveSheet = true
+                    } label: {
+                        Image(systemName: "plus.rectangle.on.folder")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(AgendaColor.amber)
+                    }
+                    .buttonStyle(.plain)
+                    .help("保存为智能概览")
+
+                    Text("笔记 \(summary.currentNoteIndex)/\(summary.totalMatchedNotes)")
+                        .font(.custom("Avenir Next", size: 11))
+                        .foregroundStyle(AgendaColor.textMuted)
+                }
+            }
+
+            Divider()
+                .padding(.vertical, 2)
+
+            Button {
+                showAdvanced.toggle()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: showAdvanced ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                    Text("语法与筛选")
+                        .font(.custom("Avenir Next Medium", size: 11))
+                    Spacer()
+                    Text(store.sortMode.title)
+                        .font(.custom("Avenir Next", size: 10))
+                        .foregroundStyle(AgendaColor.textMuted)
+                }
+                .foregroundStyle(AgendaColor.textMuted)
+            }
+            .buttonStyle(.plain)
+
+            if showAdvanced {
+                advancedSearchContent
+            }
+        }
+        .padding(.horizontal, 10).padding(.vertical, 8)
+        .frame(width: 390)
+        .onAppear {
+            draftSearchText = committedSearchText
+            searchScope = store.searchScope
+        }
+        .onChange(of: searchScope) { _, newScope in
+            store.searchScope = newScope
+        }
+        .onChange(of: committedSearchText) { _, newValue in
+            if draftSearchText != newValue {
+                draftSearchText = newValue
+            }
+            if newValue.isEmpty {
+                SharedBlockNoteWebView.shared.clearSearch()
+            }
+        }
+        .onChange(of: editorSearchRenderKey) { _, _ in
+            guard !committedSearchText.isEmpty, store.searchOccurrences.count > 0 else { return }
+            let q = store.library.searchHighlightText
+            guard !q.isEmpty else { return }
+            SharedBlockNoteWebView.shared.searchInEditor(query: q) { _ in
+                SharedBlockNoteWebView.shared.navigateToMatch(index: 0) { _, _ in }
+            }
+        }
+        .sheet(isPresented: $showSaveSheet) {
+            SmartOverviewPromptSheet(
+                sheet: SmartOverviewSheet(query: draftSearchText),
+                onSave: { name, query in
+                    store.addSmartOverview(name: name, query: query)
+                }
+            )
+        }
+    }
+
+    // MARK: - Navigation helpers
+
+    private var searchResultsOverview: some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(searchScopeTitle)
+                    .font(.custom("Avenir Next Demi Bold", size: 11))
+                    .foregroundStyle(AgendaColor.textMuted)
+                Text(searchResultSummaryText)
+                    .font(.custom("Avenir Next", size: 12))
+                    .foregroundStyle(AgendaColor.textPrimary)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            if !searchResultRows.isEmpty {
+                Text(searchScope == .currentScope ? "范围内" : "全局")
+                    .font(.custom("Avenir Next Demi Bold", size: 10))
+                    .foregroundStyle(AgendaColor.amber)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(AgendaColor.amber.opacity(0.12), in: Capsule())
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(AgendaColor.canvasGray.opacity(0.8), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var searchResultList: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(searchResultRows) { result in
+                Button {
+                    openSearchResult(result)
+                } label: {
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: result.field == .title ? "textformat" : "doc.text")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(AgendaColor.amber)
+                            .frame(width: 16, height: 16)
+                            .padding(.top, 2)
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack(spacing: 6) {
+                                Text(result.note.title.isEmpty ? "无标题" : result.note.title)
+                                    .font(.custom("Avenir Next Medium", size: 12))
+                                    .foregroundStyle(AgendaColor.textPrimary)
+                                    .lineLimit(1)
+
+                                if result.matchCount > 0 {
+                                    Text("\(result.matchCount)")
+                                        .font(.custom("Avenir Next Demi Bold", size: 9))
+                                        .foregroundStyle(AgendaColor.amber)
+                                        .padding(.horizontal, 5)
+                                        .padding(.vertical, 1)
+                                        .background(AgendaColor.amber.opacity(0.12), in: Capsule())
+                                }
+                            }
+
+                            Text(result.excerpt)
+                                .font(.custom("Avenir Next", size: 10))
+                                .foregroundStyle(AgendaColor.textMuted)
+                                .lineLimit(1)
+
+                            Text(result.projectName)
+                                .font(.custom("Avenir Next", size: 9))
+                                .foregroundStyle(AgendaColor.textMuted.opacity(0.85))
+                                .lineLimit(1)
+                        }
+
+                        Spacer(minLength: 8)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .background(Color.white.opacity(0.7), in: RoundedRectangle(cornerRadius: 7))
+                .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color.black.opacity(0.05), lineWidth: 0.5))
+            }
+        }
+    }
+
+    private var advancedSearchContent: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Text("排序")
+                    .font(.custom("Avenir Next Medium", size: 11))
+                    .foregroundStyle(AgendaColor.textMuted)
+                Menu {
+                    ForEach(SortMode.allCases, id: \.self) { mode in
+                        Button(mode.title) {
+                            store.setSortMode(mode)
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(store.sortMode.title)
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.system(size: 8, weight: .semibold))
+                    }
+                    .font(.custom("Avenir Next", size: 11))
+                    .foregroundStyle(AgendaColor.amber)
+                }
+                .menuStyle(.borderlessButton)
+
+                Spacer()
+
+                Button {
+                    showSaveSheet = true
+                } label: {
+                    Label("保存概览", systemImage: "plus.rectangle.on.folder")
+                        .font(.custom("Avenir Next Medium", size: 11))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(AgendaColor.amber)
+                .disabled(draftSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+
+            Text("输入关键词，或点下面条件快速组合筛选：")
+                .font(.custom("Avenir Next", size: 10))
+                .foregroundStyle(AgendaColor.textMuted)
+
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 74), spacing: 6)], alignment: .leading, spacing: 6) {
+                ForEach(searchFilterOptions) { option in
+                    Button {
+                        toggleSearchToken(option.token)
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: containsSearchToken(option.token) ? "checkmark.circle.fill" : option.systemImage)
+                                .font(.system(size: 10, weight: .medium))
+                            Text(option.label)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .font(.custom("Avenir Next", size: 10))
+                    .foregroundStyle(containsSearchToken(option.token) ? AgendaColor.amber : AgendaColor.textPrimary)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(AgendaColor.canvasGray, in: Capsule())
+                    .help(option.token)
+                }
+            }
+
+            Text("语法：tag:标签 person:人名 status:open，多个条件会同时生效")
+                .font(.custom("Avenir Next", size: 10))
+                .foregroundStyle(AgendaColor.textMuted)
+        }
+        .padding(.top, 2)
+    }
+
+    private var searchFilterOptions: [SearchFilterOption] {
+        [
+            SearchFilterOption(label: "简达", token: "is:brief", systemImage: "smallcircle.fill.circle"),
+            SearchFilterOption(label: "关注", token: "is:focused", systemImage: "scope"),
+            SearchFilterOption(label: "未完成", token: "status:open", systemImage: "circle"),
+            SearchFilterOption(label: "已完成", token: "status:completed", systemImage: "checkmark.circle"),
+            SearchFilterOption(label: "有待办", token: "has:tasks", systemImage: "checklist"),
+            SearchFilterOption(label: "有日期", token: "has:date", systemImage: "calendar"),
+            SearchFilterOption(label: "今天", token: "date:today", systemImage: "sun.max"),
+            SearchFilterOption(label: "未来", token: "date:upcoming", systemImage: "calendar.badge.clock")
+        ]
+    }
+
+    private var searchTerms: [String] {
+        draftSearchText
+            .split(separator: " ")
+            .map(String.init)
+            .filter { !$0.isEmpty }
+    }
+
+    private var trimmedSearchText: String {
+        draftSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var hasActiveSearch: Bool {
+        !trimmedSearchText.isEmpty
+    }
+
+    private var draftChips: [QueryChip] {
+        NoteSearchEngine.chips(for: draftSearchText)
+    }
+
+    private var searchResultNotes: [Note] {
+        guard hasActiveSearch else { return [] }
+        if searchScope == .currentScope {
+            // 当前范围预览：从 store 的 base scope notes 直接用 draftText 过滤
+            let baseNotes = store.library.currentScopeNotesForPreview(now: Date())
+            let query = NoteSearchEngine.parse(draftSearchText)
+            return NoteSearchEngine.filter(baseNotes, query: query)
+        } else {
+            return store.library.globalSearchNotes(for: draftSearchText, onlyTrash: isTrashPreview)
+        }
+    }
+
+    private var searchResultRows: [SearchPopoverResult] {
+        let occurrencesByNote = Dictionary(grouping: previewOccurrences, by: \.noteID)
+        return searchResultNotes.prefix(5).map { note in
+            let occurrences = occurrencesByNote[note.id] ?? []
+            let firstOccurrence = occurrences.first
+            return SearchPopoverResult(
+                note: note,
+                projectName: projectPath(for: note),
+                excerpt: firstOccurrence?.excerpt ?? fallbackExcerpt(for: note),
+                matchCount: occurrences.count,
+                field: firstOccurrence?.field
+            )
+        }
+    }
+
+    private var previewOccurrences: [SearchOccurrence] {
+        guard hasActiveSearch else { return [] }
+        if searchScope == .currentScope {
+            let notes = searchResultNotes
+            return NoteSearchEngine.occurrences(in: notes, query: draftSearchText)
+        } else {
+            return store.library.globalSearchOccurrences(for: draftSearchText, onlyTrash: isTrashPreview)
+        }
+    }
+
+    /// Stable key for WebView search highlight refresh — avoids stale highlights
+    /// when search text changes but occurrence count stays the same.
+    private var editorSearchRenderKey: String {
+        [
+            committedSearchText,
+            store.selectedNoteID?.uuidString ?? "",
+            "\(store.currentOccurrence?.globalIndex ?? -1)",
+            "\(store.searchOccurrences.count)"
+        ].joined(separator: "|")
+    }
+
+    private var isTrashPreview: Bool {
+        store.selectedOverview == .trash
+    }
+
+    private var isCommittedDraft: Bool {
+        !committedSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && committedSearchText.trimmingCharacters(in: .whitespacesAndNewlines) == trimmedSearchText
+    }
+
+    private var searchScopeTitle: String {
+        if store.selectedOverview == .trash {
+            return "废纸篓搜索"
+        }
+        if searchScope == .currentScope {
+            if let projectID = store.selectedProjectID,
+               let project = store.library.project(withID: projectID) {
+                return "项目：\(project.name)"
+            }
+            if let overview = store.selectedOverview {
+                return overview.title + "搜索"
+            }
+        }
+        return "全局搜索"
+    }
+
+    private var searchResultSummaryText: String {
+        if !previewOccurrences.isEmpty {
+            return "\(searchResultNotes.count) 篇笔记，\(previewOccurrences.count) 处命中"
+        }
+        return filteredSearchStatusText
+    }
+
+    private var hasSearchFilters: Bool {
+        searchTerms.contains { isSearchFilterToken($0) }
+    }
+
+    private var hasPlainKeywords: Bool {
+        searchTerms.contains { !isSearchFilterToken($0) }
+    }
+
+    private var filteredSearchStatusText: String {
+        let count = searchResultNotes.count
+        if count == 0 {
+            return hasPlainKeywords ? "无匹配结果" : "没有符合条件的笔记"
+        }
+        if hasPlainKeywords {
+            return "已筛选 \(count) 篇笔记，未找到关键词位置"
+        }
+        return "已筛选 \(count) 篇笔记"
+    }
+
+    private func containsSearchToken(_ token: String) -> Bool {
+        searchTerms.contains(token)
+    }
+
+    private func toggleSearchToken(_ token: String) {
+        var terms = searchTerms
+        if let index = terms.firstIndex(of: token) {
+            terms.remove(at: index)
+        } else {
+            terms.append(token)
+        }
+        draftSearchText = terms.joined(separator: " ")
+    }
+
+    private func isSearchFilterToken(_ term: String) -> Bool {
+        term.hasPrefix("tag:")
+            || term.hasPrefix("person:")
+            || term.hasPrefix("status:")
+            || term.hasPrefix("has:")
+            || term.hasPrefix("is:")
+            || term.hasPrefix("date:")
+    }
+
+    private func projectPath(for note: Note) -> String {
+        guard let project = store.project(withID: note.projectID) else {
+            return "未归属项目"
+        }
+        if let categoryID = project.categoryID,
+           let category = store.category(withID: categoryID) {
+            return "\(category.name) / \(project.name)"
+        }
+        return project.name
+    }
+
+    private func fallbackExcerpt(for note: Note) -> String {
+        let body = note.bodyPlainText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !body.isEmpty {
+            return String(body.prefix(72))
+        }
+        if !note.tags.isEmpty {
+            return note.tags.map { "#\($0)" }.joined(separator: " ")
+        }
+        return hasSearchFilters ? "符合当前筛选条件" : "标题匹配"
+    }
+
+    private func openSearchResult(_ result: SearchPopoverResult) {
+        commitDraftSearch()
+        store.selectNote(result.note.id)
+        navigationTargetNoteID = result.note.id
+        if let occurrence = store.searchOccurrences.first(where: { $0.noteID == result.note.id }) {
+            prepareEditorSearchNavigation(for: occurrence)
+        }
+    }
+
+    private func clearSearch() {
+        draftSearchText = ""
+        clearCommittedSearch()
+    }
+
+    private func commitDraftSearch() {
+        store.commitSearchText(draftSearchText)
+    }
+
+    private func handleSearchReturn() {
+        guard hasActiveSearch else {
+            clearSearch()
+            return
+        }
+
+        guard isCommittedDraft else {
+            commitDraftSearch()
+            return
+        }
+
+        handleNext()
+    }
+
+    private func handleNext() {
+        let previousNoteID = store.selectedNoteID
+        guard let occurrence = store.goToNextSearchOccurrence() else { return }
+        if occurrence.noteID == previousNoteID {
+            syncEditorHighlight(occurrence)
+        } else {
+            prepareEditorSearchNavigation(for: occurrence)
+        }
+    }
+
+    private func handlePrevious() {
+        let previousNoteID = store.selectedNoteID
+        guard let occurrence = store.goToPreviousSearchOccurrence() else { return }
+        if occurrence.noteID == previousNoteID {
+            syncEditorHighlight(occurrence)
+        } else {
+            prepareEditorSearchNavigation(for: occurrence)
+        }
+    }
+
+    /// 引擎跳转后，同步编辑器的橙色高亮到当前 occurrence。
+    /// - 同笔记 body：直接 navigateToMatch
+    /// - 跨笔记：handleNext/handlePrevious 会登记 pending，新编辑器的 onReady 再处理
+    /// - title：编辑器里没有对应 DOM 高亮，回退到本条笔记的第一个 body 匹配
+    ///   作为视觉锚点（navigateToMatch JS 会做边界检查，无 body 匹配时安全跳过）
+    private func syncEditorHighlight(_ occ: SearchOccurrence? = nil) {
+        guard let occ = occ ?? store.currentOccurrence else { return }
+        let index: Int = occ.field == .body ? occ.bodyIndexInNote : 0
+        SharedBlockNoteWebView.shared.navigateToMatch(index: index) { _, _ in }
+    }
+
+    private func prepareEditorSearchNavigation(for occ: SearchOccurrence) {
+        let query = store.library.searchHighlightText
+        guard !query.isEmpty else { return }
+        navigationTargetNoteID = occ.noteID
+        SharedBlockNoteWebView.shared.prepareSearchNavigation(
+            noteID: occ.noteID,
+            query: query,
+            bodyIndex: occ.field == .body ? occ.bodyIndexInNote : 0
+        )
+    }
+}
