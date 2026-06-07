@@ -16,6 +16,7 @@ struct NoteStreamView: View {
     @State private var localSelectionScrollLockOrigin: CGPoint?
     @State private var localSelectionScrollLockDeadline: Date = .distantPast
     @State private var localSelectionScrollLockGeneration = 0
+    @State private var searchKeyMonitor: Any?
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -29,8 +30,56 @@ struct NoteStreamView: View {
                 SharedBlockNoteWebView.shared.clearSearch()
             }
         }
+        .onChange(of: store.searchPresentationMode) { _, newMode in
+            if newMode == .results {
+                installSearchKeyMonitor()
+            } else {
+                removeSearchKeyMonitor()
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .findInNoteRequested)) { _ in
             store.requestFindInNote()
+        }
+    }
+
+    // MARK: - Search Key Monitor
+
+    /// Installs a local key-event monitor so ↑ ↓ Enter work even when
+    /// the search popover's NSTextField has keyboard focus.
+    private func installSearchKeyMonitor() {
+        guard searchKeyMonitor == nil else { return }
+        searchKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak store] event in
+            guard let store = store else { return event }
+            guard store.searchPresentationMode == .results else { return event }
+
+            let chars = event.charactersIgnoringModifiers
+            switch chars {
+            case String(UnicodeScalar(NSDownArrowFunctionKey)!):
+                _ = store.selectNextSearchResult()
+                return nil
+            case String(UnicodeScalar(NSUpArrowFunctionKey)!):
+                _ = store.selectPreviousSearchResult()
+                return nil
+            case "\r", "\n":
+                _ = store.selectNextSearchResult()
+                return nil
+            case String(UnicodeScalar(0x1B)!): // Escape
+                if store.selectedSearchResultIndex != nil {
+                    store.clearSearchResultSelection()
+                } else {
+                    store.exitSearchMode()
+                }
+                return nil
+            default:
+                return event
+            }
+        } as AnyObject?
+    }
+
+    private func removeSearchKeyMonitor() {
+        if let monitor = searchKeyMonitor {
+            NSEvent.removeMonitor(monitor)
+            searchKeyMonitor = nil
         }
     }
 
@@ -351,32 +400,10 @@ struct NoteStreamView: View {
             }
         }
         .background {
-            VStack {
-                // Esc: two-stage — clear selection first, then exit search
-                Button("") {
-                    if store.isInBatchMode {
-                        store.deselectAllNotes()
-                    } else if searchMode == .results, store.selectedSearchResultIndex != nil {
-                        store.clearSearchResultSelection()
-                    } else if searchMode == .results {
-                        store.exitSearchMode()
-                    }
-                }
-                .keyboardShortcut(.escape, modifiers: [])
-
-                if searchMode == .results {
-                    // ↑: previous snippet
-                    Button("") { _ = store.selectPreviousSearchResult() }
-                        .keyboardShortcut(.upArrow, modifiers: [])
-
-                    // ↓ / Enter: next snippet
-                    Button("") { _ = store.selectNextSearchResult() }
-                        .keyboardShortcut(.downArrow, modifiers: [])
-
-                    Button("") { _ = store.selectNextSearchResult() }
-                        .keyboardShortcut(.return, modifiers: [])
-                }
+            Button("") {
+                if store.isInBatchMode { store.deselectAllNotes() }
             }
+            .keyboardShortcut(.escape, modifiers: [])
             .opacity(0)
             .frame(width: 0, height: 0)
         }
