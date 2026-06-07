@@ -2119,6 +2119,13 @@ public final class LibraryStore {
         }
     }
 
+    /// How the middle content area should present the current search state.
+    public var searchPresentationMode: SearchPresentationMode {
+        let committed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !committed.isEmpty else { return .normal }
+        return searchOccurrences.isEmpty ? .noResults : .results
+    }
+
     public func snapshot() -> LibrarySnapshot {
         #if DEBUG
         let start = Date()

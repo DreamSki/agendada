@@ -289,18 +289,16 @@ struct NoteStreamView: View {
 
     private var noteStreamContent: some View {
         let notes = store.filteredNotes()
-        let trimmedSearch = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let isCommittedSearch = !trimmedSearch.isEmpty && !store.searchOccurrences.isEmpty
-        let isNoResultsSearch = !trimmedSearch.isEmpty && store.searchOccurrences.isEmpty
+        let searchMode = store.searchPresentationMode
         return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
-                    if isCommittedSearch {
+                    if searchMode == .results {
                         SearchResultsContentView(
                             navigationTargetNoteID: $navigationTargetNoteID
                         )
-                    } else if isNoResultsSearch {
-                        SearchNoResultsView(searchText: trimmedSearch)
+                    } else if searchMode == .noResults {
+                        SearchNoResultsView(searchText: searchText)
                     } else {
                         ForEach(notes, id: \.id) { note in
                             StreamNoteRow(
