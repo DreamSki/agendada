@@ -9,8 +9,8 @@ struct SearchKeyboardNavigationModifier: ViewModifier {
     @Environment(ObservableLibraryStore.self) private var store
 
     /// Called when Enter is pressed with a selected result.
-    /// The closure receives the action to perform: jump to selected + prepare editor navigation.
-    let onJumpToSelected: () -> Void
+    /// Receives the occurrence to open.
+    let onOpenResult: (SearchOccurrence) -> Void
     /// Called when Esc is pressed and no search result is selected (second-stage Esc).
     let onExitSearch: () -> Void
 
@@ -33,7 +33,9 @@ struct SearchKeyboardNavigationModifier: ViewModifier {
                 return .handled
             }
             .onKeyPress(.return) {
-                onJumpToSelected()
+                if let occ = store.jumpToSelectedSearchResult() {
+                    onOpenResult(occ)
+                }
                 return .handled
             }
     }

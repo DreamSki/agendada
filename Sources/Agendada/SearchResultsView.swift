@@ -68,23 +68,16 @@ struct SearchResultsContentView: View {
                         toggleSearchResultGroupExpansion(group.note.id)
                     },
                     onSelectOccurrence: { occurrence in
-                        selectOccurrence(occurrence)
+                        openResult(occurrence)
                     }
                 )
                 .padding(.bottom, AgendaSpacing.cardGap)
             }
         }
+        .focusable()
         .modifier(SearchKeyboardNavigationModifier(
-            onJumpToSelected: {
-                guard let occ = store.jumpToSelectedSearchResult() else { return }
-                navigationTargetNoteID = occ.noteID
-                let query = store.library.searchHighlightText
-                guard !query.isEmpty else { return }
-                SharedBlockNoteWebView.shared.prepareSearchNavigation(
-                    noteID: occ.noteID,
-                    query: query,
-                    bodyIndex: occ.field == .body ? occ.bodyIndexInNote : 0
-                )
+            onOpenResult: { occurrence in
+                openResult(occurrence)
             },
             onExitSearch: {
                 store.exitSearchMode()
@@ -133,17 +126,26 @@ struct SearchResultsContentView: View {
         expandedSearchResultNoteIDs.removeAll()
     }
 
-    private func selectOccurrence(_ occurrence: SearchOccurrence) {
-        store.selectNote(occurrence.noteID)
+    /// Unified path for opening a search result — click or Enter.
+    /// Navigates to the source project, selects the note, prepares editor
+    /// highlight navigation, then exits search results mode.
+    private func openResult(_ occurrence: SearchOccurrence) {
+        // 1. Navigate to source note's project without clearing search state
+        store.openSearchResult(occurrence)
         navigationTargetNoteID = occurrence.noteID
 
+        // 2. Prepare editor navigation before exiting search
         let query = store.library.searchHighlightText
-        guard !query.isEmpty else { return }
-        SharedBlockNoteWebView.shared.prepareSearchNavigation(
-            noteID: occurrence.noteID,
-            query: query,
-            bodyIndex: occurrence.field == .body ? occurrence.bodyIndexInNote : 0
-        )
+        if !query.isEmpty {
+            SharedBlockNoteWebView.shared.prepareSearchNavigation(
+                noteID: occurrence.noteID,
+                query: query,
+                bodyIndex: occurrence.field == .body ? occurrence.bodyIndexInNote : 0
+            )
+        }
+
+        // 3. Exit search mode — editor already has pending navigation from step 2
+        store.exitSearchMode()
     }
 }
 

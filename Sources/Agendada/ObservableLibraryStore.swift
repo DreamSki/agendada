@@ -216,6 +216,11 @@ final class ObservableLibraryStore {
         publishChange()
     }
 
+    func openSearchResult(_ occurrence: SearchOccurrence) {
+        store.openSearchResult(occurrence)
+        publishChange()
+    }
+
     func commitSearchText(_ newText: String) {
         searchCalcTask?.cancel()
         store.commitSearchText(newText)
