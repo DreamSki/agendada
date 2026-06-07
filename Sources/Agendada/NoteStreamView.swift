@@ -52,17 +52,15 @@ struct NoteStreamView: View {
             guard let store = store else { return event }
             guard store.searchPresentationMode == .results else { return event }
 
-            // Use keyCode for reliability — charactersIgnoringModifiers can be nil
-            // for function keys, and popover focus makes character-based matching fragile.
+            // Note: Enter/Return is NOT intercepted here — the popover's
+            // ReturnKeyTextField handles it via handleSearchReturn() which
+            // commits a new search or advances to the next occurrence.
             switch Int(event.keyCode) {
             case 125: // ↓ Down arrow
                 _ = store.selectNextSearchResult()
                 return nil
             case 126: // ↑ Up arrow
                 _ = store.selectPreviousSearchResult()
-                return nil
-            case 36: // ↩ Return
-                _ = store.selectNextSearchResult()
                 return nil
             case 53: // ⎋ Escape
                 if store.selectedSearchResultIndex != nil {

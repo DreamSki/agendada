@@ -2149,10 +2149,16 @@ public final class LibraryStore {
 
         let nextIdx = ((currentOccurrenceIndex ?? -1) + 1) % searchOccurrences.count
         currentOccurrenceIndex = nextIdx
+        selectedSearchResultIndex = nextIdx
 
         let occ = searchOccurrences[nextIdx]
-        // 跨笔记时切换 selectedNoteID
+        // 跨笔记时切换到该笔记所属项目
         if occ.noteID != selectedNoteID {
+            if let note = notes.first(where: { $0.id == occ.noteID && $0.status != .trashed }) {
+                selectedProjectID = note.projectID
+                selectedOverview = nil
+                selectedSmartOverviewID = nil
+            }
             selectedNoteID = occ.noteID
         }
         return occ
@@ -2165,9 +2171,15 @@ public final class LibraryStore {
 
         let prevIdx = ((currentOccurrenceIndex ?? 0) - 1 + searchOccurrences.count) % searchOccurrences.count
         currentOccurrenceIndex = prevIdx
+        selectedSearchResultIndex = prevIdx
 
         let occ = searchOccurrences[prevIdx]
         if occ.noteID != selectedNoteID {
+            if let note = notes.first(where: { $0.id == occ.noteID && $0.status != .trashed }) {
+                selectedProjectID = note.projectID
+                selectedOverview = nil
+                selectedSmartOverviewID = nil
+            }
             selectedNoteID = occ.noteID
         }
         return occ
@@ -2191,7 +2203,18 @@ public final class LibraryStore {
         let nextIdx = ((selectedSearchResultIndex ?? -1) + 1) % searchOccurrences.count
         selectedSearchResultIndex = nextIdx
         currentOccurrenceIndex = nextIdx
-        return searchOccurrences[nextIdx]
+
+        let occ = searchOccurrences[nextIdx]
+        // Cross-note: switch to the note's owning project
+        if occ.noteID != selectedNoteID {
+            if let note = notes.first(where: { $0.id == occ.noteID && $0.status != .trashed }) {
+                selectedProjectID = note.projectID
+                selectedOverview = nil
+                selectedSmartOverviewID = nil
+            }
+            selectedNoteID = occ.noteID
+        }
+        return occ
     }
 
     /// Moves selection to the previous search result (wraps to last if at first).
@@ -2201,7 +2224,17 @@ public final class LibraryStore {
         let prevIdx = ((selectedSearchResultIndex ?? 0) - 1 + searchOccurrences.count) % searchOccurrences.count
         selectedSearchResultIndex = prevIdx
         currentOccurrenceIndex = prevIdx
-        return searchOccurrences[prevIdx]
+
+        let occ = searchOccurrences[prevIdx]
+        if occ.noteID != selectedNoteID {
+            if let note = notes.first(where: { $0.id == occ.noteID && $0.status != .trashed }) {
+                selectedProjectID = note.projectID
+                selectedOverview = nil
+                selectedSmartOverviewID = nil
+            }
+            selectedNoteID = occ.noteID
+        }
+        return occ
     }
 
     /// Jumps to the currently selected search result.
