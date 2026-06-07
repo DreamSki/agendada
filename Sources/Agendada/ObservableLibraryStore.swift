@@ -46,7 +46,7 @@ final class ObservableLibraryStore {
             let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmed.isEmpty {
                 searchCalcTask?.cancel()
-                store.clearSearchOccurrences()
+                store.exitSearchMode()
             }
             publishChange()
             if !trimmed.isEmpty {
@@ -219,6 +219,13 @@ final class ObservableLibraryStore {
     func commitSearchText(_ newText: String) {
         searchCalcTask?.cancel()
         store.commitSearchText(newText)
+        publishChange()
+        persistSoon()
+    }
+
+    func exitSearchMode() {
+        searchCalcTask?.cancel()
+        store.exitSearchMode()
         publishChange()
         persistSoon()
     }
@@ -966,7 +973,7 @@ final class ObservableLibraryStore {
         searchCalcTask?.cancel()
         let text = store.searchText
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            store.clearSearchOccurrences()
+            store.exitSearchMode()
             return
         }
         searchCalcTask = Task { @MainActor [weak self] in

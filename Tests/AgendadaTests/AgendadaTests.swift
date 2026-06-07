@@ -2008,6 +2008,93 @@ import Testing
     #expect(store.searchReturnContext == .empty)
 }
 
+// MARK: - Exit Search Mode
+
+@Test func exitSearchModeClearsCommittedSearch() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    _ = store.addNote(title: "测试笔记")
+    store.selectOverview(.all)
+
+    store.commitSearchText("测试")
+    #expect(!store.searchText.isEmpty)
+
+    store.exitSearchMode()
+    #expect(store.searchText.isEmpty)
+    #expect(store.searchOccurrences.isEmpty)
+}
+
+@Test func exitSearchModeClearsResultSelection() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    let note = store.addNote(title: "架构重构计划")
+    store.updateNote(noteID: note.id, title: "架构重构计划", body: "架构模式详解", scheduledDate: nil, tags: [], people: [])
+    store.selectOverview(.all)
+
+    store.commitSearchText("架构")
+    #expect(store.selectedSearchResultIndex != nil)
+
+    store.exitSearchMode()
+    #expect(store.selectedSearchResultIndex == nil)
+}
+
+@Test func exitSearchModeClearsCurrentOccurrence() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    let note = store.addNote(title: "架构重构计划")
+    store.updateNote(noteID: note.id, title: "架构重构计划", body: "架构模式详解", scheduledDate: nil, tags: [], people: [])
+    store.selectOverview(.all)
+
+    store.commitSearchText("架构")
+    store.goToNextSearchOccurrence()
+    #expect(store.currentOccurrenceIndex != nil)
+
+    store.exitSearchMode()
+    #expect(store.currentOccurrenceIndex == nil)
+}
+
+@Test func exitSearchModeRestoresReturnContext() async throws {
+    let store = LibraryStore()
+    let proj = store.addProject(name: "研究项目")
+    let note = store.addNote(title: "论文大纲")
+    store.selectProject(proj.id)
+    store.selectNote(note.id)
+
+    // Enter search — should capture context
+    store.commitSearchText("论文")
+    #expect(store.searchReturnContext != .empty)
+    #expect(store.searchReturnContext.selectedProjectID == proj.id)
+    #expect(store.searchReturnContext.selectedNoteID == note.id)
+
+    // Exit search — should restore context and clear the stored context
+    store.exitSearchMode()
+    #expect(store.searchReturnContext == .empty)
+    #expect(store.selectedProjectID == proj.id)
+    #expect(store.selectedNoteID == note.id)
+}
+
+@Test func exitSearchModeDoesNotClearFindInNote() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    let note = store.addNote(title: "测试笔记")
+    store.updateNote(noteID: note.id, title: "测试笔记", body: "一些内容", scheduledDate: nil, tags: [], people: [])
+    store.selectOverview(.all)
+    store.selectNote(note.id)
+
+    // Set up find-in-note
+    store.isFindInNoteBarVisible = true
+    store.updateFindInNoteText("内容")
+    #expect(store.isFindInNoteBarVisible)
+
+    // Enter and exit the main search
+    store.commitSearchText("测试")
+    store.exitSearchMode()
+
+    // Find-in-note should not be affected
+    #expect(store.isFindInNoteBarVisible)
+    #expect(store.findInNoteText == "内容")
+}
+
 // MARK: - Query Chips
 
 @Test func chipsEmptyForBlankText() async throws {
