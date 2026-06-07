@@ -84,7 +84,7 @@ struct NoteStreamView: View {
                 CapsuleIconPopoverButton(systemName: "magnifyingglass", help: "搜索", isPresented: $isSearching, popoverContent: {
                     SearchPopoverContent(
                         committedSearchText: searchText,
-                        clearCommittedSearch: { searchText = "" },
+                        clearCommittedSearch: { store.exitSearchMode() },
                         navigationTargetNoteID: $navigationTargetNoteID
                     )
                 })
@@ -187,7 +187,7 @@ struct NoteStreamView: View {
                 Button {
                     store.addNote(template: template)
                     showTemplatePopover = false
-                    searchText = ""
+                    store.exitSearchMode()
                 } label: {
                     HStack {
                         Text(template.defaultNoteTitle)
@@ -219,7 +219,7 @@ struct NoteStreamView: View {
                             people: []
                         )
                         showTemplatePopover = false
-                        searchText = ""
+                        store.exitSearchMode()
                     } label: {
                         HStack {
                             Text(ct.name)

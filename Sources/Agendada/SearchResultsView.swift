@@ -39,7 +39,7 @@ struct SearchResultsContentView: View {
                     Spacer()
 
                     Button {
-                        store.searchText = ""
+                        store.exitSearchMode()
                     } label: {
                         HStack(spacing: 3) {
                             Image(systemName: "xmark")
@@ -79,7 +79,7 @@ struct SearchResultsContentView: View {
             if store.selectedSearchResultIndex != nil {
                 store.clearSearchResultSelection()
             } else {
-                store.searchText = ""
+                store.exitSearchMode()
             }
         }
         .onKeyPress(.upArrow) {

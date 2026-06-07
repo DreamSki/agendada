@@ -1076,7 +1076,7 @@ public final class LibraryStore {
         currentOccurrenceIndex = nil
 
         guard !trimmed.isEmpty else {
-            clearSearchOccurrences()
+            exitSearchMode()
             return
         }
 
@@ -1909,6 +1909,16 @@ public final class LibraryStore {
         } else {
             selectedNoteID = nil
         }
+    }
+
+    /// Unified exit from search mode — clears search text, occurrences, indices,
+    /// search result selection, and restores the pre-search navigation context.
+    ///
+    /// This is the canonical entry point for leaving search; prefer it over
+    /// setting `searchText = ""` directly when the intent is to exit search mode.
+    public func exitSearchMode() {
+        searchText = ""
+        clearSearchOccurrences()
     }
 
     /// 重新计算搜索命中位置（由 debounce 机制调用）
