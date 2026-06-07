@@ -667,6 +667,7 @@ private struct SearchResultsContentView: View {
         let groups = store.searchResultGroups()
         let summary = store.searchSummary
         let scopeLabel = searchScopeLabel
+        let selectedIndex = store.selectedSearchResultIndex
 
         VStack(alignment: .leading, spacing: 0) {
             // Summary header
@@ -715,12 +716,42 @@ private struct SearchResultsContentView: View {
                 SearchResultGroupRow(
                     group: group,
                     highlightTerms: highlightTerms,
+                    selectedGlobalIndex: selectedIndex,
                     onSelectOccurrence: { occurrence in
                         selectOccurrence(occurrence)
                     }
                 )
                 .padding(.bottom, AgendaSpacing.cardGap)
             }
+        }
+        .onExitCommand {
+            // Esc: clear selection if any, otherwise exit search
+            if store.selectedSearchResultIndex != nil {
+                store.clearSearchResultSelection()
+            } else {
+                store.searchText = ""
+            }
+        }
+        .onKeyPress(.upArrow) {
+            _ = store.selectPreviousSearchResult()
+            return .handled
+        }
+        .onKeyPress(.downArrow) {
+            _ = store.selectNextSearchResult()
+            return .handled
+        }
+        .onKeyPress(.return) {
+            if let occ = store.jumpToSelectedSearchResult() {
+                navigationTargetNoteID = occ.noteID
+                let query = store.library.searchHighlightText
+                guard !query.isEmpty else { return .handled }
+                SharedBlockNoteWebView.shared.prepareSearchNavigation(
+                    noteID: occ.noteID,
+                    query: query,
+                    bodyIndex: occ.field == .body ? occ.bodyIndexInNote : 0
+                )
+            }
+            return .handled
         }
     }
 
@@ -793,6 +824,7 @@ private struct SearchResultGroupRow: View {
     @Environment(ObservableLibraryStore.self) private var store
     let group: SearchResultGroup
     let highlightTerms: [String]
+    let selectedGlobalIndex: Int?
     let onSelectOccurrence: (SearchOccurrence) -> Void
 
     var body: some View {
@@ -824,13 +856,14 @@ private struct SearchResultGroupRow: View {
             // Snippets (up to 3)
             VStack(alignment: .leading, spacing: 4) {
                 ForEach(Array(group.snippets.prefix(3))) { snippet in
+                    let isSelected = selectedGlobalIndex == snippet.occurrence.globalIndex
                     Button {
                         onSelectOccurrence(snippet.occurrence)
                     } label: {
                         HStack(alignment: .top, spacing: 6) {
                             Image(systemName: snippet.occurrence.field == .title ? "textformat" : "doc.text")
                                 .font(.system(size: 10, weight: .medium))
-                                .foregroundStyle(AgendaColor.amber)
+                                .foregroundStyle(isSelected ? AgendaColor.amber : AgendaColor.amber.opacity(0.6))
                                 .frame(width: 14)
                                 .padding(.top, 1)
 
@@ -838,13 +871,21 @@ private struct SearchResultGroupRow: View {
                                 text: snippet.occurrence.excerpt,
                                 terms: highlightTerms,
                                 baseFont: AgendaFont.cardBodyCompact,
-                                baseColor: AgendaColor.textMuted,
+                                baseColor: isSelected ? Color(red: 0.2, green: 0.2, blue: 0.2) : AgendaColor.textMuted,
                                 highlightColor: AgendaColor.amber
                             )
                             .lineLimit(2)
                         }
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 4)
+                        .background(isSelected ? AgendaColor.amber.opacity(0.08) : Color.clear)
                     }
                     .buttonStyle(.plain)
+                    .background(
+                        RoundedRectangle(cornerRadius: 4)
+                            .stroke(isSelected ? AgendaColor.amber : Color.clear, lineWidth: 1)
+                            .background(isSelected ? AgendaColor.amber.opacity(0.08) : Color.clear)
+                    )
                 }
             }
             .padding(.leading, 28)

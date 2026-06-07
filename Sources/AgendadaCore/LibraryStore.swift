@@ -20,6 +20,7 @@ public final class LibraryStore {
 
     public private(set) var searchOccurrences: [SearchOccurrence] = []
     public private(set) var currentOccurrenceIndex: Int? = nil
+    public private(set) var selectedSearchResultIndex: Int? = nil
 
     // MARK: - Find in Note State
 
@@ -1868,6 +1869,7 @@ public final class LibraryStore {
     public func clearSearchOccurrences() {
         searchOccurrences = []
         currentOccurrenceIndex = nil
+        selectedSearchResultIndex = nil
     }
 
     /// 重新计算搜索命中位置（由 debounce 机制调用）
@@ -1877,6 +1879,7 @@ public final class LibraryStore {
         guard !trimmed.isEmpty else {
             searchOccurrences = []
             currentOccurrenceIndex = nil
+            selectedSearchResultIndex = nil
             return
         }
 
@@ -1888,6 +1891,20 @@ public final class LibraryStore {
 
         searchOccurrences = NoteSearchEngine.occurrences(in: notes, query: query)
         currentOccurrenceIndex = nil
+        // Manage selection based on new result count
+        if searchOccurrences.isEmpty {
+            selectedSearchResultIndex = nil
+        } else if searchPresentationMode == .results {
+            // In committed search mode, clamp existing selection or select first
+            if let existing = selectedSearchResultIndex {
+                selectedSearchResultIndex = min(existing, searchOccurrences.count - 1)
+            } else {
+                selectedSearchResultIndex = 0
+            }
+        } else {
+            // Preview mode — no selection
+            selectedSearchResultIndex = nil
+        }
         // Leave currentOccurrenceIndex as nil so the first Enter/next press
         // lands on the first match (goToNextSearchOccurrence resolves
         // (nil ?? -1) + 1 = 0 → index 0). Do NOT auto-select the first note
@@ -2078,6 +2095,51 @@ public final class LibraryStore {
             selectedNoteID = occ.noteID
         }
         return occ
+    }
+
+    // MARK: - Keyboard Navigation for Search Results
+
+    /// Selects the first search result for keyboard navigation.
+    public func selectFirstSearchResult() {
+        guard !searchOccurrences.isEmpty else {
+            selectedSearchResultIndex = nil
+            return
+        }
+        selectedSearchResultIndex = 0
+    }
+
+    /// Moves selection to the next search result (wraps to first if at end).
+    @discardableResult
+    public func selectNextSearchResult() -> SearchOccurrence? {
+        guard !searchOccurrences.isEmpty else { return nil }
+        let nextIdx = ((selectedSearchResultIndex ?? -1) + 1) % searchOccurrences.count
+        selectedSearchResultIndex = nextIdx
+        return searchOccurrences[nextIdx]
+    }
+
+    /// Moves selection to the previous search result (wraps to last if at first).
+    @discardableResult
+    public func selectPreviousSearchResult() -> SearchOccurrence? {
+        guard !searchOccurrences.isEmpty else { return nil }
+        let prevIdx = ((selectedSearchResultIndex ?? 0) - 1 + searchOccurrences.count) % searchOccurrences.count
+        selectedSearchResultIndex = prevIdx
+        return searchOccurrences[prevIdx]
+    }
+
+    /// Jumps to the currently selected search result.
+    @discardableResult
+    public func jumpToSelectedSearchResult() -> SearchOccurrence? {
+        guard let idx = selectedSearchResultIndex,
+              idx >= 0, idx < searchOccurrences.count else { return nil }
+        let occ = searchOccurrences[idx]
+        selectedNoteID = occ.noteID
+        currentOccurrenceIndex = idx
+        return occ
+    }
+
+    /// Clears search result selection.
+    public func clearSearchResultSelection() {
+        selectedSearchResultIndex = nil
     }
 
     /// 搜索摘要信息
