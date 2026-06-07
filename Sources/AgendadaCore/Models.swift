@@ -448,6 +448,33 @@ public struct SearchSummary: Sendable, Equatable {
     public static let empty = SearchSummary(totalOccurrences: 0, totalMatchedNotes: 0, currentOccurrenceIndex: 0, currentNoteIndex: 0)
 }
 
+/// Context saved before entering search, used to restore state when exiting.
+public struct SearchReturnContext: Equatable, Sendable {
+    public let selectedProjectID: Project.ID?
+    public let selectedOverview: Overview?
+    public let selectedNoteID: Note.ID?
+    public let scrollAnchorNoteID: Note.ID?
+
+    public init(
+        selectedProjectID: Project.ID?,
+        selectedOverview: Overview?,
+        selectedNoteID: Note.ID?,
+        scrollAnchorNoteID: Note.ID?
+    ) {
+        self.selectedProjectID = selectedProjectID
+        self.selectedOverview = selectedOverview
+        self.selectedNoteID = selectedNoteID
+        self.scrollAnchorNoteID = scrollAnchorNoteID
+    }
+
+    public static let empty = SearchReturnContext(
+        selectedProjectID: nil,
+        selectedOverview: nil,
+        selectedNoteID: nil,
+        scrollAnchorNoteID: nil
+    )
+}
+
 /// Represents how the middle content area should present search state.
 public enum SearchPresentationMode: Equatable, Sendable {
     /// No search active — normal note stream.

@@ -1910,6 +1910,104 @@ import Testing
     // No expand button when ≤ 3 snippets
 }
 
+// MARK: - Search Context Restore
+
+@Test func searchCapturesContextOnCommit() async throws {
+    let store = LibraryStore()
+    let note = store.addNote(title: "会议记录")
+    store.updateNote(noteID: note.id, title: "会议记录", body: "", scheduledDate: nil, tags: [], people: [])
+
+    store.selectOverview(.all)
+    store.selectNote(note.id)
+
+    // Commit search should capture current context
+    store.commitSearchText("会议")
+
+    let context = store.searchReturnContext
+    #expect(context.selectedOverview == .all)
+    #expect(context.selectedNoteID == note.id)
+}
+
+@Test func searchClearRestoresContext() async throws {
+    let store = LibraryStore()
+    let note = store.addNote(title: "会议记录")
+    store.updateNote(noteID: note.id, title: "会议记录", body: "", scheduledDate: nil, tags: [], people: [])
+
+    store.selectOverview(.all)
+    store.selectNote(note.id)
+
+    // Capture context by committing search
+    store.commitSearchText("会议")
+    #expect(store.searchReturnContext.selectedNoteID == note.id)
+
+    // Clear search should restore context
+    store.clearSearchOccurrences()
+
+    #expect(store.selectedOverview == .all)
+    #expect(store.selectedNoteID == note.id)
+}
+
+@Test func searchClearFallsBackToFirstNoteIfOriginalNotFound() async throws {
+    let store = LibraryStore()
+    let note1 = store.addNote(title: "笔记A")
+    store.updateNote(noteID: note1.id, title: "笔记A", body: "", scheduledDate: nil, tags: [], people: [])
+    let note2 = store.addNote(title: "笔记B")
+    store.updateNote(noteID: note2.id, title: "笔记B", body: "", scheduledDate: nil, tags: [], people: [])
+
+    store.selectOverview(.all)
+    store.selectNote(note1.id)
+
+    // Capture context
+    store.commitSearchText("搜索")
+    #expect(store.searchReturnContext.selectedNoteID == note1.id)
+
+    // Delete the original note while in search
+    store.deleteNote(note1.id)
+
+    // Clear search should fallback to first available note
+    store.clearSearchOccurrences()
+
+    #expect(store.selectedNoteID == note2.id)
+}
+
+@Test func findInNoteDoesNotCaptureContext() async throws {
+    let store = LibraryStore()
+    let note = store.addNote(title: "会议")
+    store.updateNote(noteID: note.id, title: "会议", body: "", scheduledDate: nil, tags: [], people: [])
+
+    store.selectOverview(.all)
+    store.selectNote(note.id)
+
+    // Find-in-note should NOT capture context (only committed search)
+    store.selectNote(note.id)
+    store.updateFindInNoteText("测试")
+
+    #expect(store.searchReturnContext == .empty)
+}
+
+@Test func searchContextCapturedOnlyOnce() async throws {
+    let store = LibraryStore()
+    let note = store.addNote(title: "会议")
+    store.updateNote(noteID: note.id, title: "会议", body: "", scheduledDate: nil, tags: [], people: [])
+
+    store.selectOverview(.all)
+    store.selectNote(note.id)
+
+    // First search captures context
+    store.commitSearchText("会议")
+    let firstContext = store.searchReturnContext
+    #expect(firstContext.selectedNoteID == note.id)
+
+    // Second search (already in search) should NOT overwrite
+    store.commitSearchText("会议 二次")
+    let secondContext = store.searchReturnContext
+    #expect(secondContext.selectedNoteID == note.id) // Same context, not overwritten
+
+    // Clear resets context
+    store.clearSearchOccurrences()
+    #expect(store.searchReturnContext == .empty)
+}
+
 // MARK: - Search Result Groups
 
 @Test func searchResultGroupsEmptyWhenNoSearch() async throws {
