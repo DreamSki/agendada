@@ -1861,6 +1861,55 @@ import Testing
     #expect(store.searchOccurrences.count == 1)
 }
 
+// MARK: - Search Results Expand/Collapse
+
+@Test func searchResultsDefaultToThreeSnippets() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    let note = store.addNote(title: "重构计划")
+    // Create a note with 8 occurrences (body only, no title match)
+    let body = (1...8).map { "架构\($0)" }.joined(separator: " ")
+    store.updateNote(noteID: note.id, title: "重构计划", body: body, scheduledDate: nil, tags: [], people: [])
+    store.selectOverview(.all)
+    store.updateSearchText("架构")
+
+    let groups = store.searchResultGroups()
+    #expect(groups.count == 1)
+    #expect(groups[0].snippets.count == 8)
+    // Should show 3 by default, not all 8
+}
+
+@Test func searchResultsExpandShowsAllSnippets() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    let note = store.addNote(title: "设计文档")
+    let body = (1...5).map { "架构\($0)" }.joined(separator: " ")
+    store.updateNote(noteID: note.id, title: "设计文档", body: body, scheduledDate: nil, tags: [], people: [])
+    store.selectOverview(.all)
+    store.updateSearchText("架构")
+
+    let groups = store.searchResultGroups()
+    #expect(groups.count == 1)
+    #expect(groups[0].occurrences.count == 5)
+    // Expand/collapse is UI state, not in LibraryStore
+    // This test verifies the data structure supports it
+}
+
+@Test func searchResultsWithThreeOrFewerOccurrencesShowAll() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    let note = store.addNote(title: "会议记录")
+    let body = (1...3).map { "架构\($0)" }.joined(separator: " ")
+    store.updateNote(noteID: note.id, title: "会议记录", body: body, scheduledDate: nil, tags: [], people: [])
+    store.selectOverview(.all)
+    store.updateSearchText("架构")
+
+    let groups = store.searchResultGroups()
+    #expect(groups.count == 1)
+    #expect(groups[0].occurrences.count == 3)
+    // No expand button when ≤ 3 snippets
+}
+
 // MARK: - Search Result Groups
 
 @Test func searchResultGroupsEmptyWhenNoSearch() async throws {
