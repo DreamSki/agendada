@@ -246,6 +246,7 @@ struct SearchResultGroupRow: View {
                             .stroke(isSelected ? AgendaColor.amber : Color.clear, lineWidth: 1)
                             .background(isSelected ? AgendaColor.amber.opacity(0.08) : Color.clear)
                     )
+                    .id(snippet.id) // for ScrollViewReader auto-scroll
                 }
 
                 // Expand/collapse button when there are more than 3 snippets

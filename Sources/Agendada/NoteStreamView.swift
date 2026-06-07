@@ -420,6 +420,12 @@ struct NoteStreamView: View {
             navigationScrollWorkItem = workItem
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.06, execute: workItem)
         }
+        .onChange(of: store.currentOccurrence?.id) { _, snippetID in
+            guard let id = snippetID else { return }
+            withAnimation(.easeInOut(duration: 0.15)) {
+                proxy.scrollTo(id, anchor: .center)
+            }
+        }
     }
     }
 

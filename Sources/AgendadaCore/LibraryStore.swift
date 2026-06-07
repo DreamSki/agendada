@@ -2190,6 +2190,7 @@ public final class LibraryStore {
         guard !searchOccurrences.isEmpty else { return nil }
         let nextIdx = ((selectedSearchResultIndex ?? -1) + 1) % searchOccurrences.count
         selectedSearchResultIndex = nextIdx
+        currentOccurrenceIndex = nextIdx
         return searchOccurrences[nextIdx]
     }
 
@@ -2199,6 +2200,7 @@ public final class LibraryStore {
         guard !searchOccurrences.isEmpty else { return nil }
         let prevIdx = ((selectedSearchResultIndex ?? 0) - 1 + searchOccurrences.count) % searchOccurrences.count
         selectedSearchResultIndex = prevIdx
+        currentOccurrenceIndex = prevIdx
         return searchOccurrences[prevIdx]
     }
 
