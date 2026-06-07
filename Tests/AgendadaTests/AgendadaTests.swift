@@ -2095,6 +2095,112 @@ import Testing
     #expect(store.findInNoteText == "内容")
 }
 
+// MARK: - Search Result Navigation
+
+@Test func openSearchResultSelectsNote() async throws {
+    let store = LibraryStore()
+    let proj = store.addProject(name: "项目A")
+    let note = store.addNote(title: "架构笔记")
+    store.updateNote(noteID: note.id, title: "架构笔记", body: "架构模式详解", scheduledDate: nil, tags: [], people: [])
+    store.selectOverview(.all)
+
+    store.commitSearchText("架构")
+    #expect(!store.searchOccurrences.isEmpty)
+
+    let firstOcc = store.searchOccurrences[0]
+    store.openSearchResult(firstOcc)
+
+    #expect(store.selectedNoteID == note.id)
+    #expect(store.selectedProjectID == proj.id)
+    #expect(store.selectedOverview == nil)
+}
+
+@Test func openSearchResultSwitchesProjectForCrossProjectResult() async throws {
+    let store = LibraryStore()
+    let projA = store.addProject(name: "项目A")
+    let projB = store.addProject(name: "项目B")
+    store.selectProject(projA.id)
+    let noteA = store.addNote(title: "项目A的笔记")
+    store.selectProject(projB.id)
+    let noteB = store.addNote(title: "项目B架构")
+    store.updateNote(noteID: noteB.id, title: "项目B架构", body: "架构细节", scheduledDate: nil, tags: [], people: [])
+    store.selectProject(projA.id)
+    store.selectNote(noteA.id)
+    store.selectOverview(.all)
+
+    store.commitSearchText("架构")
+    #expect(!store.searchOccurrences.isEmpty)
+
+    // Find the occurrence from project B
+    guard let occB = store.searchOccurrences.first(where: { $0.noteID == noteB.id }) else {
+        fatalError("Expected occurrence from project B")
+    }
+    store.openSearchResult(occB)
+
+    // Should have switched to project B
+    #expect(store.selectedProjectID == projB.id)
+    #expect(store.selectedNoteID == noteB.id)
+}
+
+@Test func openSearchResultPreservesSearchText() async throws {
+    let store = LibraryStore()
+    let projA = store.addProject(name: "项目A")
+    let projB = store.addProject(name: "项目B")
+    store.selectProject(projB.id)
+    let noteB = store.addNote(title: "项目B架构")
+    store.updateNote(noteID: noteB.id, title: "项目B架构", body: "架构细节", scheduledDate: nil, tags: [], people: [])
+    store.selectProject(projA.id)
+    store.selectOverview(.all)
+
+    store.commitSearchText("架构")
+    let searchTextBefore = store.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+
+    guard let occB = store.searchOccurrences.first(where: { $0.noteID == noteB.id }) else {
+        fatalError("Expected occurrence from project B")
+    }
+    store.openSearchResult(occB)
+
+    // Search text should NOT be cleared — caller decides when to exit
+    #expect(store.searchText.trimmingCharacters(in: .whitespacesAndNewlines) == searchTextBefore)
+    #expect(!store.searchOccurrences.isEmpty)
+}
+
+@Test func openSearchResultUpdatesCurrentOccurrenceIndex() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    let note = store.addNote(title: "架构笔记")
+    store.updateNote(noteID: note.id, title: "架构笔记", body: "架构模式", scheduledDate: nil, tags: [], people: [])
+    store.selectOverview(.all)
+
+    store.commitSearchText("架构")
+    #expect(store.searchOccurrences.count >= 2) // title + body
+
+    let secondOcc = store.searchOccurrences[1]
+    store.openSearchResult(secondOcc)
+
+    #expect(store.currentOccurrenceIndex == 1)
+}
+
+@Test func openSearchResultClickAndEnterShareSamePath() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    let note = store.addNote(title: "架构笔记")
+    store.updateNote(noteID: note.id, title: "架构笔记", body: "架构模式", scheduledDate: nil, tags: [], people: [])
+    store.selectOverview(.all)
+
+    store.commitSearchText("架构")
+
+    // Simulate keyboard selection + Enter
+    store.selectNextSearchResult()
+    guard let enterOcc = store.jumpToSelectedSearchResult() else {
+        fatalError("Expected occurrence from Enter path")
+    }
+    store.openSearchResult(enterOcc)
+
+    // Both paths should land on the same note
+    #expect(store.selectedNoteID == note.id)
+}
+
 // MARK: - Search History
 
 @Test func commitSearchSavesHistory() async throws {

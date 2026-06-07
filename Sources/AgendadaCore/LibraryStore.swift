@@ -2218,6 +2218,27 @@ public final class LibraryStore {
         selectedSearchResultIndex = nil
     }
 
+    /// Opens a search result in its source context: navigates to the note's
+    /// project, selects the note, and updates occurrence tracking — without
+    /// clearing search state (caller should exit search mode afterwards if
+    /// the intent is to leave the results view).
+    public func openSearchResult(_ occurrence: SearchOccurrence) {
+        guard let note = notes.first(where: { $0.id == occurrence.noteID && $0.status != .trashed }) else { return }
+
+        // Switch to the note's owning project so the card is visible in the stream
+        selectedProjectID = note.projectID
+        selectedOverview = nil
+        selectedSmartOverviewID = nil
+
+        // Select the source note
+        selectedNoteID = note.id
+
+        // Update occurrence tracking so prev/next arrows reflect the viewed occurrence
+        if let idx = searchOccurrences.firstIndex(where: { $0.id == occurrence.id }) {
+            currentOccurrenceIndex = idx
+        }
+    }
+
     /// 搜索摘要信息
     public var searchSummary: SearchSummary {
         guard !searchOccurrences.isEmpty else { return .empty }
