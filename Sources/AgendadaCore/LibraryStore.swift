@@ -21,6 +21,7 @@ public final class LibraryStore {
     public private(set) var searchOccurrences: [SearchOccurrence] = []
     public private(set) var currentOccurrenceIndex: Int? = nil
     public private(set) var selectedSearchResultIndex: Int? = nil
+    public private(set) var searchReturnContext: SearchReturnContext = .empty
 
     // MARK: - Find in Note State
 
@@ -1059,10 +1060,21 @@ public final class LibraryStore {
     }
 
     public func commitSearchText(_ newText: String) {
+        let trimmed = newText.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Capture context before entering search (only if we're not already in search)
+        if !trimmed.isEmpty && searchReturnContext == .empty {
+            searchReturnContext = SearchReturnContext(
+                selectedProjectID: selectedProjectID,
+                selectedOverview: selectedOverview,
+                selectedNoteID: selectedNoteID,
+                scrollAnchorNoteID: selectedNoteID
+            )
+        }
+
         searchText = newText
         currentOccurrenceIndex = nil
 
-        let trimmed = newText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             clearSearchOccurrences()
             return
@@ -1870,6 +1882,33 @@ public final class LibraryStore {
         searchOccurrences = []
         currentOccurrenceIndex = nil
         selectedSearchResultIndex = nil
+
+        // Restore context after search if we have one
+        let context = searchReturnContext
+        searchReturnContext = .empty
+
+        guard context != .empty else { return }
+
+        // Restore project/overview
+        if let pid = context.selectedProjectID {
+            selectedProjectID = pid
+        }
+        if let ov = context.selectedOverview {
+            selectedOverview = ov
+        }
+        selectedSmartOverviewID = nil
+
+        // Restore selected note if possible (use all non-trashed notes,
+        // not filteredNotes(), since search text is being cleared).
+        let allActiveNotes = notes.filter { $0.status != .trashed }
+        if let noteID = context.selectedNoteID,
+           allActiveNotes.contains(where: { $0.id == noteID }) {
+            selectedNoteID = noteID
+        } else if let firstNote = allActiveNotes.first {
+            selectedNoteID = firstNote.id
+        } else {
+            selectedNoteID = nil
+        }
     }
 
     /// 重新计算搜索命中位置（由 debounce 机制调用）
