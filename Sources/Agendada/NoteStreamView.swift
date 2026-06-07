@@ -351,17 +351,35 @@ struct NoteStreamView: View {
             }
         }
         .background {
-            Button("") {
-                if store.isInBatchMode { store.deselectAllNotes() }
+            VStack {
+                // Esc: two-stage — clear selection first, then exit search
+                Button("") {
+                    if store.isInBatchMode {
+                        store.deselectAllNotes()
+                    } else if searchMode == .results, store.selectedSearchResultIndex != nil {
+                        store.clearSearchResultSelection()
+                    } else if searchMode == .results {
+                        store.exitSearchMode()
+                    }
+                }
+                .keyboardShortcut(.escape, modifiers: [])
+
+                if searchMode == .results {
+                    // ↑: previous snippet
+                    Button("") { _ = store.selectPreviousSearchResult() }
+                        .keyboardShortcut(.upArrow, modifiers: [])
+
+                    // ↓ / Enter: next snippet
+                    Button("") { _ = store.selectNextSearchResult() }
+                        .keyboardShortcut(.downArrow, modifiers: [])
+
+                    Button("") { _ = store.selectNextSearchResult() }
+                        .keyboardShortcut(.return, modifiers: [])
+                }
             }
-            .keyboardShortcut(.escape, modifiers: [])
             .opacity(0)
             .frame(width: 0, height: 0)
         }
-        .modifier(SearchKeyboardNavigationModifier(
-            onAdvanceSelection: { },
-            onExitSearch: { store.exitSearchMode() }
-        ))
         .onChange(of: navigationTargetNoteID) { _, targetID in
             navigationScrollWorkItem?.cancel()
             guard let id = targetID else { return }
