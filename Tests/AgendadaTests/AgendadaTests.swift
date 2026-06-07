@@ -1683,6 +1683,82 @@ import Testing
     #expect(next2?.field == .body)
 }
 
+// MARK: - Search Presentation Mode
+
+@Test func searchPresentationModeNormalWhenEmpty() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    _ = store.addNote(title: "测试笔记")
+    store.selectOverview(.all)
+
+    #expect(store.searchPresentationMode == .normal)
+}
+
+@Test func searchPresentationModeNoResultsWhenCommittedWithoutMatches() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    _ = store.addNote(title: "测试笔记")
+    store.selectOverview(.all)
+    store.updateSearchText("不存在的内容")
+
+    #expect(store.searchPresentationMode == .noResults)
+}
+
+@Test func searchPresentationModeResultsWhenCommittedWithMatches() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    let note = store.addNote(title: "架构重构")
+    store.updateNote(noteID: note.id, title: "架构重构", body: "架构调整", scheduledDate: nil, tags: [], people: [])
+    store.selectOverview(.all)
+    store.updateSearchText("架构")
+
+    #expect(store.searchPresentationMode == .results)
+}
+
+@Test func searchPresentationModeReturnsNormalAfterClear() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    let note = store.addNote(title: "架构重构")
+    store.updateNote(noteID: note.id, title: "架构重构", body: "架构调整", scheduledDate: nil, tags: [], people: [])
+    store.selectOverview(.all)
+    store.updateSearchText("架构")
+    #expect(store.searchPresentationMode == .results)
+
+    store.commitSearchText("")
+    #expect(store.searchPresentationMode == .normal)
+}
+
+@Test func findInNoteDoesNotAffectSearchPresentationMode() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    let note = store.addNote(title: "架构重构")
+    store.updateNote(noteID: note.id, title: "架构重构", body: "架构调整", scheduledDate: nil, tags: [], people: [])
+    store.selectOverview(.all)
+
+    // No search active — should be normal
+    #expect(store.searchPresentationMode == .normal)
+
+    // Start find-in-note
+    store.selectNote(note.id)
+    store.updateFindInNoteText("架构")
+
+    // Still normal — find-in-note doesn't affect presentation mode
+    #expect(store.searchPresentationMode == .normal)
+}
+
+@Test func searchPresentationModeResultsWithMultipleNotes() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    let n1 = store.addNote(title: "架构重构")
+    store.updateNote(noteID: n1.id, title: "架构重构", body: "架构调整", scheduledDate: nil, tags: [], people: [])
+    let n2 = store.addNote(title: "会议记录")
+    store.updateNote(noteID: n2.id, title: "会议记录", body: "讨论架构问题", scheduledDate: nil, tags: [], people: [])
+    store.selectOverview(.all)
+    store.updateSearchText("架构")
+
+    #expect(store.searchPresentationMode == .results)
+}
+
 // MARK: - Search Result Groups
 
 @Test func searchResultGroupsEmptyWhenNoSearch() async throws {

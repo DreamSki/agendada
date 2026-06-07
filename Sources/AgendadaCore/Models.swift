@@ -448,6 +448,18 @@ public struct SearchSummary: Sendable, Equatable {
     public static let empty = SearchSummary(totalOccurrences: 0, totalMatchedNotes: 0, currentOccurrenceIndex: 0, currentNoteIndex: 0)
 }
 
+/// Represents how the middle content area should present search state.
+public enum SearchPresentationMode: Equatable, Sendable {
+    /// No search active — normal note stream.
+    case normal
+    /// User is typing in popover but hasn't committed yet — note stream unchanged.
+    case preview
+    /// Committed search with matching results — show grouped snippets.
+    case results
+    /// Committed search with no results — show empty state.
+    case noResults
+}
+
 /// A single search-match snippet within a grouped result.
 public struct SearchResultSnippet: Identifiable, Hashable, Sendable {
     public let id: UUID

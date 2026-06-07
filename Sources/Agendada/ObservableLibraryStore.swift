@@ -151,6 +151,11 @@ final class ObservableLibraryStore {
         return store.searchSummary
     }
 
+    var searchPresentationMode: SearchPresentationMode {
+        observeRevision()
+        return store.searchPresentationMode
+    }
+
     @discardableResult
     func goToNextSearchOccurrence() -> SearchOccurrence? {
         let occurrence = store.goToNextSearchOccurrence()
