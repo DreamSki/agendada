@@ -17,6 +17,7 @@ struct NoteStreamView: View {
     @State private var localSelectionScrollLockDeadline: Date = .distantPast
     @State private var localSelectionScrollLockGeneration = 0
     @State private var searchKeyMonitor: Any?
+    @State private var pendingSearchDraft = ""
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -31,7 +32,7 @@ struct NoteStreamView: View {
             }
         }
         .onChange(of: store.searchPresentationMode) { _, newMode in
-            if newMode == .results {
+            if newMode == .results || newMode == .preview {
                 installSearchKeyMonitor()
             } else {
                 removeSearchKeyMonitor()
@@ -39,6 +40,9 @@ struct NoteStreamView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .findInNoteRequested)) { _ in
             store.requestFindInNote()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .globalSearchRequested)) { _ in
+            isSearching = true
         }
     }
 
@@ -50,20 +54,20 @@ struct NoteStreamView: View {
         guard searchKeyMonitor == nil else { return }
         searchKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak store] event in
             guard let store = store else { return event }
-            guard store.searchPresentationMode == .results else { return event }
+            let mode = store.searchPresentationMode
+            guard mode == .results || mode == .preview else { return event }
 
-            // Note: Enter/Return is NOT intercepted here — the popover's
-            // ReturnKeyTextField handles it via handleSearchReturn() which
-            // commits a new search or advances to the next occurrence.
             switch Int(event.keyCode) {
-            case 125: // ↓ Down arrow
+            case 125: // ↓ Down arrow — only in results mode
+                guard mode == .results else { return event }
                 _ = store.selectNextSearchResult()
                 return nil
-            case 126: // ↑ Up arrow
+            case 126: // ↑ Up arrow — only in results mode
+                guard mode == .results else { return event }
                 _ = store.selectPreviousSearchResult()
                 return nil
             case 53: // ⎋ Escape
-                if store.selectedSearchResultIndex != nil {
+                if mode == .results, store.selectedSearchResultIndex != nil {
                     store.clearSearchResultSelection()
                 } else {
                     store.exitSearchMode()
@@ -118,6 +122,28 @@ struct NoteStreamView: View {
 
     private var headerActions: some View {
         HStack(spacing: 12) {
+            if isSearchActive {
+                // Exit search button — visible when filter/search is active
+                Button {
+                    pendingSearchDraft = ""
+                    store.exitSearchMode()
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 11, weight: .medium))
+                        Text("退出搜索")
+                            .font(.custom("Avenir Next Medium", size: 11))
+                    }
+                    .foregroundStyle(AgendaColor.textMuted)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                }
+                .buttonStyle(.plain)
+                .background(Color.white, in: Capsule())
+                .overlay(Capsule().stroke(Color.black.opacity(0.06), lineWidth: 0.5))
+                .shadow(color: .black.opacity(0.08), radius: 6, x: 0, y: 2)
+            }
+
             HStack(spacing: 4) {
                 CapsuleIconFloatingMenuButton(
                     systemName: "line.3.horizontal.decrease",
@@ -129,10 +155,21 @@ struct NoteStreamView: View {
                 CapsuleIconButton(systemName: "sparkles", help: "复制摘要", action: {
                     copyToPasteboard(store.summaryForFilteredNotes())
                 })
-                CapsuleIconPopoverButton(systemName: "magnifyingglass", help: "搜索", isPresented: $isSearching, popoverContent: {
+                CapsuleIconPopoverButton(systemName: "magnifyingglass", help: "搜索 (⇧⌘F)", isPresented: $isSearching, popoverContent: {
                     SearchPopoverContent(
                         committedSearchText: searchText,
-                        clearCommittedSearch: { store.exitSearchMode() },
+                        clearCommittedSearch: {
+                            pendingSearchDraft = ""
+                            store.exitSearchMode()
+                        },
+                        pendingDraft: pendingSearchDraft,
+                        onDraftChange: {
+                            pendingSearchDraft = $0
+                            // Don't set store.searchText here — defer to commit.
+                            // Live filtering would trigger LazyVStack re-layout on
+                            // every keystroke, causing multi-second hangs with IME.
+                            // The popover shows preview results from its own draft.
+                        },
                         navigationTargetNoteID: $navigationTargetNoteID
                     )
                 })
@@ -306,7 +343,8 @@ struct NoteStreamView: View {
     }
 
     private var isSearchActive: Bool {
-        store.searchPresentationMode != .normal
+        let mode = store.searchPresentationMode
+        return mode == .results || mode == .noResults
     }
 
     private var mainTitle: String {

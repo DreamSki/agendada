@@ -56,6 +56,28 @@ final class ObservableLibraryStore {
         }
     }
 
+    /// Live-preview search text change — sets text immediately but defers
+    /// the expensive filter/layout publish until the 180ms debounce fires.
+    /// Use this for keystroke-by-keystroke updates (e.g. search popover typing).
+    /// Avoids main-thread hangs from publishChange() on every keystroke,
+    /// especially during IME composition (Chinese/Japanese input methods).
+    func setSearchTextLive(_ newText: String) {
+        guard newText != store.searchText else { return }
+        store.setSearchTextOnly(newText)
+        let trimmed = newText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            searchCalcTask?.cancel()
+            store.exitSearchMode()
+            publishChange()
+        } else {
+            // Don't publishChange() here — let the debounce handle it.
+            // The popover uses its own local draftSearchText for immediate
+            // query chips / preview, so it doesn't need a store publish.
+            scheduleSearchCalculation()
+        }
+        persistSoon()
+    }
+
     var searchScope: SearchScope {
         get { observeRevision(); return store.searchScope }
         set {
@@ -156,6 +178,11 @@ final class ObservableLibraryStore {
         return store.searchPresentationMode
     }
 
+    var isSearchCommitted: Bool {
+        observeRevision()
+        return store.isSearchCommitted
+    }
+
     var searchReturnContext: SearchReturnContext {
         observeRevision()
         return store.searchReturnContext
@@ -242,6 +269,12 @@ final class ObservableLibraryStore {
 
     func clearSearchHistory() {
         store.clearSearchHistory()
+        publishChange()
+        persistSoon()
+    }
+
+    func removeSearchHistoryEntry(id: SearchHistoryEntry.ID) {
+        store.removeSearchHistoryEntry(id: id)
         publishChange()
         persistSoon()
     }
@@ -996,8 +1029,6 @@ final class ObservableLibraryStore {
             try? await Task.sleep(nanoseconds: 180_000_000) // 180ms debounce
             guard !Task.isCancelled, let self else { return }
             self.store.calculateSearchOccurrences()
-            // Don't auto-select first result during typing — wait for Enter.
-            // Only publish the change so searchSummary / occurrences are visible.
             self.publishChange()
         }
     }

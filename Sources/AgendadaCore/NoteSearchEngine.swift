@@ -224,7 +224,7 @@ public enum NoteSearchEngine {
         lhs.compare(rhs, options: [.caseInsensitive, .diacriticInsensitive], locale: .current) == .orderedSame
     }
 
-    private static func sortedUniqueHits(in text: String, terms: [NoteSearchTextTerm]) -> [SearchHit] {
+    internal static func sortedUniqueHits(in text: String, terms: [NoteSearchTextTerm]) -> [SearchHit] {
         var hits: [SearchHit] = []
         var seen = Set<String>()
 
@@ -243,7 +243,7 @@ public enum NoteSearchEngine {
         }
     }
 
-    private static func hitsForTerm(_ term: String, in text: String) -> [SearchHit] {
+    internal static func hitsForTerm(_ term: String, in text: String) -> [SearchHit] {
         guard !term.isEmpty, !text.isEmpty else { return [] }
 
         var hits: [SearchHit] = []
@@ -269,7 +269,7 @@ public enum NoteSearchEngine {
         return hits
     }
 
-    private static func excerpt(around range: Range<String.Index>, in text: String) -> String {
+    internal static func excerpt(around range: Range<String.Index>, in text: String) -> String {
         let context = 30
         let lower = text.index(range.lowerBound, offsetBy: -context, limitedBy: text.startIndex) ?? text.startIndex
         let upper = text.index(range.upperBound, offsetBy: context, limitedBy: text.endIndex) ?? text.endIndex
@@ -520,7 +520,7 @@ public enum NoteSearchDatePredicate: String, Equatable, Sendable {
     case none
 }
 
-internal struct SearchHit: Equatable {
+internal struct SearchHit: Equatable, Sendable {
     let position: Int
     let length: Int
     let excerpt: String

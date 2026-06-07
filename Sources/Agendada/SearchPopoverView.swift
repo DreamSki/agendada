@@ -31,6 +31,8 @@ struct SearchPopoverResult: Identifiable {
 struct SearchPopoverContent: View {
     let committedSearchText: String
     let clearCommittedSearch: () -> Void
+    let pendingDraft: String
+    let onDraftChange: (String) -> Void
     @Binding var navigationTargetNoteID: Note.ID?
     @Environment(ObservableLibraryStore.self) private var store
     @State private var showSaveSheet = false
@@ -94,6 +96,11 @@ struct SearchPopoverContent: View {
             if !draftChips.isEmpty {
                 QueryChipsRow(chips: draftChips)
                     .padding(.top, 4)
+            }
+
+            // Syntax hint — shown when input is empty
+            if !hasActiveSearch {
+                syntaxHintRow
             }
 
             // Recent search history — shown when draft is empty
@@ -175,8 +182,12 @@ struct SearchPopoverContent: View {
         .padding(.horizontal, 10).padding(.vertical, 8)
         .frame(width: 390)
         .onAppear {
-            draftSearchText = committedSearchText
+            // Restore draft from committed text or pending (non-committed) input
+            draftSearchText = committedSearchText.isEmpty ? pendingDraft : committedSearchText
             searchScope = store.searchScope
+        }
+        .onChange(of: draftSearchText) { _, newValue in
+            onDraftChange(newValue)
         }
         .onChange(of: searchScope) { _, newScope in
             store.searchScope = newScope
@@ -207,7 +218,36 @@ struct SearchPopoverContent: View {
         }
     }
 
-    // MARK: - Navigation helpers
+    // MARK: - Syntax hints & history
+
+    private var syntaxHintRow: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("语法提示 — 点击填入")
+                .font(.custom("Avenir Next Demi Bold", size: 10))
+                .foregroundStyle(AgendaColor.textMuted)
+            HStack(spacing: 4) {
+                ForEach(syntaxHintTokens, id: \.self) { token in
+                    Button {
+                        let sep = draftSearchText.isEmpty ? "" : " "
+                        draftSearchText = draftSearchText + sep + token
+                    } label: {
+                        Text(token)
+                            .font(.custom("Avenir Next", size: 10))
+                            .foregroundStyle(AgendaColor.textMuted)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(AgendaColor.canvasGray, in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .padding(.top, 6)
+    }
+
+    private var syntaxHintTokens: [String] {
+        ["#标签", "@人员", "tag:标签", "\"精确短语\"", "NOT 排除", "status:open"]
+    }
 
     private var recentSearchHistory: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -219,7 +259,7 @@ struct SearchPopoverContent: View {
                 Button {
                     store.clearSearchHistory()
                 } label: {
-                    Text("清除")
+                    Text("清除全部")
                         .font(.custom("Avenir Next", size: 10))
                         .foregroundStyle(AgendaColor.textMuted)
                 }
@@ -227,25 +267,37 @@ struct SearchPopoverContent: View {
             }
 
             ForEach(store.searchHistory) { entry in
-                Button {
-                    draftSearchText = entry.query
-                    commitDraftSearch()
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "clock")
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundStyle(AgendaColor.textMuted)
-                        Text(entry.query)
-                            .font(.custom("Avenir Next", size: 12))
-                            .foregroundStyle(AgendaColor.textPrimary)
-                            .lineLimit(1)
-                        Spacer()
+                HStack(spacing: 4) {
+                    Button {
+                        draftSearchText = entry.query
+                        commitDraftSearch()
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "clock")
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(AgendaColor.textMuted)
+                            Text(entry.query)
+                                .font(.custom("Avenir Next", size: 12))
+                                .foregroundStyle(AgendaColor.textPrimary)
+                                .lineLimit(1)
+                            Spacer()
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .contentShape(Rectangle())
                     }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
-                    .contentShape(Rectangle())
+                    .buttonStyle(.plain)
+
+                    Button {
+                        store.removeSearchHistoryEntry(id: entry.id)
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundStyle(AgendaColor.textMuted.opacity(0.5))
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.trailing, 6)
                 }
-                .buttonStyle(.plain)
                 .background(Color.white.opacity(0.6), in: RoundedRectangle(cornerRadius: 6))
                 .overlay(
                     RoundedRectangle(cornerRadius: 6)
@@ -284,57 +336,60 @@ struct SearchPopoverContent: View {
     }
 
     private var searchResultList: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            ForEach(searchResultRows) { result in
-                Button {
-                    openSearchResult(result)
-                } label: {
-                    HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: result.field == .title ? "textformat" : "doc.text")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(AgendaColor.amber)
-                            .frame(width: 16, height: 16)
-                            .padding(.top, 2)
+        ScrollView(.vertical, showsIndicators: true) {
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(searchResultRows) { result in
+                    Button {
+                        openSearchResult(result)
+                    } label: {
+                        HStack(alignment: .top, spacing: 8) {
+                            Image(systemName: result.field == .title ? "textformat" : "doc.text")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(AgendaColor.amber)
+                                .frame(width: 16, height: 16)
+                                .padding(.top, 2)
 
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack(spacing: 6) {
-                                Text(result.note.title.isEmpty ? "无标题" : result.note.title)
-                                    .font(.custom("Avenir Next Medium", size: 12))
-                                    .foregroundStyle(AgendaColor.textPrimary)
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack(spacing: 6) {
+                                    Text(result.note.title.isEmpty ? "无标题" : result.note.title)
+                                        .font(.custom("Avenir Next Medium", size: 12))
+                                        .foregroundStyle(AgendaColor.textPrimary)
+                                        .lineLimit(1)
+
+                                    if result.matchCount > 0 {
+                                        Text("\(result.matchCount)")
+                                            .font(.custom("Avenir Next Demi Bold", size: 9))
+                                            .foregroundStyle(AgendaColor.amber)
+                                            .padding(.horizontal, 5)
+                                            .padding(.vertical, 1)
+                                            .background(AgendaColor.amber.opacity(0.12), in: Capsule())
+                                    }
+                                }
+
+                                Text(result.excerpt)
+                                    .font(.custom("Avenir Next", size: 10))
+                                    .foregroundStyle(AgendaColor.textMuted)
                                     .lineLimit(1)
 
-                                if result.matchCount > 0 {
-                                    Text("\(result.matchCount)")
-                                        .font(.custom("Avenir Next Demi Bold", size: 9))
-                                        .foregroundStyle(AgendaColor.amber)
-                                        .padding(.horizontal, 5)
-                                        .padding(.vertical, 1)
-                                        .background(AgendaColor.amber.opacity(0.12), in: Capsule())
-                                }
+                                Text(result.projectName)
+                                    .font(.custom("Avenir Next", size: 9))
+                                    .foregroundStyle(AgendaColor.textMuted.opacity(0.85))
+                                    .lineLimit(1)
                             }
 
-                            Text(result.excerpt)
-                                .font(.custom("Avenir Next", size: 10))
-                                .foregroundStyle(AgendaColor.textMuted)
-                                .lineLimit(1)
-
-                            Text(result.projectName)
-                                .font(.custom("Avenir Next", size: 9))
-                                .foregroundStyle(AgendaColor.textMuted.opacity(0.85))
-                                .lineLimit(1)
+                            Spacer(minLength: 8)
                         }
-
-                        Spacer(minLength: 8)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 6)
+                        .contentShape(Rectangle())
                     }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 6)
-                    .contentShape(Rectangle())
+                    .buttonStyle(.plain)
+                    .background(Color.white.opacity(0.7), in: RoundedRectangle(cornerRadius: 7))
+                    .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color.black.opacity(0.05), lineWidth: 0.5))
                 }
-                .buttonStyle(.plain)
-                .background(Color.white.opacity(0.7), in: RoundedRectangle(cornerRadius: 7))
-                .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color.black.opacity(0.05), lineWidth: 0.5))
             }
         }
+        .frame(maxHeight: 340)
     }
 
     private var advancedSearchContent: some View {
@@ -437,10 +492,10 @@ struct SearchPopoverContent: View {
         NoteSearchEngine.chips(for: draftSearchText)
     }
 
+    /// Notes matching the draft search — full filter pass (structural predicates).
     private var searchResultNotes: [Note] {
         guard hasActiveSearch else { return [] }
         if searchScope == .currentScope {
-            // 当前范围预览：从 store 的 base scope notes 直接用 draftText 过滤
             let baseNotes = store.library.currentScopeNotesForPreview(now: Date())
             let query = NoteSearchEngine.parse(draftSearchText)
             return NoteSearchEngine.filter(baseNotes, query: query)
@@ -449,9 +504,21 @@ struct SearchPopoverContent: View {
         }
     }
 
+    /// Lightweight count of matching notes — reuses the filter result above.
+    private var searchResultNoteCount: Int {
+        searchResultNotes.count
+    }
+
+    /// Occurrences computed for all matched notes — provides match counts and
+    /// excerpts for the popover result list. Debounced at 180ms by the store layer.
+    private var previewOccurrences: [SearchOccurrence] {
+        guard hasActiveSearch else { return [] }
+        return NoteSearchEngine.occurrences(in: searchResultNotes, query: draftSearchText)
+    }
+
     private var searchResultRows: [SearchPopoverResult] {
         let occurrencesByNote = Dictionary(grouping: previewOccurrences, by: \.noteID)
-        return searchResultNotes.prefix(5).map { note in
+        return searchResultNotes.map { note in
             let occurrences = occurrencesByNote[note.id] ?? []
             let firstOccurrence = occurrences.first
             return SearchPopoverResult(
@@ -461,16 +528,6 @@ struct SearchPopoverContent: View {
                 matchCount: occurrences.count,
                 field: firstOccurrence?.field
             )
-        }
-    }
-
-    private var previewOccurrences: [SearchOccurrence] {
-        guard hasActiveSearch else { return [] }
-        if searchScope == .currentScope {
-            let notes = searchResultNotes
-            return NoteSearchEngine.occurrences(in: notes, query: draftSearchText)
-        } else {
-            return store.library.globalSearchOccurrences(for: draftSearchText, onlyTrash: isTrashPreview)
         }
     }
 
@@ -511,8 +568,9 @@ struct SearchPopoverContent: View {
     }
 
     private var searchResultSummaryText: String {
-        if !previewOccurrences.isEmpty {
-            return "\(searchResultNotes.count) 篇笔记，\(previewOccurrences.count) 处命中"
+        if !searchResultNotes.isEmpty {
+            let count = searchResultNoteCount
+            return "\(count) 篇笔记匹配 — 按 Enter 查看全部命中"
         }
         return filteredSearchStatusText
     }

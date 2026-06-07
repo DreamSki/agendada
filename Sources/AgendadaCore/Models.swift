@@ -749,6 +749,8 @@ public extension Notification.Name {
     /// Posted when Cmd+F is pressed while the editor WebView has focus.
     /// The UI layer observes this to show the Find in Note bar.
     static let findInNoteRequested = Notification.Name("com.agendada.findInNote")
+    /// Posted when Cmd+Shift+F is pressed to open the global search popover.
+    static let globalSearchRequested = Notification.Name("com.agendada.globalSearch")
 }
 
 // MARK: - Calendar Safe Arithmetic

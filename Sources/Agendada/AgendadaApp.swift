@@ -97,6 +97,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         findInNoteItem.target = self
         editMenu.addItem(findInNoteItem)
 
+        let globalSearchItem = NSMenuItem(title: "全局搜索…", action: #selector(AppDelegate.requestGlobalSearch), keyEquivalent: "F")
+        globalSearchItem.keyEquivalentModifierMask = [.command, .shift]
+        globalSearchItem.target = self
+        editMenu.addItem(globalSearchItem)
+
         // Format menu
         let formatItem = NSMenuItem()
         mainMenu.addItem(formatItem)
@@ -319,6 +324,10 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func requestFindInNote() {
         NotificationCenter.default.post(name: .findInNoteRequested, object: nil)
+    }
+
+    @objc private func requestGlobalSearch() {
+        NotificationCenter.default.post(name: .globalSearchRequested, object: nil)
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

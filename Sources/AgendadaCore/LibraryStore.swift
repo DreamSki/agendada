@@ -23,6 +23,7 @@ public final class LibraryStore {
     public private(set) var selectedSearchResultIndex: Int? = nil
     public private(set) var searchReturnContext: SearchReturnContext = .empty
     public private(set) var searchHistory: [SearchHistoryEntry] = []
+    public private(set) var isSearchCommitted: Bool = false
 
     // MARK: - Find in Note State
 
@@ -1078,6 +1079,7 @@ public final class LibraryStore {
 
         searchText = newText
         currentOccurrenceIndex = nil
+        isSearchCommitted = true
 
         guard !trimmed.isEmpty else {
             exitSearchMode()
@@ -1117,6 +1119,11 @@ public final class LibraryStore {
 
     public func clearSearchHistory() {
         searchHistory = []
+    }
+
+    /// Removes a single entry from search history by its ID.
+    public func removeSearchHistoryEntry(id: SearchHistoryEntry.ID) {
+        searchHistory.removeAll { $0.id == id }
     }
 
     private func sortedNotesForCurrentMode(_ matchingNotes: [Note]) -> [Note] {
@@ -1889,6 +1896,7 @@ public final class LibraryStore {
     /// uses setSearchTextOnly + calculateSearchOccurrences to avoid the auto-select.
     public func updateSearchText(_ newText: String) {
         searchText = newText
+        isSearchCommitted = true
         calculateSearchOccurrences()
         if let first = searchOccurrences.first {
             selectedNoteID = first.noteID
@@ -1909,6 +1917,7 @@ public final class LibraryStore {
         searchOccurrences = []
         currentOccurrenceIndex = nil
         selectedSearchResultIndex = nil
+        isSearchCommitted = false
 
         // Restore context after search if we have one
         let context = searchReturnContext
@@ -1970,15 +1979,15 @@ public final class LibraryStore {
         // Manage selection based on new result count
         if searchOccurrences.isEmpty {
             selectedSearchResultIndex = nil
-        } else if searchPresentationMode == .results {
-            // In committed search mode, clamp existing selection or select first
+        } else if isSearchCommitted {
+            // Committed search: clamp existing selection or select first
             if let existing = selectedSearchResultIndex {
                 selectedSearchResultIndex = min(existing, searchOccurrences.count - 1)
             } else {
                 selectedSearchResultIndex = 0
             }
         } else {
-            // Preview mode — no selection
+            // Preview mode (typing, not committed): no selection highlight
             selectedSearchResultIndex = nil
         }
         // Leave currentOccurrenceIndex as nil so the first Enter/next press
@@ -2020,7 +2029,7 @@ public final class LibraryStore {
 
         // Find in Note only searches body (like browser Cmd+F).
         // Title search belongs to List Search.
-        let bodyHits = sortedUniqueHitsInText(note.bodyPlainText, terms: query.highlightTerms)
+        let bodyHits = NoteSearchEngine.sortedUniqueHits(in: note.bodyPlainText, terms: query.highlightTerms)
         var result: [SearchOccurrence] = []
         var bodyIdx = 0
 
@@ -2081,56 +2090,6 @@ public final class LibraryStore {
             totalOccurrences: findInNoteOccurrences.count,
             currentIndex: (currentFindInNoteIndex ?? -1) + 1
         )
-    }
-
-    private func sortedUniqueHitsInText(_ text: String, terms: [NoteSearchTextTerm]) -> [SearchHit] {
-        var hits: [SearchHit] = []
-        var seen = Set<String>()
-
-        for term in terms where !term.value.isEmpty {
-            for hit in hitsForTerm(term.value, in: text) {
-                let key = "\(hit.position):\(hit.length)"
-                if seen.insert(key).inserted {
-                    hits.append(hit)
-                }
-            }
-        }
-
-        return hits.sorted {
-            if $0.position != $1.position { return $0.position < $1.position }
-            return $0.length > $1.length
-        }
-    }
-
-    private func hitsForTerm(_ term: String, in text: String) -> [SearchHit] {
-        guard !term.isEmpty, !text.isEmpty else { return [] }
-
-        var hits: [SearchHit] = []
-        var searchStart = text.startIndex
-
-        while let range = text.range(of: term, options: [.caseInsensitive, .diacriticInsensitive], range: searchStart..<text.endIndex) {
-            let nsRange = NSRange(range, in: text)
-            hits.append(SearchHit(
-                position: nsRange.location,
-                length: nsRange.length,
-                excerpt: excerpt(around: range, in: text)
-            ))
-
-            guard range.upperBound < text.endIndex else { break }
-            searchStart = range.upperBound
-        }
-
-        return hits
-    }
-
-    private func excerpt(around range: Range<String.Index>, in text: String) -> String {
-        let context = 30
-        let lower = text.index(range.lowerBound, offsetBy: -context, limitedBy: text.startIndex) ?? text.startIndex
-        let upper = text.index(range.upperBound, offsetBy: context, limitedBy: text.endIndex) ?? text.endIndex
-        var value = String(text[lower..<upper]).trimmingCharacters(in: .whitespacesAndNewlines)
-        if lower > text.startIndex { value = "…" + value }
-        if upper < text.endIndex { value += "…" }
-        return value
     }
 
     // MARK: - Occurrence Navigation
@@ -2320,8 +2279,9 @@ public final class LibraryStore {
 
     /// How the middle content area should present the current search state.
     public var searchPresentationMode: SearchPresentationMode {
-        let committed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !committed.isEmpty else { return .normal }
+        let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return .normal }
+        guard isSearchCommitted else { return .preview }
         return searchOccurrences.isEmpty ? .noResults : .results
     }
 
