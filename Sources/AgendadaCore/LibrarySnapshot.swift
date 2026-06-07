@@ -14,6 +14,7 @@ public struct LibrarySnapshot: Codable, Equatable, Sendable {
     public var sortOrder: NoteSortOrder
     public var sortMode: SortMode = .scheduledDate
     public var customNoteTemplates: [CustomNoteTemplate] = []
+    public var searchHistory: [SearchHistoryEntry] = []
 
     public init(
         categories: [ProjectCategory],
@@ -28,7 +29,8 @@ public struct LibrarySnapshot: Codable, Equatable, Sendable {
         searchScope: SearchScope = .currentScope,
         sortOrder: NoteSortOrder = .scheduledDateDesc,
         sortMode: SortMode = .scheduledDate,
-        customNoteTemplates: [CustomNoteTemplate] = []
+        customNoteTemplates: [CustomNoteTemplate] = [],
+        searchHistory: [SearchHistoryEntry] = []
     ) {
         self.categories = categories
         self.projects = projects
@@ -43,12 +45,13 @@ public struct LibrarySnapshot: Codable, Equatable, Sendable {
         self.sortOrder = sortOrder
         self.sortMode = sortMode
         self.customNoteTemplates = customNoteTemplates
+        self.searchHistory = searchHistory
     }
 
     private enum CodingKeys: String, CodingKey {
         case categories, projects, notes, smartOverviews
         case selectedProjectID, selectedOverview, selectedSmartOverviewID
-        case selectedNoteID, searchText, searchScope, sortOrder, sortMode, customNoteTemplates
+        case selectedNoteID, searchText, searchScope, sortOrder, sortMode, customNoteTemplates, searchHistory
     }
 
     public init(from decoder: Decoder) throws {
@@ -66,5 +69,6 @@ public struct LibrarySnapshot: Codable, Equatable, Sendable {
         sortOrder = try container.decodeIfPresent(NoteSortOrder.self, forKey: .sortOrder) ?? .scheduledDateDesc
         sortMode = try container.decodeIfPresent(SortMode.self, forKey: .sortMode) ?? .scheduledDate
         customNoteTemplates = try container.decodeIfPresent([CustomNoteTemplate].self, forKey: .customNoteTemplates) ?? []
+        searchHistory = try container.decodeIfPresent([SearchHistoryEntry].self, forKey: .searchHistory) ?? []
     }
 }

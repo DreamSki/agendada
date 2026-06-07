@@ -540,6 +540,19 @@ public struct QueryChip: Identifiable, Equatable, Sendable {
     }
 }
 
+/// A single entry in the recent search history, persisted in LibrarySnapshot.
+public struct SearchHistoryEntry: Codable, Equatable, Identifiable, Sendable {
+    public let id: UUID
+    public let query: String
+    public let timestamp: Date
+
+    public init(id: UUID = UUID(), query: String, timestamp: Date = Date()) {
+        self.id = id
+        self.query = query
+        self.timestamp = timestamp
+    }
+}
+
 // MARK: - Sort Mode
 
 public enum SortMode: String, CaseIterable, Codable, Sendable {

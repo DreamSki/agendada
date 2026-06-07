@@ -230,6 +230,17 @@ final class ObservableLibraryStore {
         persistSoon()
     }
 
+    var searchHistory: [SearchHistoryEntry] {
+        observeRevision()
+        return store.searchHistory
+    }
+
+    func clearSearchHistory() {
+        store.clearSearchHistory()
+        publishChange()
+        persistSoon()
+    }
+
     var sortOrder: NoteSortOrder {
         get {
             observeRevision()

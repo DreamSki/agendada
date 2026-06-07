@@ -148,6 +148,11 @@ struct SearchPopoverContent: View {
                     .padding(.top, 4)
             }
 
+            // Recent search history — shown when draft is empty
+            if !hasActiveSearch && !store.searchHistory.isEmpty {
+                recentSearchHistory
+            }
+
             if hasActiveSearch {
                 searchResultsOverview
             }
@@ -255,6 +260,52 @@ struct SearchPopoverContent: View {
     }
 
     // MARK: - Navigation helpers
+
+    private var recentSearchHistory: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text("最近搜索")
+                    .font(.custom("Avenir Next Demi Bold", size: 10))
+                    .foregroundStyle(AgendaColor.textMuted)
+                Spacer()
+                Button {
+                    store.clearSearchHistory()
+                } label: {
+                    Text("清除")
+                        .font(.custom("Avenir Next", size: 10))
+                        .foregroundStyle(AgendaColor.textMuted)
+                }
+                .buttonStyle(.plain)
+            }
+
+            ForEach(store.searchHistory) { entry in
+                Button {
+                    draftSearchText = entry.query
+                    commitDraftSearch()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "clock")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(AgendaColor.textMuted)
+                        Text(entry.query)
+                            .font(.custom("Avenir Next", size: 12))
+                            .foregroundStyle(AgendaColor.textPrimary)
+                            .lineLimit(1)
+                        Spacer()
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .background(Color.white.opacity(0.6), in: RoundedRectangle(cornerRadius: 6))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color.black.opacity(0.05), lineWidth: 0.5)
+                )
+            }
+        }
+    }
 
     private var searchResultsOverview: some View {
         HStack(spacing: 10) {
