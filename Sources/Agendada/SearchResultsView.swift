@@ -74,35 +74,22 @@ struct SearchResultsContentView: View {
                 .padding(.bottom, AgendaSpacing.cardGap)
             }
         }
-        .onExitCommand {
-            // Esc: clear selection if any, otherwise exit search
-            if store.selectedSearchResultIndex != nil {
-                store.clearSearchResultSelection()
-            } else {
-                store.exitSearchMode()
-            }
-        }
-        .onKeyPress(.upArrow) {
-            _ = store.selectPreviousSearchResult()
-            return .handled
-        }
-        .onKeyPress(.downArrow) {
-            _ = store.selectNextSearchResult()
-            return .handled
-        }
-        .onKeyPress(.return) {
-            if let occ = store.jumpToSelectedSearchResult() {
+        .modifier(SearchKeyboardNavigationModifier(
+            onJumpToSelected: {
+                guard let occ = store.jumpToSelectedSearchResult() else { return }
                 navigationTargetNoteID = occ.noteID
                 let query = store.library.searchHighlightText
-                guard !query.isEmpty else { return .handled }
+                guard !query.isEmpty else { return }
                 SharedBlockNoteWebView.shared.prepareSearchNavigation(
                     noteID: occ.noteID,
                     query: query,
                     bodyIndex: occ.field == .body ? occ.bodyIndexInNote : 0
                 )
+            },
+            onExitSearch: {
+                store.exitSearchMode()
             }
-            return .handled
-        }
+        ))
         .onChange(of: store.searchPresentationMode) { _, newMode in
             // Clear expanded groups when search mode changes
             if newMode == .normal {
