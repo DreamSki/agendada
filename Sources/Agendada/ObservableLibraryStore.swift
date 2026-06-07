@@ -172,6 +172,45 @@ final class ObservableLibraryStore {
         return occurrence
     }
 
+    // MARK: - Keyboard Navigation for Search Results
+
+    var selectedSearchResultIndex: Int? {
+        observeRevision()
+        return store.selectedSearchResultIndex
+    }
+
+    func selectFirstSearchResult() {
+        store.selectFirstSearchResult()
+        publishChange()
+    }
+
+    @discardableResult
+    func selectNextSearchResult() -> SearchOccurrence? {
+        let occ = store.selectNextSearchResult()
+        publishChange()
+        return occ
+    }
+
+    @discardableResult
+    func selectPreviousSearchResult() -> SearchOccurrence? {
+        let occ = store.selectPreviousSearchResult()
+        publishChange()
+        return occ
+    }
+
+    @discardableResult
+    func jumpToSelectedSearchResult() -> SearchOccurrence? {
+        let occ = store.jumpToSelectedSearchResult()
+        publishChange()
+        persistSoon()
+        return occ
+    }
+
+    func clearSearchResultSelection() {
+        store.clearSearchResultSelection()
+        publishChange()
+    }
+
     func commitSearchText(_ newText: String) {
         searchCalcTask?.cancel()
         store.commitSearchText(newText)

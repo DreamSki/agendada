@@ -1759,6 +1759,108 @@ import Testing
     #expect(store.searchPresentationMode == .results)
 }
 
+// MARK: - Keyboard Navigation for Search Results
+
+@Test func searchResultSelectionDefaultsToFirst() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    let n1 = store.addNote(title: "架构重构")
+    store.updateNote(noteID: n1.id, title: "架构重构", body: "架构调整", scheduledDate: nil, tags: [], people: [])
+    let n2 = store.addNote(title: "会议记录")
+    store.updateNote(noteID: n2.id, title: "会议记录", body: "讨论架构问题", scheduledDate: nil, tags: [], people: [])
+    store.selectOverview(.all)
+    store.updateSearchText("架构")
+
+    #expect(store.selectedSearchResultIndex == 0)
+    #expect(store.searchOccurrences.count == 3)
+}
+
+@Test func selectNextSearchResultWraps() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    let n1 = store.addNote(title: "AAA")
+    store.updateNote(noteID: n1.id, title: "AAA", body: "BBB CCC", scheduledDate: nil, tags: [], people: [])
+    store.selectOverview(.all)
+    store.updateSearchText("AAA BBB CCC")
+
+    let total = store.searchOccurrences.count
+    #expect(total == 3)
+
+    // Move to last
+    store.selectNextSearchResult()
+    store.selectNextSearchResult()
+    #expect(store.selectedSearchResultIndex == 2)
+
+    // Next wraps to first
+    let next = store.selectNextSearchResult()
+    #expect(store.selectedSearchResultIndex == 0)
+    #expect(next?.globalIndex == 0)
+}
+
+@Test func selectPreviousSearchResultWraps() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    let n1 = store.addNote(title: "AAA")
+    store.updateNote(noteID: n1.id, title: "AAA", body: "BBB CCC", scheduledDate: nil, tags: [], people: [])
+    store.selectOverview(.all)
+    store.updateSearchText("AAA BBB CCC")
+
+    // At first, previous wraps to last
+    let prev = store.selectPreviousSearchResult()
+    #expect(store.selectedSearchResultIndex == 2)
+    #expect(prev?.globalIndex == 2)
+}
+
+@Test func jumpToSelectedSearchResultNavigates() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    let note = store.addNote(title: "架构")
+    store.updateNote(noteID: note.id, title: "架构", body: "架构重构", scheduledDate: nil, tags: [], people: [])
+    store.selectOverview(.all)
+    store.updateSearchText("架构")
+
+    // Select second occurrence
+    store.selectNextSearchResult()
+    #expect(store.selectedSearchResultIndex == 1)
+
+    // Jump should select note and set currentOccurrenceIndex
+    let jumped = store.jumpToSelectedSearchResult()
+    #expect(jumped?.globalIndex == 1)
+    #expect(store.selectedNoteID == note.id)
+    #expect(store.currentOccurrenceIndex == 1)
+}
+
+@Test func clearSearchClearsSelection() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    let note = store.addNote(title: "架构")
+    store.updateNote(noteID: note.id, title: "架构", body: "架构重构", scheduledDate: nil, tags: [], people: [])
+    store.selectOverview(.all)
+    store.updateSearchText("架构")
+
+    #expect(store.selectedSearchResultIndex == 0)
+
+    store.clearSearchOccurrences()
+    #expect(store.selectedSearchResultIndex == nil)
+}
+
+@Test func searchTextChangedResetsSelectionToFirst() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    let note = store.addNote(title: "架构重构")
+    store.updateNote(noteID: note.id, title: "架构重构", body: "架构调整", scheduledDate: nil, tags: [], people: [])
+    store.selectOverview(.all)
+
+    store.updateSearchText("架构")
+    store.selectNextSearchResult()
+    #expect(store.selectedSearchResultIndex == 1)
+
+    // Search text changes → recalculate → selection resets to first
+    store.updateSearchText("架构调整")
+    #expect(store.selectedSearchResultIndex == 0)
+    #expect(store.searchOccurrences.count == 1)
+}
+
 // MARK: - Search Result Groups
 
 @Test func searchResultGroupsEmptyWhenNoSearch() async throws {
