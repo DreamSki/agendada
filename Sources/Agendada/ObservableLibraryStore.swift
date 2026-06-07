@@ -146,6 +146,7 @@ final class ObservableLibraryStore {
     }
 
     func requestFindInNote() {
+        guard store.selectedNoteID != nil else { return }
         isFindInNoteBarVisible = true
     }
 

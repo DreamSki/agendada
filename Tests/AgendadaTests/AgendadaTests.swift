@@ -1985,6 +1985,106 @@ import Testing
     #expect(store.searchReturnContext == .empty)
 }
 
+// MARK: - Find in Note Edge Cases
+
+@Test func findInNoteClearsOnNoteSwitch() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    let note1 = store.addNote(title: "笔记一")
+    store.updateNote(noteID: note1.id, title: "笔记一", body: "内容包含关键词", scheduledDate: nil, tags: [], people: [])
+    let note2 = store.addNote(title: "笔记二")
+    store.updateNote(noteID: note2.id, title: "笔记二", body: "另一段内容", scheduledDate: nil, tags: [], people: [])
+
+    store.selectNote(note1.id)
+    store.isFindInNoteBarVisible = true
+    store.updateFindInNoteText("关键词")
+    #expect(store.findInNoteOccurrences.count == 1)
+    #expect(store.isFindInNoteBarVisible == true)
+
+    // Switching notes should clear Find in Note state
+    store.selectNote(note2.id)
+    #expect(store.findInNoteText == "")
+    #expect(store.findInNoteOccurrences.isEmpty)
+    #expect(store.isFindInNoteBarVisible == false)
+}
+
+@Test func findInNoteEnterCyclesAllOccurrences() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    let note = store.addNote(title: "笔记")
+    store.updateNote(noteID: note.id, title: "笔记", body: "alpha beta alpha gamma alpha", scheduledDate: nil, tags: [], people: [])
+    store.selectNote(note.id)
+
+    store.updateFindInNoteText("alpha")
+    #expect(store.findInNoteOccurrences.count == 3)
+
+    // Cycle through all occurrences
+    let first = store.goToNextInNote()
+    #expect(first != nil)
+    let second = store.goToNextInNote()
+    #expect(second != nil)
+    let third = store.goToNextInNote()
+    #expect(third != nil)
+
+    // Should wrap back to first
+    let wrapped = store.goToNextInNote()
+    #expect(wrapped != nil)
+}
+
+@Test func findInNoteRequiresSelectedNote() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    _ = store.addNote(title: "笔记")
+
+    // No note selected — updateFindInNoteText should not crash
+    store.updateFindInNoteText("内容")
+    #expect(store.findInNoteOccurrences.isEmpty)
+    #expect(store.currentFindInNoteIndex == nil)
+}
+
+@Test func findInNoteClearRemovesAllState() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    let note = store.addNote(title: "笔记")
+    store.updateNote(noteID: note.id, title: "笔记", body: "关键词在这里", scheduledDate: nil, tags: [], people: [])
+    store.selectNote(note.id)
+
+    store.updateFindInNoteText("关键词")
+    #expect(!store.findInNoteOccurrences.isEmpty)
+
+    store.clearFindInNote()
+    #expect(store.findInNoteText == "")
+    #expect(store.findInNoteOccurrences.isEmpty)
+    #expect(store.currentFindInNoteIndex == nil)
+}
+
+@Test func findInNoteAndListSearchAreIndependent() async throws {
+    let store = LibraryStore()
+    _ = store.addProject(name: "项目")
+    let note = store.addNote(title: "架构笔记")
+    store.updateNote(noteID: note.id, title: "架构笔记", body: "架构讨论内容", scheduledDate: nil, tags: [], people: [])
+    store.selectOverview(.all)
+
+    // Start list search
+    store.updateSearchText("架构")
+    #expect(store.searchPresentationMode == .results)
+
+    // Start find-in-note on selected note
+    store.selectNote(note.id)
+    store.updateFindInNoteText("讨论")
+    #expect(store.findInNoteOccurrences.count == 1)
+
+    // List search should be unaffected
+    #expect(store.searchPresentationMode == .results)
+
+    // Close find-in-note
+    store.clearFindInNote()
+    #expect(store.findInNoteText == "")
+
+    // List search still active
+    #expect(store.searchPresentationMode == .results)
+}
+
 @Test func searchContextCapturedOnlyOnce() async throws {
     let store = LibraryStore()
     let note = store.addNote(title: "会议")

@@ -274,9 +274,13 @@ public final class LibraryStore {
             searchText = ""
         }
 
-        // 切换笔记时重新计算 Find in Note（如果查找文本非空）
-        if noteChanged && !findInNoteText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            calculateFindInNoteOccurrences()
+        // 切换笔记时关闭 Find in Note（避免跨笔记残留高亮）
+        if noteChanged {
+            findInNoteText = ""
+            findInNoteOccurrences = []
+            currentFindInNoteIndex = nil
+            findInNoteNavigation = nil
+            isFindInNoteBarVisible = false
         }
     }
 
