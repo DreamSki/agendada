@@ -305,17 +305,19 @@ struct NoteStreamView: View {
         .allowsHitTesting(false)
     }
 
+    private var isSearchActive: Bool {
+        store.searchPresentationMode != .normal
+    }
+
     private var mainTitle: String {
-        if !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return "搜索结果"
-        }
+        if isSearchActive { return "搜索结果" }
         if let ov = store.selectedOverview { return ov.title }
         if let pid = store.selectedProjectID, let proj = store.project(withID: pid) { return proj.name }
         return store.activeTitle
     }
 
     private var breadcrumbCategoryName: String? {
-        if !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return nil }
+        if isSearchActive { return nil }
         if store.selectedOverview != nil { return nil }
         if let pid = store.selectedProjectID, let proj = store.project(withID: pid),
            let cid = proj.categoryID, let cat = store.category(withID: cid) { return cat.name }
@@ -324,7 +326,7 @@ struct NoteStreamView: View {
 
     private var breadcrumbContext: String? {
         if store.isInBatchMode { return "已选 \(store.batchSelectedNoteIDs.count) 项" }
-        if !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if isSearchActive {
             let scope = store.selectedOverview == .trash ? "废纸篓" : "全局"
             return "\(scope) · \(store.filteredNotes().count) 条笔记"
         }
