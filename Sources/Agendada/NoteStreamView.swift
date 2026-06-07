@@ -52,18 +52,19 @@ struct NoteStreamView: View {
             guard let store = store else { return event }
             guard store.searchPresentationMode == .results else { return event }
 
-            let chars = event.charactersIgnoringModifiers
-            switch chars {
-            case String(UnicodeScalar(NSDownArrowFunctionKey)!):
+            // Use keyCode for reliability — charactersIgnoringModifiers can be nil
+            // for function keys, and popover focus makes character-based matching fragile.
+            switch Int(event.keyCode) {
+            case 125: // ↓ Down arrow
                 _ = store.selectNextSearchResult()
                 return nil
-            case String(UnicodeScalar(NSUpArrowFunctionKey)!):
+            case 126: // ↑ Up arrow
                 _ = store.selectPreviousSearchResult()
                 return nil
-            case "\r", "\n":
+            case 36: // ↩ Return
                 _ = store.selectNextSearchResult()
                 return nil
-            case String(UnicodeScalar(0x1B)!): // Escape
+            case 53: // ⎋ Escape
                 if store.selectedSearchResultIndex != nil {
                     store.clearSearchResultSelection()
                 } else {
