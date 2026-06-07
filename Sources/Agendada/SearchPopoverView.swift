@@ -1,5 +1,4 @@
 import AgendadaCore
-import AppKit
 import SwiftUI
 
 // MARK: - Supporting Types
@@ -24,61 +23,8 @@ struct SearchPopoverResult: Identifiable {
 
 // MARK: - Enter-intercepting TextField for Search Popover
 
-struct ReturnKeyTextField: NSViewRepresentable {
-    @Binding var text: String
-    let placeholder: String
-    var onReturn: () -> Void
-
-    func makeNSView(context: Context) -> NSTextField {
-        let tf = NSTextField()
-        tf.isBezeled = false
-        tf.isBordered = false
-        tf.drawsBackground = false
-        tf.focusRingType = .none
-        tf.font = NSFont(name: "Avenir Next", size: 13)
-        tf.placeholderString = placeholder
-        tf.lineBreakMode = .byTruncatingTail
-        tf.cell?.isScrollable = true
-        tf.cell?.wraps = false
-        tf.delegate = context.coordinator
-        return tf
-    }
-
-    func updateNSView(_ tf: NSTextField, context: Context) {
-        if tf.stringValue != text { tf.stringValue = text }
-    }
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(text: $text, onReturn: onReturn)
-    }
-
-    final class Coordinator: NSObject, NSTextFieldDelegate {
-        @Binding var text: String
-        let onReturn: () -> Void
-
-        init(text: Binding<String>, onReturn: @escaping () -> Void) {
-            _text = text
-            self.onReturn = onReturn
-        }
-
-        func controlTextDidChange(_ obj: Notification) {
-            guard let tf = obj.object as? NSTextField else { return }
-            // Only write to binding if value actually changed — prevents
-            // unnecessary publishChange → re-render → binding writeback cycles
-            let newValue = tf.stringValue
-            guard newValue != text else { return }
-            text = newValue
-        }
-
-        func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
-            if commandSelector == #selector(NSResponder.insertNewline(_:)) {
-                onReturn()
-                return true  // 拦截回车，不再传给系统
-            }
-            return false
-        }
-    }
-}
+// ReturnKeyTextField removed — replaced with SwiftUI TextField + .onSubmit
+// which handles Enter/Return reliably without NSViewRepresentable complexity.
 
 // MARK: - Search Popover Content
 
@@ -103,12 +49,14 @@ struct SearchPopoverContent: View {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(AgendaColor.textMuted)
-                ReturnKeyTextField(
-                    text: $draftSearchText,
-                    placeholder: "搜索标题、正文、标签或人员",
-                    onReturn: { handleSearchReturn() }
-                )
-                .frame(width: 180, height: 20)
+                TextField("搜索标题、正文、标签或人员", text: $draftSearchText)
+                    .textFieldStyle(.plain)
+                    .font(.custom("Avenir Next", size: 13))
+                    .foregroundStyle(AgendaColor.textPrimary)
+                    .frame(width: 180, height: 20)
+                    .onSubmit {
+                        handleSearchReturn()
+                    }
                 if !draftSearchText.isEmpty {
                     Button {
                         clearSearch()
